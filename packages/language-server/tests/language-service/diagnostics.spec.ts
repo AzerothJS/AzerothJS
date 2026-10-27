@@ -48,6 +48,45 @@ describe('LSP diagnostics: event handler type', () =>
     });
 });
 
+describe('LSP diagnostics: content the parser reads as text', () =>
+{
+    const source = [
+        'export default component Texts {',
+        '    state v = \'hi\';',
+        '    <div>',
+        '        <textarea><b>x</b></textarea>',
+        '        <xmp>{ v }</xmp>',
+        '        <textarea value={ v }>child</textarea>',
+        '        <title bind:value={ v }>x</title>',
+        '    </div>',
+        '}',
+        ''
+    ].join('\n');
+
+    /** The 0-based line and character where `text` first appears. */
+    const at = (text: string): { line: number; character: number } =>
+    {
+        const offset = source.indexOf(text);
+        const before = source.slice(0, offset);
+        return { line: before.split('\n').length - 1, character: offset - before.lastIndexOf('\n') - 1 };
+    };
+
+    it('surfaces the four content-model refusals at the spans and with the messages the build reports', () =>
+    {
+        const diagnostics = diagnose('Texts.azeroth', source);
+        const found = (code: string) => diagnostics.filter((d) => d.code === code);
+
+        expect(found('azeroth/text-only-content').map((d) => d.range.start)).toEqual([at('<b>x</b>')]);
+        expect(found('azeroth/text-only-content')[0]?.message).toMatch(/^<textarea> holds text only/);
+        expect(found('azeroth/raw-text-content').map((d) => d.range.start)).toEqual([at('{ v }</xmp>')]);
+        expect(found('azeroth/raw-text-content')[0]?.message).toMatch(/^The browser reads <xmp> content as raw text/);
+        expect(found('azeroth/content-property-children').map((d) => d.range.start)).toEqual([at('value={ v }>child')]);
+        expect(found('azeroth/content-property-children')[0]?.message).toMatch(/^'value' and children both set a <textarea>'s text/);
+        expect(found('azeroth/title-value').map((d) => d.range.start)).toEqual([at('bind:value={ v }>x')]);
+        expect(found('azeroth/title-value')[0]?.message).toMatch(/^'bind:value' does nothing on <title>/);
+    });
+});
+
 describe('LSP diagnostics: Show/Match narrowing', () =>
 {
     const isNullish = (d: { message: string }): boolean => /possibly '?(null|undefined)/.test(d.message);

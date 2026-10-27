@@ -98,6 +98,21 @@ describe('the compiled-output runtime contract', () =>
             expect(exported.has(name), `azerothjs/internal must export "${ name }"`).toBe(true);
         }
     });
+
+    it('the textarea and title path emits contract names too (bindText)', () =>
+    {
+        const { code } = generateModule(
+            'export default component T { state n = 0; <div><textarea>text { n }</textarea><title>{ n } - Site</title></div> }',
+            'T.azeroth'
+        );
+        const { names } = emittedRuntimeImports(code);
+        expect(names).toContain('bindText');
+        const exported = new Set(Object.keys(contract));
+        for (const name of names)
+        {
+            expect(exported.has(name), `azerothjs/internal must export "${ name }"`).toBe(true);
+        }
+    });
 });
 
 describe('the version handshake', () =>

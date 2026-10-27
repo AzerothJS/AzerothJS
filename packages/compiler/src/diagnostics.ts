@@ -44,7 +44,13 @@
  *                                    the winner);
  *   - azeroth/duplicate-prop       - a repeated component prop key, including bind:'s claimed
  *                                    value + write-back keys and children=/markup-children;
- *   - azeroth/content-property-children - innerHTML/textContent combined with children.
+ *   - azeroth/content-property-children - innerHTML/textContent combined with children, or a
+ *                                    textarea's value beside children, innerHTML or textContent.
+ *   - azeroth/text-only-content    - an element, component or control flow inside a <textarea>
+ *                                    or <title>, whose content is one text.
+ *   - azeroth/raw-text-content     - a hole or markup inside <iframe>, <noembed>, <noframes> or
+ *                                    <xmp>, which the parser reads as raw text.
+ *   - azeroth/title-value          - value or bind:value on a <title>, which shows nothing.
  *   - azeroth/ref-value            - a host `ref` with no value or a static string: it can
  *                                    never receive the element, and the render modes disagree
  *                                    on whether the attribute appears in the document.
@@ -75,6 +81,12 @@ import {
     isReservedHostAttribute,
     reservedHostAttributeMessage,
     contentChildrenMessage,
+    textValueOwnerMessage,
+    textOnlyChildMessage,
+    rawTextParsedMessage,
+    titleValueMessage,
+    contentModel,
+    isTextValueProperty,
     bindWriteBack,
     CONTENT_PROPERTIES,
     handlerValueMessage,
@@ -3002,7 +3014,12 @@ function forRowRule(el: MarkupElement, source: string, out: AzerothDiagnostic[],
 /** The GRAMMAR 6.6 host-element rules: uniqueness, the reserved on* namespace, content ownership. */
 function hostAttributeRules(el: MarkupElement, out: AzerothDiagnostic[]): void
 {
-    const hasContent = el.children.some(child => !(child.kind === 'text' && child.value.trim() === ''));
+    // Every child the lowerer keeps: the parser already dropped formatting whitespace, so a
+    // same-line space or a whitespace reference is content here exactly as it is to h().
+    const hasContent = el.children.length > 0;
+    const textOwner = isTextValueProperty('value', el.tag)
+        ? el.attributes.find(attr => !attr.spread && attr.name !== null && CONTENT_PROPERTIES.has(attr.name))?.name ?? null
+        : null;
     // Keyed by the CLAIMED name, mapping to the first spelling (the GRAMMAR uniqueness
     // rule): an expression `bind:p` claims `p`, so `bind:value={v} value="y"` collides
     // here exactly as on a component - without the claim, the static attribute bakes into
@@ -3087,6 +3104,63 @@ function hostAttributeRules(el: MarkupElement, out: AzerothDiagnostic[]): void
                 code: 'azeroth/content-property-children',
                 severity: 'error',
                 message: contentChildrenMessage(attr.name),
+                start: attr.start,
+                end: attr.end
+            });
+        }
+
+        if ((attr.name === 'value' || attr.name === 'bind:value') && isTextValueProperty('value', el.tag) && (hasContent || textOwner !== null))
+        {
+            out.push({
+                code: 'azeroth/content-property-children',
+                severity: 'error',
+                message: textValueOwnerMessage(hasContent ? 'children' : textOwner as string),
+                start: attr.start,
+                end: attr.end
+            });
+        }
+    }
+}
+
+/**
+ * Content the HTML parser reads as text: a `<textarea>` or `<title>` takes text and holes, a
+ * raw-text element static text only, and a title has no value.
+ */
+function textContentRules(el: MarkupElement, out: AzerothDiagnostic[]): void
+{
+    const model = contentModel(el.tag);
+    const joined = model === 'escapable-raw-text';
+    if (!joined && model !== 'raw-text-parsed')
+    {
+        return;
+    }
+    const tag = el.tag.toLowerCase();
+    for (const child of el.children)
+    {
+        if (child.kind === 'text' || (child.kind === 'expression' && joined))
+        {
+            continue;
+        }
+        out.push({
+            code: joined ? 'azeroth/text-only-content' : 'azeroth/raw-text-content',
+            severity: 'error',
+            message: joined ? textOnlyChildMessage(tag, child.kind === 'element' ? `<${ child.tag }>` : '<>') : rawTextParsedMessage(tag),
+            start: child.start,
+            end: child.end
+        });
+    }
+    if (tag !== 'title')
+    {
+        return;
+    }
+    for (const attr of el.attributes)
+    {
+        if (!attr.spread && (attr.name === 'value' || attr.name === 'bind:value'))
+        {
+            out.push({
+                code: 'azeroth/title-value',
+                severity: 'error',
+                message: titleValueMessage(attr.name),
                 start: attr.start,
                 end: attr.end
             });
@@ -3386,6 +3460,7 @@ function markupRuleVisitor(source: string, out: AzerothDiagnostic[], shadowed: R
         else
         {
             hostAttributeRules(el, out);
+            textContentRules(el, out);
         }
     };
 }

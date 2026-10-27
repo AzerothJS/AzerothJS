@@ -344,8 +344,43 @@ rule.
 **Content ownership.** `innerHTML` and `textContent` OWN an element's content:
 combining either with children is a rejected program
 (`azeroth/content-property-children`), at compile time for markup and by the same
-rule thrown from `h()` in every mode. A void element (`<input>`, `<br>`, ...) owns
-NO content: children or a closing tag on one is a located parse error.
+rule thrown from `h()` in every mode. A child that is only whitespace counts (a
+same-line space, `&nbsp;`, `&#10;`); a line break alone is formatting and is
+dropped. A void element (`<input>`, `<br>`, ...) owns NO content: children or a
+closing tag on one is a located parse error.
+
+**Text-only content.** The HTML parser reads a `<textarea>`'s and a `<title>`'s
+content as ONE text. Their children are text and holes in any mix, and they join
+into that one text node in every mode: the server writes it escaped with no hole
+anchors, hydration adopts it, and one binding keeps it current. A hole gives the
+text it renders in any other element (`null`, `undefined` and `false` give
+nothing, an array gives its members in order); a hole whose value is an element or
+a component's output is refused at runtime in every mode. An element, component,
+control flow or fragment written inside is a rejected program
+(`azeroth/text-only-content`). Children of a `<textarea>` are its default text,
+which the user's edits replace and `form.reset()` restores; a static `value="..."`
+with no spread before it is that default text too. An expression `value`,
+`bind:value` or a static `value` after a spread writes the textarea's value, and a
+reset restores the bound state, including one a handler writes while the reset is
+dispatched, unless a window listener that runs first stops the event with
+`stopImmediatePropagation()`; it overwrites text typed before hydration. A `value`
+beside children, `textContent` or `innerHTML` is a rejected program
+(`azeroth/content-property-children`), and a value a spread carries wins over
+children. `value` on a `<title>` shows nothing and is rejected
+(`azeroth/title-value`). Authored line breaks inside a `<textarea>` follow the
+markup whitespace rule, so write `&#10;` or a hole for one; a `value` attribute
+keeps its line breaks as written, except that with no spread before it each CR or
+CRLF in it, `&#13;` included, is read as LF. A component that forwards its props
+to a textarea takes `children` out first, `const { children, ...rest } = props;`
+and `<textarea {...rest}>{ children }</textarea>`, because a spread of the whole
+props object copies `children` onto the host. The rule keys on the tag in any
+case, so `<textArea>` follows it and an svg `<title>` does too. `<iframe>`,
+`<noembed>`, `<noframes>` and `<xmp>`, whose content the parser reads as raw text,
+take static text only (`azeroth/raw-text-content`); a `<noscript>`'s content is
+written by the server only: the client builds the element without its content;
+hydration adopts it with the content the server wrote, and a component inside
+still runs its setup. `<script>` and `<style>` content, in any case, is raw text:
+`{ }` there is text, not a hole; bind such content with textContent.
 
 **Event attachment (observable model).** Handlers attach through ONE model in
 every mode - client render, hydration, and `h()` alike. Types in the semantics

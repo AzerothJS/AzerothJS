@@ -14,7 +14,8 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 - **The runtime contract moves to v5.** Compiled output changes shape for a sole `{ expr }` in a
   `<Show>` or `<Match>` branch and for a `fallback` on `<Show>` or `<Switch>` that is not an arrow
-  or a bare markup literal, and the new output needs the new runtime, so
+  or a bare markup literal, and for a hole inside a `<textarea>` or `<title>`, which calls the new
+  runtime helper `bindText`, and the new output needs the new runtime, so
   `EMITTED_CONTRACT_VERSION` and `RUNTIME_CONTRACT_VERSION` both move 4 -> 5. What this affects is
   PREBUILT compiled output: a library shipped as `.js` compiled by an earlier compiler
   fails at load against this runtime with a message naming both versions, and output from this
@@ -55,6 +56,64 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   a CDN field) holds no cookie, and its write is refused 403 until it asks. `<Form>` and the typed
   client ask on their own. See Security.
 
+- **A `<noscript>`'s content is written by the server only.** With scripting on, the browser
+  reads a noscript's content as one text node, so hydration could never adopt it and rebuilt the
+  page, Firefox parsed it the same way inside the client template, where a hole beside other
+  content threw, and an `<img>` inside loaded on a page that runs scripts. A client render and a
+  client navigation now build the `<noscript>` element empty, in every position (a `<Show>`
+  branch, component children and a `<For>` row included), so nothing inside it loads, applies or
+  calls a `ref`; hydration adopts the element with the content the server wrote. A component
+  inside a noscript still runs its setup while the page hydrates, so a resource it creates
+  fetches unless the stream seeded it. A hand-written `h('noscript', ...)` call evaluates its
+  arguments first, so on a client render what they build is still built: an image loads, a ref
+  runs and a component called there runs its setup.
+
+- **Markup that has no meaning inside a text-only element is refused at compile time.** These
+  programs compiled before and are now errors, each located where it is written:
+  - an element, a component, `<Show>` or other control flow, or a fragment inside a `<textarea>`
+    or a `<title>`, an svg `<title>` included (`azeroth/text-only-content`);
+  - a hole or markup inside `<xmp>`, `<iframe>`, `<noembed>` or `<noframes>`
+    (`azeroth/raw-text-content`); static text there is unchanged;
+  - `value` or `bind:value` on a `<textarea>` beside children, a child that is only whitespace
+    included, or beside `textContent` or `innerHTML` (`azeroth/content-property-children`);
+  - `value` or `bind:value` on a `<title>` (`azeroth/title-value`);
+  - `textContent` or `innerHTML` beside a child that is only whitespace: a same-line space, or a
+    reference such as `&nbsp;`, `&#9;` or `&#10;` (`azeroth/content-property-children`).
+
+  And at runtime, in every mode, `h()` refuses `value` beside `textContent` or `innerHTML` on a
+  `<textarea>`, which a spread could carry: `'value' and 'textContent' both set a <textarea>'s
+  text`, and a static `value="..."` before a spread that carries `textContent` or `innerHTML` is
+  refused by the server render and `h()` as children beside them are.
+
+- **`form.reset()` restores a bound textarea to its bound text, and a textarea's value wins over
+  children.** A `value`, `bind:value` or `form.register()` textarea now writes its value and its
+  default text together, value first, whenever a state write changes what the field shows, and
+  writes nothing when it does not, as when the state echoes what the user typed; a reset brings
+  the default in line with the bound state first, including a state a handler writes while the
+  reset is dispatched, so it no longer empties a bound field. A value carried by a spread wins
+  over children in every mode. The one reset listener moves from the document to the window and
+  runs in the capture phase, so a reset handler that stops the event no longer skips it, unless
+  an earlier window listener stops it with `stopImmediatePropagation()`; for a `<select>`, that
+  holds for `form.reset()` called from script.
+
+- **A host tag in mixed case is read by the compiler as the server and the browser read it.**
+  `<textArea>`, `<tiTle>` and `<noScript>` follow the rules above like their lowercase twins,
+  and `<sTyle>` and `<sCript>` content is raw text, as for `<style>` and `<script>`. A
+  `{ hole }` inside `<sTyle>` or `<sCript>` was compiled as a hole: the server wrote its value,
+  and the client showed it only when the hole was the element's only child (hydration fell back
+  to a full client render; beside text or another hole it threw). It is now literal text, as
+  inside `<style>`; write such content with `textContent={ ... }`. CSS rules inside `<sTyle>` no
+  longer fail the build. A capitalized `<Style>` or `<Title>` is still a component.
+
+- **`azerothjs/semantics` no longer exports `RAW_TEXT_ELEMENTS`.** Use
+  `contentModel(tag) === 'raw-text'`: it is true for `script` and `style`, as the set was, and for
+  any case of either name (`sTyle`, `sCript`), as the browser reads a tag name, so check
+  `isComponentTag(tag)` first where markup reads `Style` or `Script` as a component, as the
+  compiler does. Test for `'raw-text'`, not for a non-null result: `contentModel(tag)` also names
+  the textarea, title, iframe, noembed, noframes, xmp and noscript content models. An earlier 2.x
+  `@azerothjs/compiler` imports the removed name and fails to load beside this `azerothjs`:
+  install both from one version.
+
 - **`SSRNode` is a class type with a private brand.** It no longer has an `__ssr` member and gains
   `toJSON()`, so `keyof SSRNode` is `'html' | 'toJSON'`. An object literal, a spread copy, a class
   that implements `SSRNode` and an `SSRNode` from a second install of `azerothjs` no longer
@@ -82,6 +141,56 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   itself an error arrives as its name, message and stack, with a rule or without, as before.
 
 ### Fixed
+
+- **A hole inside a `<textarea>` or a `<title>` served its anchors as text, and text beside one
+  blanked the page.** The browser reads a textarea's and a title's content as one text, so the
+  `<!--[-->` and `<!--]-->` around a hole were served as visible text, painted before hydration,
+  posted by a form without JavaScript (`t=<!--[-->hi<!--]-->`) and shown as `document.title` when
+  the shell had no head title, and hydration then rebuilt the whole page, losing focus and anything
+  typed. `<textarea>Hello { name }</textarea>` and `<title>Hello { name }</title>` threw
+  `TypeError: Cannot read properties of null` on a client render and on client navigation, and a
+  hydrating page went blank; `<title>{ name } - Site</title>` showed `<!--[--><!--]--> - Sitehi`.
+  Text and holes inside a textarea or a title, in any mix, now join into the element's one text node
+  in every mode: the server writes it escaped with no anchors, hydration adopts it in place and
+  keeps what the user typed before it ran, and one binding updates it, also after a `document.title`
+  write replaced the node. A hole gives the text it gives in any other element: `null`, `undefined`
+  and `false` give nothing, an array gives its members in order, a number its digits, and a hole
+  whose value is an element or a component's output throws `A hole inside <textarea> gives text`. A
+  leading line break in a textarea, written `&#10;`, typed inside a `value="..."` or carried by the
+  data, is kept: the server writes one more, as the browser drops the first; one typed between the
+  tags follows the markup whitespace rule (beside text, it becomes one space), as before. A CR in a
+  textarea's or a title's text, written `&#13;` or carried by the data, is the same character in
+  every render (the server and the client template wrote it raw, so the browser read it as a line
+  feed while a client render kept it). Children of a textarea are its default text: an update shows
+  until the user edits the field, as before. `innerHTML` on a textarea or a title is written inside
+  it on the server, as the client writes it, instead of ending the element at a `</textarea>` in the
+  value. `<xmp>`, `<iframe>`, `<noembed>` and `<noframes>`, whose content the browser reads as raw
+  text, showed anchors or threw the same way; a hole or markup there is now refused (see Changed). A
+  page an earlier build served, if a host still pairs it with this bundle, hydrates too: the markers
+  inside an HTML textarea or title are one text that hydration repairs (a field the user edited
+  before it ran keeps what it showed until a reset), and an svg title's anchors are folded into its
+  text.
+
+- **A `<textarea>`'s value was served as an attribute the browser ignores.** `value={ text }`,
+  `bind:value={ text }`, `value="hi"` and a `form.register()` spread rendered
+  `<textarea value="hi">` on the server, so the field painted empty before hydration and a form
+  posted without JavaScript sent an empty value. A static `value="hi"` or a constant
+  `value={ 'hi' }` was baked into the client template as the same attribute, so a client render or
+  a client navigation showed an empty field. The value is now the textarea's text on the server and
+  its value on the client in every render. A static `value="hi"` with no spread before it is the
+  textarea's default text, as children are, so text typed before hydration is kept; an expression,
+  `bind:value` or a static value after a spread is the value and overwrites it. The value follows
+  the property's own coercion, so `value={ null }` serves an empty field and `value={ undefined }`
+  serves `undefined`, as the client already showed. A CR in the value is the same character in every
+  render, as in children, except in a static `value="..."` with no spread before it, which reads
+  each CR and CRLF in it, `&#13;` included, as a line feed. A page an earlier build served with the
+  attribute is repaired on hydration.
+
+- **`textContent` or `innerHTML` beside a child that is only whitespace compiled clean, failed
+  every server render and every `h()` position such as a `<Show>` branch, while the clone rendered
+  it.** `<div textContent={ text }> </div>` and the same with `&nbsp;`, `&#9;` or `&#10;` are now
+  refused at compile time (see Changed); a child that is only a line break is formatting and is
+  still accepted.
 
 - **A `cleanup` block that touched a browser global turned a server-rendered page into a 500.**
   Since 2.1.0-beta.2 a `cleanup { }` block, or `onCleanup()` called in a component or composable

@@ -38,7 +38,7 @@
 
 import { isWhitespace, findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
-import { hostEventType, bindWriteBack, isBindingAttr, isBranchPosition, isChildResolvedProperty, CONTENT_PROPERTIES, BUILTIN_SET as BUILTINS, ONE_ELEMENT_COMPONENTS } from 'azerothjs/semantics';
+import { hostEventType, bindWriteBack, isBindingAttr, isBranchPosition, isChildResolvedProperty, isTextValueProperty, normalizeLineBreaks, CONTENT_PROPERTIES, BUILTIN_SET as BUILTINS, ONE_ELEMENT_COMPONENTS } from 'azerothjs/semantics';
 import { loneFunctionChild, withoutSpacing } from './markup-util.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
@@ -210,6 +210,9 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
         // statics through the binding list restores ONE rule in every mode: source order,
         // later wins - identical to a JS object literal.
         let seenSpread = false;
+        // A static textarea value before any spread is the textarea's default text, so it lowers to
+        // a text child that every placement bakes or builds the same way.
+        let valueText: string | null = null;
 
         for (const attr of node.attributes)
         {
@@ -279,7 +282,13 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
                 // into the template it leaves NO writer at all, and `value` is not a content attribute
                 // of <select>, so the clone would carry an inert attribute and show the wrong option.
                 // As a binding it becomes a setProp the runtime applies once the options exist.
-                if (CONTENT_PROPERTIES.has(name) || isChildResolvedProperty(name, node.tag) || seenSpread)
+                // A textarea's `value` has no attribute either, so it is a binding too unless it is
+                // the default text, its CR and CRLF read as LF.
+                if (attr.value.kind === 'static' && isTextValueProperty(name, node.tag) && !seenSpread)
+                {
+                    valueText = normalizeLineBreaks(attr.value.value);
+                }
+                else if (CONTENT_PROPERTIES.has(name) || isChildResolvedProperty(name, node.tag) || isTextValueProperty(name, node.tag) || seenSpread)
                 {
                     ctx.bindings.push({ kind: 'property', target: id, name, value });
                 }
@@ -317,7 +326,10 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
             ctx.bindings.push({ kind: 'style', target: id, base: styleBase, dynamic: styleDynamic, props: styleProps });
         }
 
-        return { kind: 'element', id, tag: node.tag, attrs, children: node.children.map(child => lowerChild(child, ctx)) };
+        const children = valueText !== null
+            ? [{ kind: 'text' as const, id: ctx.next++, value: valueText }]
+            : node.children.map(child => lowerChild(child, ctx));
+        return { kind: 'element', id, tag: node.tag, attrs, children };
     };
 
     const lowerChild = (child: MarkupChild, ctx: Ctx): TemplateNode =>

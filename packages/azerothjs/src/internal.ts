@@ -164,7 +164,7 @@ export { currentBase, documentBase, isBasePrefix, renderWithBase } from './i18n/
 export { isLanguageTag } from './i18n/locale.ts';
 export { joinBase, normalizeBase, stripBasePrefix } from './router/base.ts';
 export { isAbsoluteAppPath, isExternalUrl } from './semantics.ts';
-export { bindHole, bindContent, bindEvent, bindSlot, bindProps, setProp, hydrateChild, appendChild } from './renderer/h.ts';
+export { bindHole, bindContent, bindText, bindEvent, bindSlot, bindProps, setProp, hydrateChild, appendChild } from './renderer/h.ts';
 export { tmpl } from './renderer/template.ts';
 
 // Builtin components (usable in markup with no import).

@@ -160,7 +160,7 @@ describe('the compiled runtime lives on the internal subpath, not the public ent
 {
     it('the public entry no longer leaks the compiler-emitted helpers', () =>
     {
-        for (const name of ['tmpl', 'bindHole', 'bindContent', 'bindEvent', 'bindSlot', 'bindProps', 'setProp'])
+        for (const name of ['tmpl', 'bindHole', 'bindContent', 'bindText', 'bindEvent', 'bindSlot', 'bindProps', 'setProp'])
         {
             expect((core as Record<string, unknown>)[name], `"${ name }" must NOT be public`).toBeUndefined();
         }
@@ -169,7 +169,7 @@ describe('the compiled runtime lives on the internal subpath, not the public ent
     it('azerothjs/internal carries them for compiled output', async () =>
     {
         const internal = await import('azerothjs/internal');
-        for (const name of ['tmpl', 'bindHole', 'bindContent', 'bindEvent', 'bindSlot', 'bindProps', 'setProp', 'h', 'isStringMode'])
+        for (const name of ['tmpl', 'bindHole', 'bindContent', 'bindText', 'bindEvent', 'bindSlot', 'bindProps', 'setProp', 'h', 'isStringMode'])
         {
             expect(typeof (internal as Record<string, unknown>)[name], `internal "${ name }"`).toBe('function');
         }

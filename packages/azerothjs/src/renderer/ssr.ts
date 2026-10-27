@@ -21,11 +21,18 @@
  */
 
 import type { Props, Child } from './types.ts';
-import { untrack, escapeText, escapeAttr, ssr } from '../reactivity/index.ts';
-import { resolveThunks, serializeChild, currentStreamSession } from '../reactivity/internal.ts';
+import { untrack, escapeText, escapeAttr, ssr, isSSRNode } from '../reactivity/index.ts';
+import { resolveThunks, serializeChild, currentStreamSession, isHydrationNode } from '../reactivity/internal.ts';
 import type { SSRNode } from '../reactivity/index.ts';
+import { isSlotHandle } from '../reactivity/slot-handle.ts';
 import {
     isChildResolvedProperty,
+    isTextValueProperty,
+    textHoleValueMessage,
+    contentModel,
+    textValue,
+    leadingNewlinePad,
+    escapeCarriageReturns,
     hostEventType,
     isReservedHostAttribute,
     isEventNamespace,
@@ -35,7 +42,6 @@ import {
     canonicalHandlerName,
     CONTENT_PROPERTIES,
     VOID_ELEMENTS,
-    RAW_TEXT_ELEMENTS,
     isAriaStateAttribute,
     URL_ATTRIBUTES,
     REFUSED_TAGS,
@@ -78,6 +84,97 @@ function neutralizeRawText(tagName: string, content: string): string
     return tagName === 'script'
         ? content.replace(SCRIPT_BREAKOUT, '\\u003c')
         : content.replace(STYLE_BREAKOUT, '\\3c');
+}
+
+/** Bounds the arrays {@link joinText} walks, so an array that holds itself stops. */
+const MAX_TEXT_DEPTH = 512;
+
+/**
+ * The text a `<textarea>` or `<title>` child gives, as the same hole renders in any other element;
+ * a getter resolves in the caller's tracking context, and a node has no text and is refused.
+ *
+ * @internal
+ */
+export function joinText(tag: string, value: unknown, depth = 0): string
+{
+    if (value === null || value === undefined || value === false)
+    {
+        return '';
+    }
+    if (typeof value === 'string')
+    {
+        return value;
+    }
+    if (typeof value === 'function')
+    {
+        const resolved = resolveThunks(value);
+        return typeof resolved === 'function' ? '' : joinText(tag, resolved, depth);
+    }
+    if (Array.isArray(value))
+    {
+        let out = '';
+        if (depth < MAX_TEXT_DEPTH)
+        {
+            for (const item of value)
+            {
+                out += joinText(tag, item, depth + 1);
+            }
+        }
+        return out;
+    }
+    if (isSSRNode(value) || isHydrationNode(value) || isSlotHandle(value) || (typeof Node !== 'undefined' && value instanceof Node))
+    {
+        throw new TypeError(textHoleValueMessage(tag, isSlotHandle(value) ? 'a route slot' : 'an element or a component\'s output'));
+    }
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- a hole's own coercion
+    return String(value);
+}
+
+/** Whether a list of children holds a getter at any depth. @internal */
+export function holdsGetter(parts: readonly unknown[], depth = 0): boolean
+{
+    for (const part of parts)
+    {
+        if (typeof part === 'function' || (Array.isArray(part) && depth < MAX_TEXT_DEPTH && holdsGetter(part, depth + 1)))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** The `</textarea` or `</title` that would end the element, in any case. @internal */
+const END_TAG = { textarea: /<(?=\/textarea)/gi, title: /<(?=\/title)/gi } as const;
+
+/**
+ * An escapable raw-text element's content as HTML, from its content property, its value (which
+ * wins over children) or its children, with the LF the parser drops after `<textarea>` added.
+ *
+ * @internal
+ */
+function escapableContent(tagName: 'textarea' | 'title', props: Props, children: Child[]): string
+{
+    let html: string;
+    if ('innerHTML' in props)
+    {
+        // The client parses it as this element's text, so only an end tag needs neutralizing.
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string -- caller-trusted HTML
+        html = String(resolveValue(props.innerHTML) ?? '').replace(END_TAG[tagName], '&lt;');
+    }
+    else if ('textContent' in props)
+    {
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string -- as the DOM coerces it
+        html = escapeCarriageReturns(escapeText(String(resolveValue(props.textContent) ?? '')));
+    }
+    else if (Object.hasOwn(props, 'value') && isTextValueProperty('value', tagName))
+    {
+        html = escapeCarriageReturns(escapeText(textValue(resolveValue(props.value))));
+    }
+    else
+    {
+        html = escapeCarriageReturns(escapeText(untrack(() => joinText(tagName, children))));
+    }
+    return `${ leadingNewlinePad(tagName, html) }${ html }`;
 }
 
 /**
@@ -478,9 +575,10 @@ function resolveValue(value: unknown): unknown
  *   - `true` -> boolean attribute (`disabled=""`)
  *   - everything else -> `key="<escaped value>"`
  *
- * `value`, `checked`, `selected` and `disabled` are DOM properties on the client, but their
- * correct initial representation on the server IS the matching attribute, which these rules
- * already produce.
+ * `value`, `checked`, `selected` and `disabled` are DOM properties on the client, and their
+ * initial representation on the server is the matching attribute, which these rules already
+ * produce - except `value` on `<select>` and `<textarea>`, which have no such attribute and are
+ * written by serializeElement.
  *
  * @param props - The props passed to h()
  * @returns The serialized attribute string (may be empty)
@@ -542,10 +640,9 @@ function serializeAttrs(props: Props, tag?: string): string
         // and checking the raw thunk here would see a function and wave every reactive prop past.
         assertSafeAttribute(key, value, tag, (attr) => resolveValue(props[attr]));
 
-        // `<select value>` has no attribute form; the selection is expressed as `selected` on the
-        // matching <option> (see serializeElement). Emitting it would be inert markup that makes
-        // the pre-hydration paint disagree with the client render.
-        if (tag !== undefined && isChildResolvedProperty(key, tag))
+        // `<select value>` and `<textarea value>` have no attribute form (see serializeElement), so
+        // emitting one would be inert markup the pre-hydration paint disagrees with.
+        if (tag !== undefined && (isChildResolvedProperty(key, tag) || isTextValueProperty(key, tag)))
         {
             continue;
         }
@@ -607,8 +704,9 @@ function serializeChildren(children: Child[]): string
  * Content precedence matches the DOM path: `innerHTML` (raw, unescaped) wins,
  * else `textContent` (escaped), else the serialized children. On a raw-text
  * element (`<script>`/`<style>`) the same precedence holds, but either content
- * property is breakout-neutralized instead of entity-escaped. Void elements
- * emit no content and no closing tag.
+ * property is breakout-neutralized instead of entity-escaped. A `<textarea>` or
+ * `<title>` holds one escaped text: its children joined, or a textarea's `value`.
+ * Void elements emit no content and no closing tag.
  *
  * @param tag - The element tag name
  * @param props - The props/attributes
@@ -643,7 +741,8 @@ export function serializeElement(tag: string, props: Props, children: Child[]): 
     // every non-hydrating reader while the browser render carried the content. Only the
     // sequences that could TERMINATE the element are neutralized (see neutralizeRawText), so a
     // content value can never close the tag and continue as live markup.
-    if (RAW_TEXT_ELEMENTS.has(tagName))
+    const model = contentModel(tagName);
+    if (model === 'raw-text')
     {
         let raw: string;
         if ('innerHTML' in props)
@@ -670,6 +769,13 @@ export function serializeElement(tag: string, props: Props, children: Child[]): 
             }
         }
         return ssr(`<${ tagName }${ attrs }>${ neutralizeRawText(tagName, raw) }</${ tagName }>`);
+    }
+
+    // `<textarea>`/`<title>`: the parser reads the content as one text, so it is written as one
+    // escaped text with no hole anchors, which would show as text.
+    if (model === 'escapable-raw-text')
+    {
+        return ssr(`<${ tagName }${ attrs }>${ escapableContent(tagName as 'textarea' | 'title', props, children) }</${ tagName }>`);
     }
 
     let inner: string;

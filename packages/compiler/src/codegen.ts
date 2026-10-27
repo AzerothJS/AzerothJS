@@ -33,7 +33,7 @@
 
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
-import { isFactoryProp, isBranchPosition, bindWriteBack, canonicalHandlerName, VOID_ELEMENTS, RAW_TEXT_ELEMENTS } from 'azerothjs/semantics';
+import { isFactoryProp, isBranchPosition, bindWriteBack, canonicalHandlerName, contentModel, leadingNewlinePad, escapeCarriageReturns, VOID_ELEMENTS } from 'azerothjs/semantics';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
 import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isCollectionLiteral, objectKey, alreadyImports } from './markup-util.ts';
 import { buildLineStarts, locationFor, encodeMappings, type SourceMapV3, type RawSegment } from './sourcemap.ts';
@@ -51,7 +51,7 @@ import { MARKER_ROW } from './markers.ts';
 import { lowerStatements, lowerExpression, watchDepGetters } from './lower-reactive.ts';
 import type { ReactiveSources } from './dep.ts';
 import type { ComponentDecl } from './ast.ts';
-import { isReactive, type RenderPlan, type TemplateNode, type Binding, type TextBinding, type BindBinding, type EventBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren, type LetBinding, type PropEntry } from './ir.ts';
+import { isReactive, type RenderPlan, type TemplateNode, type TemplateElement, type Binding, type TextBinding, type BindBinding, type EventBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren, type LetBinding, type PropEntry } from './ir.ts';
 
 const RUNTIME_MODULE = 'azerothjs/internal';
 
@@ -622,9 +622,94 @@ function onlyChildHoleOf(node: TemplateNode): TemplateNode | null
     return child !== undefined && child.kind === 'hole' ? child : null;
 }
 
+/**
+ * Whether an element's children stay out of the clone's node paths: a `<textarea>` or `<title>`,
+ * whose content is one text bindText drives, or a `<noscript>`, whose content is server-only.
+ */
+function ownsContent(node: TemplateNode): boolean
+{
+    if (node.kind !== 'element')
+    {
+        return false;
+    }
+    const model = contentModel(node.tag);
+    return model === 'escapable-raw-text' || model === 'server-only';
+}
+
+/** The textareas and titles that hold a hole, outside any server-only content. */
+function collectTextElements(node: TemplateNode, into: TemplateElement[]): void
+{
+    if (node.kind === 'element' && contentModel(node.tag) === 'escapable-raw-text')
+    {
+        if (node.children.some(child => child.kind === 'hole'))
+        {
+            into.push(node);
+        }
+        return;
+    }
+    if ((node.kind === 'element' && contentModel(node.tag) !== 'server-only') || node.kind === 'fragment')
+    {
+        for (const child of node.children)
+        {
+            collectTextElements(child, into);
+        }
+    }
+}
+
+/** The ids of every node inside a `<noscript>`, which the clone neither builds nor binds. */
+function collectServerOnly(node: TemplateNode, into: Set<number>, inside = false): void
+{
+    if (inside)
+    {
+        into.add(node.id);
+    }
+    if (node.kind === 'element' || node.kind === 'fragment')
+    {
+        const below = inside || (node.kind === 'element' && contentModel(node.tag) === 'server-only');
+        for (const child of node.children)
+        {
+            collectServerOnly(child, into, below);
+        }
+    }
+}
+
+/** A bindText call's arguments after the element: merged static text, and each hole's value. */
+function textParts(source: string, el: TemplateElement, plan: RenderPlan, sources: ReactiveSources, emit: Emit): string
+{
+    const parts: string[] = [];
+    let text: string | null = null;
+    for (const child of el.children)
+    {
+        if (child.kind === 'text')
+        {
+            text = (text ?? '') + child.value;
+            continue;
+        }
+        if (text !== null)
+        {
+            parts.push(quoteString(text));
+            text = null;
+        }
+        if (child.kind === 'hole')
+        {
+            const binding = plan.bindings.find((b): b is TextBinding => b.kind === 'text' && b.target === child.id);
+            parts.push(binding ? exprValue(source, binding.expr, sources, emit) : 'null');
+        }
+    }
+    if (text !== null)
+    {
+        parts.push(quoteString(text));
+    }
+    return parts.map(part => `, ${ part }`).join('');
+}
+
 /** Collects the ids of holes that are their element's only child. */
 function collectOnlyChildHoles(node: TemplateNode, into: Set<number>): void
 {
+    if (ownsContent(node))
+    {
+        return;
+    }
     const hole = onlyChildHoleOf(node);
     if (hole !== null)
     {
@@ -658,11 +743,19 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
     // keeps the general bindProps, whose merge/ref semantics are the runtime's job.
     // Component bindings (control-flow / component slots) are collected separately
     // and driven into their co-range via bindSlot.
+    // A textarea's or a title's holes are driven together by one bindText on the element, and
+    // nothing inside a noscript is built or bound by the clone.
+    const textElements: TemplateElement[] = [];
+    collectTextElements(plan.template, textElements);
+    const serverOnly = new Set<number>();
+    collectServerOnly(plan.template, serverOnly);
+    const textHoles = new Set<number>(textElements.flatMap(el => el.children.map(child => child.id)));
+
     const elementBindings = new Map<number, Binding[]>();
     const componentBindings: ComponentBinding[] = [];
     for (const binding of plan.bindings)
     {
-        if (binding.kind === 'text')
+        if (binding.kind === 'text' || serverOnly.has(binding.target))
         {
             continue;
         }
@@ -676,10 +769,12 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
         elementBindings.set(binding.target, group);
     }
 
-    const textBindings = plan.bindings.filter((b): b is TextBinding => b.kind === 'text');
+    const textBindings = plan.bindings.filter((b): b is TextBinding =>
+        b.kind === 'text' && !textHoles.has(b.target) && !serverOnly.has(b.target));
     const boundIds = new Set<number>([
         ...elementBindings.keys(),
         ...textBindings.map(b => b.target),
+        ...textElements.map(el => el.id),
         ...componentBindings.map(b => b.target)
     ]);
 
@@ -793,6 +888,11 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
             emit.used.add('bindHole');
             binds.push(`bindHole(${ nodeVar(binding.target) }, ${ exprValue(source, binding.expr, sources, emit) });`);
         }
+    }
+    for (const el of textElements)
+    {
+        emit.used.add('bindText');
+        binds.push(`bindText(${ nodeVar(el.id) }${ textParts(source, el, plan, sources, emit) });`);
     }
     for (const binding of componentBindings)
     {
@@ -1079,6 +1179,14 @@ function emitNode(source: string, node: TemplateNode, plan: RenderPlan, sources:
         ...propEntries(source, group, sources, emit)
     ];
     const childItems = node.children.map(child => emitNode(source, child, plan, sources, emit));
+    // A noscript's content is built only to serialize or hydrate it, so a client render never
+    // loads an image or runs a ref or a component inside it.
+    if (childItems.length > 0 && contentModel(node.tag) === 'server-only')
+    {
+        emit.used.add('isStringMode');
+        emit.used.add('isHydrating');
+        return `h(${ quoteString(node.tag) }, { ${ props.join(', ') } }, ...(isStringMode() || isHydrating() ? [${ childItems.join(', ') }] : []))`;
+    }
     const args = [quoteString(node.tag), `{ ${ props.join(', ') } }`, ...childItems];
     return `h(${ args.join(', ') })`;
 }
@@ -1391,6 +1499,10 @@ function pathExpr(path: number[]): string
 function computePaths(node: TemplateNode, path: number[], into: Map<number, number[]>): void
 {
     into.set(node.id, path);
+    if (ownsContent(node))
+    {
+        return;
+    }
     // An only-child hole has no anchors in the clone - its binding targets the
     // PARENT element itself (bindContent drives the element's content).
     const onlyHole = onlyChildHoleOf(node);
@@ -1474,7 +1586,8 @@ function serialize(node: TemplateNode): string
     // does not decode entities inside these elements, so HTML-escaping `&`/`<` here would render
     // `&amp;`/`&lt;` literally and corrupt the CSS or JSON-LD. The parser already read the content
     // as a single literal text node (no holes), so only text children appear.
-    if (RAW_TEXT_ELEMENTS.has(node.tag))
+    const model = contentModel(node.tag);
+    if (model === 'raw-text')
     {
         for (const child of node.children)
         {
@@ -1483,6 +1596,21 @@ function serialize(node: TemplateNode): string
                 html += child.value;
             }
         }
+        return `${ html }</${ node.tag }>`;
+    }
+    // `<textarea>`/`<title>` content is one text: static text bakes in, and with a hole the element
+    // stays empty for bindText. The parser drops one LF right after `<textarea>`, so one is added.
+    if (model === 'escapable-raw-text')
+    {
+        if (node.children.some(child => child.kind === 'hole'))
+        {
+            return `${ html }</${ node.tag }>`;
+        }
+        const text = escapeCarriageReturns(escapeText(node.children.map(child => child.kind === 'text' ? child.value : '').join('')));
+        return `${ html }${ leadingNewlinePad(node.tag, text) }${ text }</${ node.tag }>`;
+    }
+    if (model === 'server-only')
+    {
         return `${ html }</${ node.tag }>`;
     }
     // An only-child hole serializes to NOTHING: the element bounds the content,

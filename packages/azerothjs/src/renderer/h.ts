@@ -26,18 +26,24 @@ import { createEffect, createRoot, isStringMode, isHydrating, onRootDispose, unt
 import { hydrationNode, isHydrationNode, HydrationCursor, HydrationMismatchError, transferCarriedSymbols, resolveThunks, isImpliedTbody } from '../reactivity/internal.ts';
 import { destroyComponent } from '../component/index.ts';
 import { isSlotHandle, slotDriverOf, refuseSlotHandle } from '../reactivity/slot-handle.ts';
-import { serializeElement, assertSafeAttribute, assertSafeTag, isAriaBoolean } from './ssr.ts';
+import { serializeElement, assertSafeAttribute, assertSafeTag, isAriaBoolean, joinText, holdsGetter } from './ssr.ts';
 import type { PeerAttr } from './ssr.ts';
-import { writeSelectValue, settleSelectValue } from './select-value.ts';
+import { writeSelectValue, settleSelectValue, watchFormResets } from './select-value.ts';
+import { boundText, setText, resetPending } from './text-value.ts';
 import { attachEvent } from './delegate.ts';
-import { isChildResolvedProperty } from '../semantics.ts';
 import {
+    isChildResolvedProperty,
+    isTextValueProperty,
+    contentModel,
+    textValue,
+    normalizeLineBreaks,
     hostEventType,
     isReservedHostAttribute,
     isEventNamespace,
     refValueMessage,
     reservedHostAttributeMessage,
     contentChildrenMessage,
+    textValueOwnerMessage,
     voidChildrenMessage,
     CONTENT_PROPERTIES,
     DOM_PROPERTIES,
@@ -74,8 +80,8 @@ import { createElementByTag } from './namespace.ts';
  * @param children - Zero or more children to append.
  * @returns The element, with every binding already active.
  * @throws {Error} If the tag or an attribute is refused by the safety rules - an executable
- *                 tag, a reserved lowercase `on*` spelling, children on a void element, or
- *                 children alongside a content property.
+ *                 tag, a reserved lowercase `on*` spelling, children on a void element,
+ *                 children alongside a content property, or a textarea value beside one.
  * @example
  * h('div', { class: () => isActive() ? 'on' : 'off' },
  *     h('span', {}, () => `Count: ${ count() }`),
@@ -110,6 +116,18 @@ export function h(tag: string, props: Props | null, ...children: Child[]): HTMLE
             throw new TypeError(contentChildrenMessage(contentProp));
         }
     }
+    // A textarea's value and a content property cannot both own its text; beside children the
+    // value wins.
+    if (Object.hasOwn(properties, 'value') && isTextValueProperty('value', tagName))
+    {
+        for (const contentProp of CONTENT_PROPERTIES)
+        {
+            if (Object.hasOwn(properties, contentProp))
+            {
+                throw new TypeError(textValueOwnerMessage(contentProp));
+            }
+        }
+    }
 
     // Server-side rendering: in string mode there is no document, so emit HTML
     // directly. The SSRNode is cast to HTMLElement so it flows through
@@ -142,7 +160,19 @@ export function h(tag: string, props: Props | null, ...children: Child[]): HTMLE
 
     applyProps(el, properties);
 
-    appendChildren(el, children);
+    // A textarea's or a title's children are its one text; a noscript's content is the server's.
+    const model = contentModel(tagName);
+    if (model === 'escapable-raw-text')
+    {
+        if (hasRenderableChildren(children))
+        {
+            driveText(el, children);
+        }
+    }
+    else if (model !== 'server-only')
+    {
+        appendChildren(el, children);
+    }
 
     // The element's own children are in place, so a <select value> written above can apply. This
     // is targeted at THIS element: a global walk here would cost O(tracked selects) per element.
@@ -167,6 +197,13 @@ function applyProps(el: HTMLElement, props: Props): void
         const raw = props[attr];
         return typeof raw === 'function' ? untrack(() => resolveReactive(raw)) : raw;
     };
+
+    // A textarea's value owns its text from here, before its first write may be queued behind
+    // the children's.
+    if (Object.hasOwn(props, 'value') && isTextValueProperty('value', el.localName))
+    {
+        boundText.set(el, '');
+    }
 
     // for...in rather than Object.entries: this runs once per element created, and entries()
     // allocates an array of tuples each call.
@@ -293,6 +330,11 @@ function setProperty(el: HTMLElement, key: string, value: unknown, peer: PeerAtt
         if (isChildResolvedProperty(key, el.localName))
         {
             writeSelectValue(el as HTMLSelectElement, value);
+            return;
+        }
+        if (isTextValueProperty(key, el.localName))
+        {
+            writeTextValue(el as HTMLTextAreaElement, value);
             return;
         }
         (el as unknown as Record<string, unknown>)[key] = value;
@@ -963,6 +1005,70 @@ function placeStatic(el: HTMLElement, value: unknown): void
 }
 
 /**
+ * Drives a cloned `<textarea>`'s or `<title>`'s static text and holes as one text node, which one
+ * effect keeps current; a textarea whose value owns its text is left to the value.
+ *
+ * @param el - The textarea or title inside a template clone
+ * @param parts - Its children in order: strings, and each hole's value or getter
+ *
+ * @internal Compiler-emitted runtime; not part of the application API.
+ */
+export function bindText(el: HTMLElement, ...parts: Child[]): void
+{
+    driveText(el, parts);
+}
+
+/**
+ * Keeps an escapable raw-text element's text equal to its joined children, holding no node, so a
+ * node something else replaced is followed. A value-owned textarea is skipped.
+ *
+ * @internal
+ */
+function driveText(el: HTMLElement, parts: readonly Child[]): void
+{
+    if (boundText.has(el))
+    {
+        return;
+    }
+    const tag = el.localName;
+    const write = (): void =>
+    {
+        setText(el, joinText(tag, parts));
+    };
+    if (holdsGetter(parts))
+    {
+        createEffect(write);
+    }
+    else
+    {
+        write();
+    }
+}
+
+/**
+ * Writes a textarea's value, then its default text, when the value differs: an echo writes nothing,
+ * and the value first leaves the caret at the end; in a reset, an equal value writes the default.
+ *
+ * @internal
+ */
+function writeTextValue(el: HTMLTextAreaElement, value: unknown): void
+{
+    const text = textValue(value);
+    boundText.set(el, text);
+    if (el.value !== normalizeLineBreaks(text))
+    {
+        el.value = text;
+        setText(el, text);
+    }
+    else if (resetPending(el))
+    {
+        // Written while its form's reset is dispatched: a reset that runs restores this text.
+        setText(el, text);
+    }
+    watchFormResets();
+}
+
+/**
  * Wires one event handler through the language's single attachment model - the
  * same {@link attachEvent} h(), spreads, and hydration use, including its
  * handler-value rule (nullish is a no-op, any other non-function throws).
@@ -1392,6 +1498,33 @@ function createHydrationNode(tag: string, props: Props, children: Child[]): Hydr
         // the children (there are none) would (correctly) find the server-rendered content
         // unclaimed and trip the whole-page fallback. Skip the child walk.
         if ('innerHTML' in props || 'textContent' in props)
+        {
+            return;
+        }
+
+        const model = contentModel(tag);
+        if (model === 'escapable-raw-text')
+        {
+            // A textarea's value was served as its text, and applyProps wrote it on a difference.
+            if (Object.hasOwn(props, 'value') && isTextValueProperty('value', tag))
+            {
+                return;
+            }
+            // Text, and the comments an svg title served by an earlier build holds, which the
+            // first write folds into one text node.
+            for (const served of Array.from(el.childNodes))
+            {
+                if (served.nodeType !== 3 && served.nodeType !== 8)
+                {
+                    throw new HydrationMismatchError(`<${ tag }> holds text only, found <${ served.nodeName.toLowerCase() }>`);
+                }
+            }
+            driveText(el, children);
+            return;
+        }
+
+        // Read as raw text by the parser, so there is no tree to adopt.
+        if (model === 'server-only' || model === 'raw-text-parsed')
         {
             return;
         }

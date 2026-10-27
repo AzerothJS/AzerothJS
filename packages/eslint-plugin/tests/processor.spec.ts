@@ -203,6 +203,22 @@ describe('markup lint surfaces through the processor (rules no TS rule can expre
         expect(ids).toContain('azeroth/reserved-event-name');
     });
 
+    it('the content-model refusals reach ESLint at the spans the build reports', () =>
+    {
+        const source = 'export default component Demo\n{\n    state v = \'hi\';\n'
+            + '    <div><textarea><b>x</b></textarea><xmp>{ v }</xmp><textarea value={ v }>child</textarea><title bind:value={ v }>x</title></div>\n}\n';
+        const messages = lint(source, {});
+        const spans = (ruleId: string): string[] => messages
+            .filter(m => m.ruleId === ruleId)
+            .map(m => source.slice(toOffset(source, m.line, m.column), toOffset(source, m.endLine!, m.endColumn!)));
+
+        expect(spans('azeroth/text-only-content')).toEqual(['<b>x</b>']);
+        expect(spans('azeroth/raw-text-content')).toEqual(['{ v }']);
+        expect(spans('azeroth/content-property-children')).toEqual(['value={ v }']);
+        expect(spans('azeroth/title-value')).toEqual(['bind:value={ v }']);
+        expect(messages.filter(m => m.ruleId?.startsWith('azeroth/') && m.ruleId !== 'azeroth/interpolation-spacing').every(m => m.severity === 2)).toBe(true);
+    });
+
     it('eslint --fix applies EVERY markup fix in one pass (multiple holes)', () =>
     {
         const source = 'export default component Demo\n{\n    state a = 0;\n    <div title={a}>{a} <b>{  a  }</b></div>\n}\n';

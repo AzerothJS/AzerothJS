@@ -145,8 +145,8 @@ export function contentChildrenMessage(prop: string): string
  * the property, so the two writers agree; `innerHTML`/`textContent` additionally own the
  * element's content (see {@link CONTENT_PROPERTIES}).
  *
- * The one exception is `value` on `<select>` - see {@link isChildResolvedProperty}. Treating
- * that as attribute-backed is what made four separate writers wrong the same way.
+ * Two exceptions have no attribute form: `value` on `<select>` (see
+ * {@link isChildResolvedProperty}) and `value` on `<textarea>` (see {@link isTextValueProperty}).
  */
 export const DOM_PROPERTIES: ReadonlySet<string> = new Set([
     'value', 'checked', 'selected', 'disabled', 'innerHTML', 'textContent'
@@ -162,8 +162,8 @@ export const DOM_PROPERTIES: ReadonlySet<string> = new Set([
  *   before the children are in place writes nothing and reports no error.
  * - It therefore must not bake into a static template, where there is no writer left to re-run.
  *
- * Keyed on BOTH name and tag deliberately: `value` on `<input>`, `<textarea>` and `<option>` is
- * genuinely attribute-backed, so a name-only check would break all three.
+ * Keyed on BOTH name and tag deliberately: `value` on `<input>` and `<option>` is genuinely
+ * attribute-backed, so a name-only check would break both.
  *
  * @param prop - The property name.
  * @param tag - The element's tag name, in any case.
@@ -173,6 +173,42 @@ export function isChildResolvedProperty(prop: string, tag: string): boolean
 {
     // `prop` first: the common case fails on one string compare and never lowercases the tag.
     return prop === 'value' && tag.toLowerCase() === 'select';
+}
+
+/**
+ * Whether a property is the element's TEXT: `value` on `<textarea>`, which has no attribute, wins
+ * over children and never bakes into a template. Disjoint from {@link isChildResolvedProperty}.
+ *
+ * @param prop - The property name.
+ * @param tag - The element's tag name, in any case.
+ */
+export function isTextValueProperty(prop: string, tag: string): boolean
+{
+    return prop === 'value' && tag.toLowerCase() === 'textarea';
+}
+
+/**
+ * The one coercion of a textarea value, the value property's own: `null` gives `''`, anything
+ * else `String(value)`, so `undefined` gives `'undefined'`.
+ */
+export function textValue(value: unknown): string
+{
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- the property's own coercion
+    return value === null ? '' : String(value);
+}
+
+/** The one rule text for a textarea `value` beside another owner of its text. */
+export function textValueOwnerMessage(other: string): string
+{
+    const owner = other === 'children' ? 'children' : `'${ other }'`;
+    return `'value' and ${ owner } both set a <textarea>'s text - keep one: value={ text } or bind:value={ text } `
+        + 'for text the state controls, or the text as children for a default the user can edit.';
+}
+
+/** The one rule text for `value` on a `<title>`. */
+export function titleValueMessage(attr: string): string
+{
+    return `'${ attr }' does nothing on <title> - a title's text is its content: write <title>{ text }</title>.`;
 }
 
 /**
@@ -202,11 +238,79 @@ export function voidChildrenMessage(tag: string): string
 }
 
 /**
- * HTML raw-text elements: their content is CDATA, not markup. `<style>`/`<script>` carry
- * `{`, `<`, and `&` that must stay LITERAL - parsers read their content verbatim and
- * serializers emit it unescaped.
+ * How the HTML parser reads content that is not markup: verbatim (script, style), as one decoded
+ * text (textarea, title), as raw text (iframe, noembed, noframes, xmp), or server-only (noscript).
  */
-export const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(['script', 'style']);
+export type ContentModel = 'raw-text' | 'escapable-raw-text' | 'raw-text-parsed' | 'server-only';
+
+const CONTENT_MODELS: ReadonlyMap<string, ContentModel> = new Map<string, ContentModel>([
+    ['script', 'raw-text'],
+    ['style', 'raw-text'],
+    ['textarea', 'escapable-raw-text'],
+    ['title', 'escapable-raw-text'],
+    ['iframe', 'raw-text-parsed'],
+    ['noembed', 'raw-text-parsed'],
+    ['noframes', 'raw-text-parsed'],
+    ['xmp', 'raw-text-parsed'],
+    ['noscript', 'server-only']
+]);
+
+/**
+ * The content model of a host element, or null for markup content. Looked up in any case, as the
+ * parser reads tag names, and keyed on the tag alone, so an svg `<title>` holds one text too.
+ */
+export function contentModel(tag: string): ContentModel | null
+{
+    return CONTENT_MODELS.get(tag.toLowerCase()) ?? null;
+}
+
+/**
+ * The LF a textarea's content needs in front: the parser drops one LF, CR or `&#10;` right after
+ * `<textarea>`, so content whose HTML starts with LF, CR or `&` gets one more.
+ */
+export function leadingNewlinePad(tag: string, html: string): string
+{
+    return tag.toLowerCase() === 'textarea' && /^[\n\r&]/.test(html) ? '\n' : '';
+}
+
+/**
+ * Writes each CR in escaped textarea or title text as `&#13;`: the parser reads a raw CR as a
+ * line feed, while h() and hydration keep it.
+ */
+export function escapeCarriageReturns(html: string): string
+{
+    return html.replace(/\r/g, '&#13;');
+}
+
+/**
+ * Reads each CRLF and each lone CR as LF, as the parser reads a line break in the source and as a
+ * textarea's value property reads its text.
+ */
+export function normalizeLineBreaks(text: string): string
+{
+    return text.replace(/\r\n?/g, '\n');
+}
+
+/** The one rule text for markup inside an escapable raw-text element. */
+export function textOnlyChildMessage(tag: string, child: string): string
+{
+    return `<${ tag }> holds text only - the browser never renders ${ child } inside it as an element. `
+        + `Write text and { holes } here, or move ${ child } outside the <${ tag }>.`;
+}
+
+/** The one rule text for a hole inside an escapable raw-text element whose value is not text. */
+export function textHoleValueMessage(tag: string, got: string): string
+{
+    return `A hole inside <${ tag }> gives text - a string, a number, or a list of them; got ${ got }. `
+        + `Render it outside the <${ tag }>.`;
+}
+
+/** The one rule text for a hole or markup inside a raw-text-parsed element. */
+export function rawTextParsedMessage(tag: string): string
+{
+    return `The browser reads <${ tag }> content as raw text, so a hole or an element inside it can never render. `
+        + 'Only static text is accepted here.';
+}
 
 /**
  * Event types attached through the shared document-level dispatcher instead of a

@@ -14,7 +14,13 @@ import {
     CONTENT_PROPERTIES,
     DOM_PROPERTIES,
     VOID_ELEMENTS,
-    RAW_TEXT_ELEMENTS,
+    contentModel,
+    leadingNewlinePad,
+    escapeCarriageReturns,
+    normalizeLineBreaks,
+    textValue,
+    isTextValueProperty,
+    isChildResolvedProperty,
     DELEGATED_EVENTS,
     isDelegatedEvent,
     EVENT_HANDLER_NAMES,
@@ -121,12 +127,61 @@ describe('write-back, content, and property facts', () =>
         }
     });
 
-    it('void and raw-text sets carry the HTML tables', () =>
+    it('the void set carries the HTML table', () =>
     {
         expect(VOID_ELEMENTS.has('input')).toBe(true);
         expect(VOID_ELEMENTS.has('div')).toBe(false);
-        expect(RAW_TEXT_ELEMENTS.has('script')).toBe(true);
-        expect(RAW_TEXT_ELEMENTS.has('style')).toBe(true);
+    });
+
+    it('one content-model table names how the parser reads each element, in any case', () =>
+    {
+        expect(['script', 'style'].map(contentModel)).toEqual(['raw-text', 'raw-text']);
+        expect(['textarea', 'title'].map(contentModel)).toEqual(['escapable-raw-text', 'escapable-raw-text']);
+        expect(['iframe', 'noembed', 'noframes', 'xmp'].map(contentModel))
+            .toEqual(['raw-text-parsed', 'raw-text-parsed', 'raw-text-parsed', 'raw-text-parsed']);
+        expect(contentModel('noscript')).toBe('server-only');
+        expect(['TEXTAREA', 'textArea', 'tiTle', 'sTyle', 'noScript', 'xMp'].map(contentModel))
+            .toEqual(['escapable-raw-text', 'escapable-raw-text', 'escapable-raw-text', 'raw-text', 'server-only', 'raw-text-parsed']);
+        expect(['div', 'textPath', 'pre'].map(contentModel)).toEqual([null, null, null]);
+    });
+
+    it('a textarea value is its text, disjoint from the select rule', () =>
+    {
+        expect(isTextValueProperty('value', 'textarea')).toBe(true);
+        expect(isTextValueProperty('value', 'textArea')).toBe(true);
+        expect(isTextValueProperty('value', 'input')).toBe(false);
+        expect(isTextValueProperty('defaultValue', 'textarea')).toBe(false);
+        expect(isChildResolvedProperty('value', 'select')).toBe(true);
+        for (const tag of ['textarea', 'select', 'input', 'option'])
+        {
+            expect(isTextValueProperty('value', tag) && isChildResolvedProperty('value', tag)).toBe(false);
+        }
+    });
+
+    it('textValue is the value property\'s own coercion', () =>
+    {
+        expect([null, undefined, false, 0, 'x', ['a', 'b']].map(textValue)).toEqual(['', 'undefined', 'false', '0', 'x', 'a,b']);
+    });
+
+    it('leadingNewlinePad answers content that starts with LF, CR or a reference, after <textarea> only', () =>
+    {
+        expect(['\nx', '\rx', '&#10;x', '&amp;'].map((html) => leadingNewlinePad('textarea', html))).toEqual(['\n', '\n', '\n', '\n']);
+        expect(leadingNewlinePad('textArea', '\nx')).toBe('\n');
+        expect(['x', ' \n', ''].map((html) => leadingNewlinePad('textarea', html))).toEqual(['', '', '']);
+        expect(leadingNewlinePad('title', '\nx')).toBe('');
+        expect(leadingNewlinePad('pre', '\nx')).toBe('');
+    });
+
+    it('escapeCarriageReturns writes each CR as a reference and leaves line feeds, so a leading CR gets the pad', () =>
+    {
+        expect(['a\rb', 'a\r\nb', '\r\r', 'a\nb', ''].map(escapeCarriageReturns)).toEqual(['a&#13;b', 'a&#13;\nb', '&#13;&#13;', 'a\nb', '']);
+        expect(leadingNewlinePad('textarea', escapeCarriageReturns('\rx'))).toBe('\n');
+    });
+
+    it('normalizeLineBreaks reads each CRLF and each lone CR as LF and leaves everything else', () =>
+    {
+        expect(['a\r\nb', 'a\rb', '\r\r\n', '\n\r', 'a\nb', 'a&#13;b', ''].map(normalizeLineBreaks))
+            .toEqual(['a\nb', 'a\nb', '\n\n', '\n\n', 'a\nb', 'a&#13;b', '']);
     });
 });
 

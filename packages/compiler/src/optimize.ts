@@ -23,7 +23,7 @@ import * as ts from 'typescript';
 
 import type { RenderPlan, TemplateNode, StaticAttr, Binding } from './ir.ts';
 
-import { CONTENT_PROPERTIES, isAriaStateAttribute, isChildResolvedProperty } from 'azerothjs/semantics';
+import { CONTENT_PROPERTIES, isAriaStateAttribute, isChildResolvedProperty, isTextValueProperty } from 'azerothjs/semantics';
 import { parseExpressionSlice } from './ts-slice.ts';
 
 /**
@@ -88,8 +88,10 @@ export function foldConstants(source: string, plan: RenderPlan): RenderPlan
             //
             // A child-resolved property (`<select value={'de'}>`) is the same trap: the lowerer
             // deliberately keeps it OUT of the template, and folding it back in would undo that and
-            // leave no writer, which is exactly the bug for a literal `value="de"`.
-            if (CONTENT_PROPERTIES.has(binding.name) || isChildResolvedProperty(binding.name, tagOf.get(binding.target) ?? ''))
+            // leave no writer, which is exactly the bug for a literal `value="de"`. A textarea's
+            // `value` has no attribute form either.
+            const tag = tagOf.get(binding.target) ?? '';
+            if (CONTENT_PROPERTIES.has(binding.name) || isChildResolvedProperty(binding.name, tag) || isTextValueProperty(binding.name, tag))
             {
                 continue;
             }

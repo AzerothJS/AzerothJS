@@ -29,7 +29,7 @@ import {
     skipBalanced,
     skipString
 } from './scanner.ts';
-import { VOID_ELEMENTS, RAW_TEXT_ELEMENTS, isComponentTag, voidChildrenMessage } from 'azerothjs/semantics';
+import { VOID_ELEMENTS, contentModel, isComponentTag, voidChildrenMessage } from 'azerothjs/semantics';
 
 /**
  * The named HTML character references decoded in text content. Numeric references (`&#38;`,
@@ -286,10 +286,9 @@ class MarkupParser
             };
         }
 
-        // Raw-text element (`<script>`/`<style>`): its content is CDATA, read verbatim up to the
-        // matching close tag - NOT parsed for `{ ... }` holes or nested `<tags>`, which would corrupt
-        // CSS/JS/JSON-LD. Matched by EXACT (lowercase) name so a `<Style>` component is untouched.
-        if (RAW_TEXT_ELEMENTS.has(tag))
+        // `<script>`/`<style>` in any case is raw text, read verbatim to its close tag and never
+        // parsed for holes or tags, which would corrupt CSS/JS/JSON-LD. `<Style>` is untouched.
+        if (!isComponentTag(tag) && contentModel(tag) === 'raw-text')
         {
             const raw = this.#parseRawText(tag);
             this.#expectClosingTag(tag);

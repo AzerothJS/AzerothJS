@@ -37,6 +37,7 @@
  */
 
 import { DEV } from '../reactivity/dev.ts';
+import { controlsOf, restoreBoundText } from './text-value.ts';
 
 /** What the framework last asked a select to select, and whether the user has since taken over. */
 interface Intent
@@ -58,44 +59,53 @@ interface Intent
  */
 const intents = new WeakMap<HTMLSelectElement, Intent>();
 
-/** Whether the one document-level listener for form resets is installed. */
+/** Whether the one window-level listener for form resets is installed. */
 let resetWatched = false;
 
 /**
  * form.reset() restores each option's defaultSelected - the parsed `selected` ATTRIBUTE - with
  * NO childList mutation, so the observer never fires. A client-rendered select has no such
  * attribute at all, so reset landed on option 0 and stayed there; a hydrated one snapped to the
- * SSR-era value. Re-applying the intent one microtask after the reset's default action makes a
- * framework-driven select deterministic across both: the framework's value wins, exactly as it
- * does on any other external change, while an overridden (user-owned) select keeps the reset.
+ * SSR-era value. Re-applying the intent one microtask after the event makes a framework-driven
+ * select deterministic across both when script starts the reset, from any handler or timer: the
+ * framework's value wins, while an overridden (user-owned) select keeps the reset. With no script
+ * running (a person clicks a reset button or its label, or presses Enter or Space on it) the
+ * microtask runs before the default action, so the select lands on its HTML default.
+ *
+ * The same listener sets each value-owned textarea's default text to its bound text. It is on the
+ * window, capturing, so only an earlier window listener's stopImmediatePropagation() skips it.
+ *
+ * @internal
  */
-function watchFormResets(): void
+export function watchFormResets(): void
 {
     if (resetWatched || typeof document === 'undefined')
     {
         return;
     }
     resetWatched = true;
-    document.addEventListener('reset', (event) =>
+    (document.defaultView ?? document).addEventListener('reset', (event) =>
     {
-        const form = event.target as HTMLFormElement | null;
-        if (form === null || typeof form.elements === 'undefined')
+        const elements = controlsOf(event.target);
+        if (elements === null)
         {
             return;
         }
-        // The reset's default action runs after dispatch; settle after it has applied.
+        restoreBoundText(event, elements);
+        // After the default action when script started the reset; before it when no script is
+        // running, as when a person clicks a reset button or presses Enter or Space on it.
         queueMicrotask(() =>
         {
-            for (let i = 0; i < form.elements.length; i += 1)
+            for (let i = 0; i < elements.length; i += 1)
             {
-                const element = form.elements[i];
+                const element = elements[i];
                 if ((element as { nodeName?: string } | null)?.nodeName === 'SELECT')
                 {
                     settleSelect(element as HTMLSelectElement);
                 }
             }
         });
-    });
+    }, true);
 }
 
 /** Selects already carrying the change listener, so re-registering cannot stack another. */
