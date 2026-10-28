@@ -118,7 +118,7 @@ export interface RouteLocation
 
     /**
      * This history entry's stamp: stable across revisits of the same entry.
-     * Keys scroll restoration and any per-entry effect state.
+     * Keys scroll restoration and any per-entry effect state. Opaque: compare keys with each other.
      */
     key: string;
 }

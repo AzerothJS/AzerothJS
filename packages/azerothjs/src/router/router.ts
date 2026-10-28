@@ -604,11 +604,33 @@ function stampOf(state: unknown): { key: string; index: number } | null
     return az !== undefined && typeof az.key === 'string' && typeof az.index === 'number' ? az : null;
 }
 
-/** @internal Monotonic entry keys, process-wide (stable enough; stamps live per entry). */
+/** @internal Eight base-36 characters from crypto, else Math.random, else zeros; never throws. */
+function entryKeyEntropy(): string
+{
+    try
+    {
+        const [high = 0, low = 0] = globalThis.crypto.getRandomValues(new Uint32Array(2));
+        return (high * 2 ** 21 + (low >>> 11)).toString(36).padStart(8, '0').slice(-8);
+    }
+    catch
+    {
+        try
+        {
+            return Math.random().toString(36).slice(2, 10).padEnd(8, '0');
+        }
+        catch
+        {
+            return '00000000';
+        }
+    }
+}
+
+/** @internal Per evaluation: a new document restores the tab's stamps but restarts the counter. */
+const ENTRY_KEY_PREFIX = 'az' + entryKeyEntropy() + '-';
 let nextEntryKey = 0;
 function freshKey(): string
 {
-    return `az${ ++nextEntryKey }`;
+    return ENTRY_KEY_PREFIX + String(++nextEntryKey);
 }
 
 /**

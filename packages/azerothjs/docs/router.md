@@ -311,7 +311,7 @@ const location = useRoute();
 location().pathname;        // '/users/7'
 location().navigationKind;  // 'push' | 'replace' | 'pop'
 location().delta;           // -1 back, +1 forward, 0 otherwise
-location().key;             // this history entry's stable stamp
+location().key;             // this history entry's stable stamp. Opaque: compare keys with each other.
 ```
 
 History entries are stamped, so back vs forward is knowable and each entry keys its

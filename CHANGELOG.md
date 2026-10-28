@@ -535,6 +535,20 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   nested more than 4096 levels deep, is built as it is read, or holds more than 1048576 objects (a
   shared object counted once per path, as JSON writes it).
 
+- **A router entry key no longer repeats across the documents of a tab.** Each document counted its
+  entry keys from `az1`, while the browser keeps the stamps of a tab's entries across a reload and
+  across a back or forward that loads a new document, so a navigation in the new document could mint
+  the key of an earlier entry. A push or replace that minted the key of the entry it left skipped
+  scroll handling (no scroll to the top, no `scrollBehavior` call, no `scroll: true`), a pop back
+  across it skipped it too (no restore, no `scrollBehavior` call), and a `scroll: false` on it
+  stayed armed for a later pop; a pop to an earlier entry could be scrolled to the position recorded
+  for the entry that took its key. Each document now mints its keys under a random prefix of its
+  own, from `crypto.getRandomValues()` or else `Math.random()`, so a document no longer mints a key
+  another document of the tab minted. On a host that offers neither while the runtime loads, keys
+  repeat as before, and entries an earlier build stamped keep their keys. A key now reads like
+  `az4k9x0q7m-1` and differs between loads and test runs: compare keys with each other, not with a
+  literal.
+
 ### Security
 
 - **An ISR page whose renderer guarded it kept serving its prerendered file to every visitor.**
