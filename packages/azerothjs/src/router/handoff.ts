@@ -480,8 +480,10 @@ export async function matchAndLoad(
             (isNotFound(error) ? missing : failed).push(level);
         }
 
-        const data = settlements.map((settlement) =>
-            (settlement.status === 'fulfilled' ? settlement.value : undefined));
+        // A loader that resolved undefined is held as null, the value the wire carries, so the
+        // server and the client read the same; a level with no loader stays undefined, as idle.
+        const data = settlements.map((settlement, level) =>
+            (settlement.status === 'fulfilled' && entry.matched[level]?.loader ? settlement.value ?? null : undefined));
 
         if (failed.length === 0 && missing.length === 0)
         {

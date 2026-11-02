@@ -140,6 +140,24 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   fields object that has a `toJSON()` is read through it either way (see Security). A field that is
   itself an error arrives as its name, message and stack, with a rule or without, as before.
 
+- **A loader that resolves undefined reads `null` on a server-rendered page, on the server as after
+  hydration.** Loader results reach the browser as JSON, which writes undefined as `null`, while the
+  server render read undefined (on a streamed page, with the level still loading). A page that
+  branched on the difference was rendered again by the client when its branches differed in
+  structure, and otherwise kept the server's static text while its data read null; a streamed page
+  ran that loader twice per request. The server now reads the value the browser reads. A read in
+  the server render that checks for undefined alone and then dereferences, which threw at hydration
+  before, now throws there: a 500, a failed static build, or the nearest `ErrorBoundary`'s
+  fallback, which a static build writes as the page. In an effect, or in a `Suspense` the server
+  leaves at its fallback, it still throws in the browser. Read such data as
+  `data()?.name ?? fallback`, or check `!= null`. `useLoader(route)`, and `useLoader<T>()` with a
+  `T` that admits undefined, add `null` to the data's type, so `azeroth check` reports that
+  dereference; a cast, or a `T` that leaves undefined out, is not checked. A `T` inferred from a
+  declared type counts too: `const user: Resource<User | undefined> = useLoader()` now needs
+  `Resource<User | null | undefined>`. In generic code over a loader's data type `D`, type the data
+  as `D | null | undefined`; for such a loader, a value typed `LoaderDataOf<typeof route>` no
+  longer accepts `useLoader(route).data()`. A level with no loader still reads undefined.
+
 ### Fixed
 
 - **A hole inside a `<textarea>` or a `<title>` served its anchors as text, and text beside one
@@ -548,6 +566,22 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   repeat as before, and entries an earlier build stamped keep their keys. A key now reads like
   `az4k9x0q7m-1` and differs between loads and test runs: compare keys with each other, not with a
   literal.
+
+- **`createResource` treats an undefined seed as no seed.** A resource given
+  `{ initialValue: undefined }`, which is what a page seeded from its loader passes while that
+  loader has no value yet (on a client navigation into the page, or a `render: 'client'` load),
+  counted as seeded: it never fetched, `loading()` never turned true and the page stayed empty, and
+  with a `cached` fetcher the undefined was written into the shared entry, so other readers of that
+  key did not fetch either and an in-flight one was aborted. `initialError: undefined` made
+  `error()` read undefined, which `error() !== null` reports as a failure, and `initialError: null`
+  counted as a failure seed, so the resource never fetched. A seed is now decided by its value:
+  undefined is no seed, `null`, `0`, `''` and `false` still seed, and an `initialError` of
+  undefined or `null` is no failure. On a server-rendered page whose loader failed or declared
+  `notFound()`, a resource seeded with `initialValue: loader.data()` alone now fetches like an
+  unseeded one; pass `initialError: loader.error()` beside it to keep that level unfetched. A
+  loader that resolves undefined reads `null` there (see Changed), and `null` seeds. Code that
+  passed `initialValue: undefined` to start a resource settled and empty now fetches at mount;
+  pass `initialValue: null` with a type that admits null.
 
 ### Security
 

@@ -85,8 +85,11 @@ export interface ResourceOptions<T>
      * waiting for an effect. Everything after the first key behaves normally - a source
      * change fetches, refetch fetches, and a skip-key reset discards the seed along with the
      * data it clears.
+     *
+     * `undefined` is no seed: the resource fetches as if the option were absent. `null` is the
+     * settled-empty seed, with a `T` that admits null, and `0`, `''` and `false` seed as written.
      */
-    initialValue?: T;
+    initialValue?: T | undefined;
 
     /**
      * Seeds the resource as already settled in the FAILED state: `error()` returns this
@@ -98,6 +101,10 @@ export interface ResourceOptions<T>
      * same state on its first pass - seeding the data instead (or leaving the level loading)
      * makes the client render something the server did not, which is an unrecoverable
      * hydration mismatch rather than a cosmetic one.
+     *
+     * `undefined` and `null` are no seed, since `error()` reads null when nothing failed. A seed
+     * taken from a route loader passes `initialValue: loader.data()` together with
+     * `initialError: loader.error()`, so a level the server could not load stays unfetched.
      */
     initialError?: unknown;
 
@@ -151,10 +158,16 @@ function isOptionsBag(value: unknown): boolean
  * @param maybeFetcherOrOptions - The fetcher when a source was passed first, otherwise the
  *                                options bag.
  * @param maybeOptions - Options, in the source-driven form.
+ * @param options.initialValue - Seeds the resource as already settled, skipping the first fetch;
+ *                               `undefined` is no seed, and `null` is the settled-empty seed for a
+ *                               `T` that admits null.
+ * @param options.initialError - Seeds the resource as settled in the failed state; `undefined`
+ *                               and `null` are no seed.
  * @returns A {@link Resource} of reactive getters plus `refetch`.
  * @throws {TypeError} If the first argument is not a function, which is the forgotten-thunk
- *                     shape `resource r = fetch(url)`; or if the second is neither a fetcher
- *                     nor an options object, which is the same mistake one position over.
+ *                     shape `resource r = fetch(url)`; if the second is neither a fetcher
+ *                     nor an options object, which is the same mistake one position over; or
+ *                     if the source form's third is not an options object.
  * @example
  * // Standalone: loads once.
  * const config = createResource(async (signal) =>
@@ -190,7 +203,11 @@ export function createResource<T>(
  * @param source - The fetch key. Falsy values skip.
  * @param fetcher - Receives the resolved source value and an AbortSignal.
  * @param options - Optional settings.
- * @param options.initialValue - Seeds the resource as already settled, skipping the first fetch.
+ * @param options.initialValue - Seeds the resource as already settled, skipping the first fetch;
+ *                               `undefined` is no seed, and `null` is the settled-empty seed for a
+ *                               `T` that admits null.
+ * @param options.initialError - Seeds the resource as settled in the failed state; `undefined`
+ *                               and `null` are no seed.
  * @param options.name - Debug name for devtools.
  * @returns A {@link Resource} of reactive getters plus `refetch`.
  * @example
@@ -231,6 +248,11 @@ export function createResource<T, S>(
     }
 
     const hasSource = typeof maybeFetcherOrOptions === 'function';
+    // A third argument that is not an options object would otherwise read as no options at all.
+    if (hasSource && maybeOptions !== undefined && !isOptionsBag(maybeOptions))
+    {
+        throw new TypeError(`createResource expects an options object as its third argument, received ${ describeArg(maybeOptions) }.`);
+    }
     const source = hasSource
         ? (sourceOrFetcher as () => S | false | null | undefined)
         : null;
@@ -239,13 +261,16 @@ export function createResource<T, S>(
         | SourceFetcher<S, T>;
     const options = hasSource ? maybeOptions : maybeFetcherOrOptions;
 
+    // Each option is read once, so the seed decision and the stored seed come from one read.
+    const initialValue = options?.initialValue;
+    const initialError = options?.initialError;
+    // The seed itself, from the options or the streamed seed below. Both present is a failure.
+    let seedFailure = initialError !== undefined && initialError !== null;
+    let seedValue: T | undefined = initialValue;
     // The hydration seed, consumed or discarded at the effect's first run. See ResourceOptions.
     // A FAILURE seed settles the resource exactly as a value seed does - the point of both is
     // that the first run starts no fetch and `loading` never flips.
-    let pendingInitial = options !== undefined && ('initialValue' in options || 'initialError' in options);
-    // The seed itself, from the options or the streamed seed below. Both present is a failure.
-    let seedFailure = options !== undefined && 'initialError' in options;
-    let seedValue: T | undefined = options?.initialValue;
+    let pendingInitial = seedFailure || initialValue !== undefined;
     // A seeded failure the shared entry never learned; released once the entry settles.
     let seededFailureHeld = false;
 
@@ -255,10 +280,10 @@ export function createResource<T, S>(
     const settleErrorHandler = currentErrorHandler;
 
     const frame = dtEnterPrimitive('resource', options?.name);
-    const [data, setData] = createSignal<T | undefined>(options?.initialValue, { name: 'data' });
+    const [data, setData] = createSignal<T | undefined>(initialValue, { name: 'data' });
     const [loading, setLoading] = createSignal<boolean>(false, { name: 'loading' });
     const [refreshing, setRefreshing] = createSignal<boolean>(false, { name: 'refreshing' });
-    const [error, setError] = createSignal<unknown>(options !== undefined && 'initialError' in options ? options.initialError : null, { name: 'error' });
+    const [error, setError] = createSignal<unknown>(seedFailure ? initialError : null, { name: 'error' });
 
     // refetch() bumps `tick` to force the effect to re-run on the same source value.
     const [tick, setTick] = createSignal(0, { name: 'tick' });

@@ -15,7 +15,7 @@
  *
  *   - `handle.to({ id: '42' }, { search: { tab: 'bio' } })` - a missing or extra param
  *     is a COMPILE error; search keys and value types check against the schema.
- *   - `useLoader(handle)` - `Resource<Data>`, no cast.
+ *   - `useLoader(handle)` - `Resource<Data>` (null added when Data admits undefined), no cast.
  *   - `useSearch(handle)` - the validated, coerced, TYPED query.
  *
  * Plain object routes stay first-class; handles are additive sugar, pay-as-you-go.

@@ -1572,6 +1572,10 @@ function buildRouter(config: RouterConfig): Router
         }
     }
 
+    // Only a level whose route has a loader takes a value seed: a handoff that crossed as JSON
+    // carries null for a level with no loader, which is no result.
+    const seedChain = adopt ? untrack(rawMatch)?.matched : undefined;
+
     // One resource per level, keyed by the level's KEY STRING with string equality: a
     // navigation that leaves a level's key unchanged (a leaf param change, an undeclared
     // query change) does not re-run it - the blast-radius fix. Computing the key stages
@@ -1602,7 +1606,7 @@ function buildRouter(config: RouterConfig): Router
             brandedLoaderFetcher,
             seedFailed(level)
                 ? { initialError: seededFailure(level) }
-                : adopt && (seed.data)[level] !== undefined
+                : adopt && (seed.data)[level] !== undefined && seedChain?.[level]?.loader
                     ? { initialValue: (seed.data)[level] }
                     : undefined
         ));

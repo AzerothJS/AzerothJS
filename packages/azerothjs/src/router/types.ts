@@ -522,7 +522,10 @@ export interface LoaderHandoff
     /** The base-relative pathname + search the data belongs to. */
     path: string;
 
-    /** Per-level loader results, root to leaf (must be JSON-serializable to cross the wire). */
+    /**
+     * Per-level loader results, root to leaf (must be JSON-serializable to cross the wire). A
+     * level whose loader resolved undefined is held as null, the value the wire carries.
+     */
     data: unknown[];
 
     /** The producing deployment's build id; a mismatched seed is dropped rather than adopted. */

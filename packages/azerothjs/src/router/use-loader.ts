@@ -15,8 +15,8 @@
  *     frame `<Routes>` provides), falling back to the nearest ANCESTOR level that
  *     declares a loader when this one doesn't - a leaf reading its layout's data.
  *   - `useLoader(handle)` - the level where that {@link RouteHandle} sits in the current
- *     match, TYPED as `Resource<Data>` from the handle's loader. Idle when the handle is
- *     not part of the current match.
+ *     match, TYPED from the handle's loader (`Resource<Data>`, with null added when Data
+ *     admits undefined). Idle when the handle is not part of the current match.
  *   - `useLoader(router)` / bare `useLoader()` outside a chain - the DEEPEST level with
  *     a loader (the v1 "leaf loader" semantics), tracking navigation reactively.
  *
@@ -75,18 +75,25 @@ function deepestLoaderLevel(router: Router): number | null
  * consumer of a level sees one coordinated state and one refetch. A level with no loader, or
  * no matching route, reads as idle: data undefined and loading false.
  *
+ * A loader that resolves undefined reads null on a server-rendered page, on the server and
+ * after hydration, since the handoff reaches the browser as JSON; a level the client loads
+ * itself, on a navigation or a client-rendered page, reads undefined. Such a loader's data is
+ * typed as possibly null too, so read it as `data()?.name ?? fallback` rather than telling
+ * undefined from null.
+ *
  * The bare-generic form `useLoader<T>(router)` is an unchecked cast; prefer a handle when you
  * want the typing actually verified.
  *
  * @param handle - The route handle whose level to read.
  * @param router - Optional explicit router. Resolved from context when omitted.
- * @returns A resource typed from the handle's loader.
+ * @returns A resource typed from the handle's loader, with null added when its data admits
+ *          undefined.
  * @example
  * const user = useLoader(userRoute); // Resource<User>
  *
  * h('div', {}, () => user.loading() ? 'Loading...' : (user.data()?.name ?? 'No data'));
  */
-export function useLoader<Path extends string, Data, Search>(handle: RouteHandle<Path, Data, Search>, router?: Router): Resource<Data>;
+export function useLoader<Path extends string, Data, Search>(handle: RouteHandle<Path, Data, Search>, router?: Router): Resource<undefined extends Data ? Data | null : Data>;
 /**
  * Untyped form. Called with no arguments inside a route component body it reads THIS
  * component's level, falling back to the nearest ancestor level that declares a loader - which
@@ -94,13 +101,16 @@ export function useLoader<Path extends string, Data, Search>(handle: RouteHandle
  * loader, tracking navigation.
  *
  * `T` is an unchecked cast: nothing verifies the loader actually returns it. Pass a route
- * handle instead when you want the typing verified.
+ * handle instead when you want the typing verified. A loader that resolves undefined reads
+ * null on a server-rendered page, so a `T` that admits undefined gets null added; read such
+ * data as `data()?.name ?? fallback`.
  *
  * @typeParam T - Asserted data type, unchecked.
  * @param router - Optional explicit router. Resolved from context when omitted.
- * @returns The level's resource, idle when that level has no loader.
+ * @returns The level's resource, idle when that level has no loader, with null added when `T`
+ *          admits undefined.
  */
-export function useLoader<T = unknown>(router?: Router): Resource<T>;
+export function useLoader<T = unknown>(router?: Router): Resource<undefined extends T ? T | null : T>;
 export function useLoader(
     first?: Router | RouteHandle<string, unknown, unknown>, second?: Router
 ): Resource<unknown>
