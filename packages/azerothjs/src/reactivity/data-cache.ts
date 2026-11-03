@@ -87,9 +87,8 @@ type DropTrailingSignal<P extends unknown[]> = P extends [...infer Rest, AbortSi
 
 const DEFAULT_RETAIN_MS = 5 * 60 * 1000;
 
-/** One key's state. Fetches belong to the entry, never to a subscriber. */
 /**
- * One in-flight optimistic guess over an entry's value.
+ * One optimistic guess over an entry's value.
  *
  * A guess belongs on the ENTRY rather than beside one resource, because every reader of the
  * family is showing the same number: a cart badge in the header and the cart page itself must
@@ -97,7 +96,9 @@ const DEFAULT_RETAIN_MS = 5 * 60 * 1000;
  *
  * Layers are a STACK, applied oldest-first on read. Two mutations in flight are two layers, so
  * neither has to know about the other, and a failure removes exactly its own - the projection
- * is recomputed from the base on every read, so nothing needs repairing.
+ * is recomputed from the base on every read, so nothing needs repairing. A confirmed guess
+ * folds into the base at the bottom of the stack, or retires once a fetch begun after its
+ * landing settles, since that answer already holds it.
  */
 export interface OptimisticLayer
 {
@@ -108,8 +109,12 @@ export interface OptimisticLayer
 
     /** True once its mutation succeeded; a settled layer folds into the base at the bottom. */
     settled: boolean;
+
+    /** The seq at which its run's write landed; 0 until it lands. */
+    landedSeq: number;
 }
 
+/** One key's state. Fetches belong to the entry, never to a subscriber. */
 export interface CacheEntry
 {
     key: string;
@@ -122,8 +127,15 @@ export interface CacheEntry
     bumpScheduled: boolean;
     generation: number;
     markSeq: number;
+
+    /** The seq at which a fetch or a written value last set {@link value}; a fold leaves it. */
+    baseSeq: number;
     inflight: { controller: AbortController; generation: number; startedSeq: number } | null;
-    /** Waiters for a settle whose startedSeq >= minSeq; resolved on settle, eviction or reset. */
+
+    /**
+     * Waiters for a settle whose startedSeq >= minSeq. All resolve without one at a written value,
+     * an abort with no audience, a follow-up owed to no subscriber, eviction, reset and teardown.
+     */
     settleWaiters: { minSeq: number; resolve: () => void }[];
     stale: boolean;
     writtenAt: number;
@@ -289,11 +301,8 @@ export class DataCache
 {
     readonly #entries = new Map<string, CacheEntry>();
 
-    /** Monotonic; orders marks against fetch starts and navigations without a clock. */
+    /** Monotonic; orders marks, fetches and writes without a clock. */
     #seq = 0;
-
-    /** The seq at the latest navigation commit; marks never target fetches begun after it. */
-    #navSeq = 0;
 
     /** Set once by {@link release}; a released cache never holds or arms anything again. */
     #released = false;
@@ -322,11 +331,6 @@ export class DataCache
         return this.#seq;
     }
 
-    public beginNavigation(): void
-    {
-        this.#navSeq = this.nextSeq();
-    }
-
     public entryFor(family: FamilyRecord, args: unknown[]): CacheEntry
     {
         const key = entryKeyFor(family, args);
@@ -350,6 +354,7 @@ export class DataCache
                 bumpScheduled: false,
                 generation: 0,
                 markSeq: 0,
+                baseSeq: 0,
                 inflight: null,
                 settleWaiters: [],
                 stale: false,
@@ -443,7 +448,7 @@ export class DataCache
         queueMicrotask(() =>
         {
             entry.zeroCheckScheduled = false;
-            if (entry.subscribers > 0 || entry.waiters > 0)
+            if (this.#hasAudience(entry))
             {
                 return;
             }
@@ -472,7 +477,7 @@ export class DataCache
         entry.retainTimer = setTimeout(() =>
         {
             entry.retainTimer = null;
-            if (entry.subscribers === 0 && entry.waiters === 0)
+            if (!this.#hasAudience(entry))
             {
                 this.#entries.delete(entry.key);
                 this.#resolveWaitersUpTo(entry, Infinity);
@@ -558,7 +563,10 @@ export class DataCache
         return this.settlementFor(entry, started === null ? 0 : started.startedSeq);
     }
 
-    /** Resolves at the first settle whose startedSeq >= minSeq, or at eviction/reset. */
+    /**
+     * Resolves at the first settle whose startedSeq >= minSeq, or earlier when the entry's waiters
+     * all resolve without one (see {@link CacheEntry.settleWaiters}).
+     */
     public settlementFor(entry: CacheEntry, minSeq: number): Promise<void>
     {
         if (entry.inflight === null && entry.markSeq < minSeq)
@@ -641,6 +649,7 @@ export class DataCache
         if ('value' in outcome)
         {
             entry.value = outcome.value;
+            entry.baseSeq = this.nextSeq();
             entry.hasValue = true;
             entry.hasError = false;
             entry.error = undefined;
@@ -648,6 +657,12 @@ export class DataCache
             if (startedSeq >= entry.markSeq)
             {
                 entry.stale = false;
+            }
+            // A settled guess still waiting to fold is already in an answer fetched after its
+            // write landed; projecting it over that answer would count it twice.
+            if (entry.layers.length > 0)
+            {
+                entry.layers = entry.layers.filter((layer) => !(layer.settled && layer.landedSeq < startedSeq));
             }
         }
         else
@@ -714,11 +729,17 @@ export class DataCache
     }
 
     /**
-     * Marks an entry stale and, with an audience, refetches. The returned promise resolves
-     * at settled data for subscribed entries, and at the mark itself for unsubscribed
-     * ones - nothing was watching, so nothing was triggered to await.
+     * Marks an entry stale and, while it has subscribers, refetches: a fetch already in flight
+     * began before the call, so it is kept and the follow-up starts at its settle, and the returned
+     * promise resolves when a fetch begun after the call settles. With no subscriber the call marks
+     * and resolves at the mark - nothing was watching, so nothing was triggered to await. A call
+     * made synchronously from inside the entry's own fetcher, before its first await, is a no-op.
+     *
+     * `since` is passed only by a mutation's own revalidation: the seq at which its write landed.
+     * A fetch in flight begun after it already carries the write, so the call joins that fetch
+     * instead of owing a follow-up, and with no subscriber marks the entry for the next reader.
      */
-    public revalidateEntry(entry: CacheEntry): Promise<void>
+    public revalidateEntry(entry: CacheEntry, since?: number): Promise<void>
     {
         // Self-targeting from inside the key's own executing fetcher: a NO-OP in every
         // mode. Awaiting the follow-up would deadlock (it cannot start until this settle),
@@ -734,11 +755,25 @@ export class DataCache
             }
             return Promise.resolve();
         }
-        // A fetch begun after the current navigation committed cannot be stale to anyone.
-        if (entry.inflight !== null && entry.inflight.startedSeq >= this.#navSeq && this.#navSeq > 0)
+        if (since !== undefined && entry.inflight !== null && entry.inflight.startedSeq > since)
         {
-            return Promise.resolve();
+            if (entry.subscribers === 0)
+            {
+                // Marked all the same: if the zero check aborts the joined fetch, the next reader
+                // still refetches, and if it settles, its settle satisfies the mark.
+                entry.markSeq = Math.max(entry.markSeq, since + 1);
+                entry.stale = true;
+                return Promise.resolve();
+            }
+            const joined = this.settlementFor(entry, entry.inflight.startedSeq);
+            this.holdWaiter(entry);
+            return joined.finally(() =>
+            {
+                this.releaseWaiter(entry);
+            });
         }
+        // A fetch in flight here began before the call and may predate what the caller revalidates
+        // for: the mark makes its settle owe the follow-up, and the call awaits that.
         entry.markSeq = this.nextSeq();
         entry.stale = true;
         entry.bumpVersion();
@@ -765,23 +800,30 @@ export class DataCache
     public patchEntry(entry: CacheEntry, project: (value: unknown) => unknown): number
     {
         const id = ++layerSerial;
-        entry.layers.push({ id, project, settled: false });
+        entry.layers.push({ id, project, settled: false, landedSeq: 0 });
         entry.bumpVersion();
         return id;
     }
 
     /**
-     * Marks a guess CONFIRMED and folds it into the entry's value, so a later refetch failure
-     * cannot revert what the server already accepted.
+     * Marks a guess CONFIRMED at its run's landing and folds it into the entry's value, so a
+     * later refetch failure cannot revert what the server already accepted.
+     *
+     * A fetch in flight that began before the landing may answer with data older than the write,
+     * so it is superseded first, the way force() replaces one: while the entry has an audience a
+     * fresh fetch starts and its waiters carry over, and with none they resolve. A base that
+     * settled after the write was sent may already hold it, so the entry is marked and, with a
+     * subscriber, fetched again.
      *
      * Folding runs from the BOTTOM of the stack and stops at the first unsettled layer. A layer
      * projects the value below it, so promoting one out of order would apply its predecessor
-     * twice; waiting is both correct and invisible, since the projection already shows the
-     * guess. The fold and the removal are one SYNCHRONOUS step, and a reader only re-reads on
-     * the version effect, so nobody can observe the promoted value with its own guess still on
-     * top - which is the double count an application sequencing this by hand has to avoid.
+     * twice; a settled layer held back that way retires instead once a fetch begun after its
+     * landing settles. The fold and the removal are one SYNCHRONOUS step, and a reader only
+     * re-reads on the version effect, so nobody can observe the promoted value with its own
+     * guess still on top - which is the double count an application sequencing this by hand has
+     * to avoid.
      */
-    public settleLayer(entry: CacheEntry, id: number): void
+    public settleLayer(entry: CacheEntry, id: number, sent: number, landed: number): void
     {
         const layer = entry.layers.find((candidate) => candidate.id === id);
         if (layer === undefined)
@@ -789,22 +831,76 @@ export class DataCache
             return;
         }
         layer.settled = true;
+        layer.landedSeq = landed;
+        // A base that settled while the write was on the wire may already hold it.
+        const suspect = entry.baseSeq > sent;
+        if (suspect)
+        {
+            entry.markSeq = Math.max(entry.markSeq, landed + 1);
+            entry.stale = true;
+        }
+        this.#supersede(entry, landed);
+        this.#fold(entry);
+        if (suspect && entry.subscribers > 0)
+        {
+            this.ensureFetch(entry);
+        }
+        entry.bumpVersion();
+    }
+
+    /** Folds the settled layers at the bottom of the stack into the entry's value. */
+    #fold(entry: CacheEntry): void
+    {
         let folded = false;
         while (entry.layers[0]?.settled === true)
         {
+            // Removed before it projects, so a projection that throws drops its own layer.
             const bottom = entry.layers.shift() as OptimisticLayer;
             entry.value = bottom.project(entry.value);
             entry.hasValue = true;
             folded = true;
         }
+        // Only a fold that completes restarts the freshness window.
         if (folded)
         {
             entry.writtenAt = Date.now();
         }
-        entry.bumpVersion();
     }
 
-    /** Drops a guess the server refused. The remaining layers re-project the base on next read. */
+    /**
+     * Discards a fetch begun before `seq`, whose answer may predate the write, as force() does:
+     * with an audience a fresh fetch starts and the waiters carry over; with none they resolve.
+     */
+    #supersede(entry: CacheEntry, seq: number): void
+    {
+        const superseded = entry.inflight;
+        if (superseded === null || superseded.startedSeq >= seq)
+        {
+            return;
+        }
+        superseded.controller.abort();
+        entry.inflight = null;
+        entry.generation += 1;
+        if (this.#hasAudience(entry))
+        {
+            this.#startFetch(entry);
+        }
+        else
+        {
+            this.#resolveWaitersUpTo(entry, Infinity);
+        }
+    }
+
+    /** A subscriber or a held waiter: a one-shot reader is its own audience. */
+    #hasAudience(entry: CacheEntry): boolean
+    {
+        return entry.subscribers > 0 || entry.waiters > 0;
+    }
+
+    /**
+     * Drops a refused guess and folds the confirmed ones it held back; one that cannot read the
+     * value is dropped and the entry marked, and the rest, or all with no value, wait for a fetch.
+     */
     public dropLayer(entry: CacheEntry, id: number): void
     {
         const index = entry.layers.findIndex((candidate) => candidate.id === id);
@@ -813,6 +909,27 @@ export class DataCache
             return;
         }
         entry.layers.splice(index, 1);
+        // With no value yet, a settled guess gives way to the first data fetched for it.
+        if (entry.hasValue)
+        {
+            const before = entry.layers.slice();
+            try
+            {
+                this.#fold(entry);
+            }
+            catch
+            {
+                // The last layer the fold took off could not read this base: it stays dropped, and
+                // the entry is marked at its landing so data that holds its write is fetched.
+                const thrown = before.findLast((layer) => !entry.layers.includes(layer)) as OptimisticLayer;
+                entry.markSeq = Math.max(entry.markSeq, thrown.landedSeq + 1);
+                entry.stale = true;
+                if (entry.subscribers > 0)
+                {
+                    this.ensureFetch(entry);
+                }
+            }
+        }
         entry.bumpVersion();
     }
 
@@ -832,6 +949,7 @@ export class DataCache
         }
         entry.generation += 1;
         entry.value = value;
+        entry.baseSeq = this.nextSeq();
         entry.hasValue = true;
         entry.hasError = false;
         entry.error = undefined;
@@ -1232,9 +1350,10 @@ export function cachedFamilyOf(fetcher: unknown): FamilyRecord | null
  * - `revalidate(fn)` - every entry of one `cached` family.
  * - `revalidate(fn, args)` - one entry.
  *
- * Resolves when the refetches it triggered settle; entries with no subscribers are marked
- * and count as settled at the mark - the next subscriber serves the retained value and
- * revalidates behind it.
+ * For each entry with a subscriber, resolves when a fetch begun after the call settles: a fetch
+ * already in flight is kept and the follow-up after it awaited, or the fetch a write's landing
+ * starts in place of either. Entries with no subscribers are marked and count as settled at the
+ * mark - the next subscriber serves the retained value and revalidates behind it.
  */
 export function revalidate<A extends unknown[]>(target?: CachedFetcher<A, unknown>, args?: A): Promise<void>;
 export function revalidate(target?: unknown, args?: readonly unknown[]): Promise<void>
@@ -1245,16 +1364,16 @@ export function revalidate(target?: unknown, args?: readonly unknown[]): Promise
 /**
  * The any-arity door for a caller that holds the brand but not the family's argument list -
  * a mutation revalidating what it patched. The public signature keys arguments to the family;
- * this one trusts the caller's.
+ * this one trusts the caller's. `since` is the seq at which the caller's write landed.
  *
  * @internal
  */
-export function revalidateFamily(target: AnyCachedFetcher, args?: readonly unknown[]): Promise<void>
+export function revalidateFamily(target: AnyCachedFetcher, args?: readonly unknown[], since?: number): Promise<void>
 {
-    return revalidateTarget(target, args);
+    return revalidateTarget(target, args, since);
 }
 
-function revalidateTarget(target: unknown, args: readonly unknown[] | undefined): Promise<void>
+function revalidateTarget(target: unknown, args: readonly unknown[] | undefined, since?: number): Promise<void>
 {
     if (DEV && isStringMode())
     {
@@ -1285,5 +1404,5 @@ function revalidateTarget(target: unknown, args: readonly unknown[] | undefined)
     {
         entries = cache.entriesOf(family);
     }
-    return Promise.all(entries.map(entry => cache.revalidateEntry(entry))).then(() => undefined);
+    return Promise.all(entries.map(entry => cache.revalidateEntry(entry, since))).then(() => undefined);
 }

@@ -99,8 +99,12 @@ export interface MutationOptions<In>
      * explicitly to invalidate data this mutation changed but did not guess at - adding a
      * cart item that also changes a recommendations list, say.
      *
-     * An empty array means "revalidate nothing", which is the right answer when the mutation's
-     * own response already carries everything that changed.
+     * An empty array skips this mutation's own revalidation, which is the right answer when its
+     * response already carries everything that changed. Whatever the list holds, the landing keeps
+     * each entry the guess patched consistent with the write: a fetch of it in flight is replaced
+     * while anything reads the entry, and a value that settled, fetched or seeded, while the write
+     * was on the wire is marked and fetched again, at once with a subscriber and otherwise by its
+     * next reader.
      */
     invalidates?: readonly AnyCached[];
 
@@ -300,14 +304,13 @@ export function createMutation<In, Out>(
                 caller.addEventListener('abort', relay, { once: true });
             }
         }
-        const revalidateTargets = (): void =>
+        const revalidateTargets = (since?: number): void =>
         {
             for (const target of targets(touched))
             {
-                // Fired, not awaited: `run` answers when the SERVER has, and the correction
-                // lands behind it. A caller that needs the refetch too awaits revalidate itself.
-                // A rejection here is the resource's to report, not this call's.
-                void revalidateFamily(target.fetcher, target.args.length > 0 ? [...target.args] : undefined)
+                // Fired, not awaited: `run` answers when the SERVER has, and the correction lands
+                // behind it. A rejection here is the resource's to report, not this call's.
+                void revalidateFamily(target.fetcher, target.args.length > 0 ? [...target.args] : undefined, since)
                     .catch(() => undefined);
             }
         };
@@ -339,6 +342,8 @@ export function createMutation<In, Out>(
                 // Cancelled while waiting its turn: it never reaches the server at all.
                 return abandon(controller.signal.reason);
             }
+            // The seq the write leaves at: a base that settles after it may already hold it.
+            const sent = getDataCache()?.nextSeq() ?? 0;
             const data = await write(input, controller.signal);
             if (aborted())
             {
@@ -347,18 +352,20 @@ export function createMutation<In, Out>(
                 // which is exactly why the invalidation below still runs.
                 return abandon(controller.signal.reason);
             }
-            // The server accepted it, so the guess is now truth: folded into the entry before
-            // anything else can read it, and the revalidation runs BEHIND that rather than the
-            // screen waiting on a second round trip.
+            // One landing seq for every entry this run patched: a fetch begun before it may predate
+            // the write and is superseded, and one begun after it carries the write.
+            const cache = getDataCache();
+            const landed = cache?.nextSeq();
+            // The server accepted it, so the guess is now truth, folded in before anything else can
+            // read it; the revalidation runs behind rather than the screen waiting on it.
             batch(() =>
             {
-                const cache = getDataCache();
                 for (const layer of layers)
                 {
-                    cache?.settleLayer(layer.entry, layer.id);
+                    cache?.settleLayer(layer.entry, layer.id, sent, landed ?? 0);
                 }
             });
-            revalidateTargets();
+            revalidateTargets(landed);
             return { ok: true, data };
         }
         catch (failure)

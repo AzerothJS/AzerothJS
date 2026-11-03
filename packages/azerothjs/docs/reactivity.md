@@ -71,7 +71,7 @@ go through one implementation.
 | `create-root.ts` | `createRoot`, ownership and disposal scopes. |
 | `on-cleanup.ts`, `on-root-dispose.ts` | Cleanup registration. |
 | `create-resource.ts` | `createResource`: async data as a signal. |
-| `data-cache.ts` | `cached`, `revalidate`: the shared read cache behind resources and loaders. |
+| `data-cache.ts` | `cached`, `revalidate`: the shared cache behind resources, loaders and mutation guesses. |
 | `create-mutation.ts` | `createMutation`: writes, with the optimistic guess in the shared cache. |
 | `create-stream.ts` | `createStream`: streamed/incremental async data. |
 | `create-deferred.ts`, `create-selector.ts` | Deferred values and keyed selection. |
@@ -118,13 +118,28 @@ the page by a full round trip.
 What the mutation guarantees:
 
 - **Rollback is per run.** Two writes in flight are two layers; one failing removes exactly its
-  own guess and leaves the other standing.
-- **No double count.** On success the guess is promoted into the entry and removed in the same
-  synchronous step, so nothing ever renders the confirmed value with its own guess still on top.
-  A refetch that is slow, or that fails, cannot revert a change the server already accepted.
+  own guess and leaves the other standing, and a confirmed guess it was holding back folds into
+  the value, or, when that guess cannot read the value, is dropped and the entry fetched again, or,
+  while the entry has no value yet, gives way to the first data fetched for it.
+- **A confirmed write is not undone.** On success the guess is promoted into the entry and
+  removed in the same synchronous step, so nothing ever renders the confirmed value with its own
+  guess still on top. A fetch of the entry already in flight may answer with data from before the
+  write, so the landing discards it and, while anything reads the entry, fetches again; an awaited
+  `refetch()`, `revalidate()` or one-shot read it interrupted resolves at that new fetch. A refetch
+  that is slow, or that fails, cannot revert a change the server already accepted.
+- **A confirmed guess gives way to data that holds it.** A guess still waiting on an earlier run
+  retires once data fetched after its landing arrives, and data that settled while its write was
+  on the wire may already hold the write, so it is fetched again: at once while something
+  subscribes to the entry, otherwise by its next reader. Until then the change can show twice over
+  such data, as no client can tell without server versions.
 - **`run` does not reject** for a failed write - it answers `{ ok: false, error }`, so a
   fire-and-forget `onClick` cannot become an unhandled rejection. Misuse (patching something
   that is not a `cached` fetcher) still throws, because that is a bug rather than a refusal.
+
+`revalidate()` waits for data fetched after the call for every entry something subscribes to,
+even while a fetch of it is in flight. So a fetcher must not revalidate its own key after an
+`await`: the fetch the call waits for starts only when that fetcher's own fetch settles, so
+awaiting the call waits for itself, and firing it unawaited refetches without end.
 
 ### Cancelling
 

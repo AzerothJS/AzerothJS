@@ -339,7 +339,7 @@ describe('createMutation: invalidation', () =>
         });
     });
 
-    it('invalidates: [] revalidates nothing, so the promoted guess stands alone', async () =>
+    it('invalidates: [] with nothing in flight or settling during the write: no fetch, the guess stands', async () =>
     {
         resetDataCache();
         const state = server();
@@ -371,7 +371,7 @@ describe('createMutation: invalidation', () =>
             await wait(60);
 
             expect(state.loads).toBe(loadsBefore);
-            // The guess, promoted and uncorrected - which is what asking for no refetch means.
+            // Nothing was in flight or settled during the write, so nothing corrects the guess.
             expect(cart.data()?.count).toBe(1);
             expect(state.cart.count).toBe(2);
 

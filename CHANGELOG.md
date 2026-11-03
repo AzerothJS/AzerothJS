@@ -158,6 +158,25 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   as `D | null | undefined`; for such a loader, a value typed `LoaderDataOf<typeof route>` no
   longer accepts `useLoader(route).data()`. A level with no loader still reads undefined.
 
+- **An awaited `revalidate()` and an enhanced `<Form>` can take one more round trip, and writes
+  fetch more often.** In an app with a router, a revalidate during a fetch begun since the router
+  last committed a location now marks the entry and, while something subscribes to it, waits for the
+  fetch that follows it, as it already did without a router and during a client navigation's own
+  loader fetch, so, for a loader that fetches its own data, `data-azeroth-submitting` stays on until
+  data fetched after the submit has landed, a submit during the page's first load included. A loader
+  that reads a `cached` fetcher runs again over the value that fetcher holds, since
+  `router.revalidate()` marks only the loaders' own entries. In every app, each write that lands
+  while a fetch of its entry is in flight cancels that fetch and, while anything reads the entry,
+  starts another, so writes landing within one round trip of each other fetch once each, and an
+  awaited revalidate that a landing interrupts waits for the new fetch. That holds whatever
+  `invalidates` lists: with `invalidates: []`, or a list that leaves out an entry the guess patched,
+  a landing still cancels a fetch of that entry in flight and, while anything reads it, starts
+  another, and an entry whose data settled while the write was on the wire is fetched again, at once
+  while something subscribes to it and otherwise by its next reader: one more request than before,
+  even when that data did not hold the write. The default invalidation joins both. A fetcher that
+  revalidates its own key after an await, which waited for itself or refetched without end in an app
+  without a router, now does the same in an app with one.
+
 ### Fixed
 
 - **A hole inside a `<textarea>` or a `<title>` served its anchors as text, and text beside one
@@ -582,6 +601,41 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   loader that resolves undefined reads `null` there (see Changed), and `null` seeds. Code that
   passed `initialValue: undefined` to start a resource settled and empty now fetches at mount;
   pass `initialValue: null` with a type that admits null.
+
+- **A change `createMutation` promoted is no longer undone by a fetch that was already in
+  flight.** When the server accepted a write while a fetch of the same entry was on the wire, that
+  fetch's answer, which can predate the write, replaced the promoted value: two quick adds showed 1
+  with the server at 2, and in an app with a router that stayed until the entry's next fetch. The
+  landing now discards that fetch and, while anything reads the entry, fetches it again, so the
+  screen ends at the server's value and an awaited `refetch()`, `revalidate()` or one-shot read
+  that the landing interrupted resolves at that new fetch.
+
+- **`revalidate()` and `router.revalidate()` wait for fresh data while a fetch of the same entry
+  is in flight.** In an app with a router, a revalidate called while a fetch begun since the router
+  last committed a location was in flight returned at once and changed nothing: during the page's
+  first load, the refresh of a stale server-rendered page, a background revalidate's fetch or the
+  first fetch of a cached resource a page mounted. After a write the screen kept the answer that
+  predated it, and an enhanced `<Form>` reported success over stale data. The call now marks the
+  entry and, while something subscribes to it, resolves when a fetch begun after the call settles,
+  as it already did without a router and during a client navigation's own loader fetch; a write that
+  lands during the wait moves it to the fetch that follows the write. An entry nothing subscribes to
+  is marked and the call returns at once: a read already in flight, or one that joins that fetch,
+  answers it, and the next read that fetches gets fresh data. In development, editing the module of
+  a cached fetcher left such an entry with the old code's data until its next fetch, although the
+  log said it was invalidated; it now refetches through the new code.
+
+- **Parallel `createMutation` runs no longer keep counting a confirmed change twice.** A run that
+  finished while an earlier run was still pending kept projecting its guess over refetched data
+  that already held its write, so two parallel adds showed 3 with the server at 2, and when the
+  earlier run then failed or was cancelled, the guess stayed for good, even across an explicit
+  revalidate. A guess the server confirmed now gives way to the first data fetched after it
+  landed, a guess that lands over data that settled while its write was on the wire has that data
+  fetched again, at once while something subscribes to the entry and otherwise by its next reader,
+  and a confirmed guess waiting on a run that failed or was cancelled is folded into the value, or,
+  when it cannot read that value, dropped with the entry fetched again, or, while the entry
+  has no value yet, gives way to the first data fetched for it. While a run waits for its answer,
+  and until data fetched after it landed arrives, its change can show twice over data that already
+  holds it, as no client can tell without server versions.
 
 ### Security
 

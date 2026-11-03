@@ -1238,16 +1238,6 @@ function buildRouter(config: RouterConfig): Router
     // string collapses those, because equal strings do not propagate.
     const searchString = createMemo(() => state().search);
 
-    // The commit point for EVERY navigation shape - match changes, query-only, hash-only
-    // (harmless): fetches begun from here on belong to THIS navigation and are never
-    // no-op'd as stale by a concurrent revalidate. Guard-accept alone would miss the
-    // query-only commits its structural match equality collapses.
-    createEffect(() =>
-    {
-        state();
-        getDataCache()?.beginNavigation();
-    });
-
     // --- loader identity ----------------------------------------------------------------
     // Every POSITION in the tree gets an id - the chain PREFIX, not the config object, and not
     // the joined pattern (which collides across same-path sibling layouts). A config object

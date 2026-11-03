@@ -624,8 +624,8 @@ export function createResource<T, S>(
                 }
                 else
                 {
-                    // A version wake or an unrelated dependency: re-apply the machine (which
-                    // can only join or serve here) and mirror the current entry state.
+                    // A version wake or another dependency: re-apply the machine, which joins a
+                    // fetch in flight, fetches a stale entry or serves, then mirror the entry.
                     entry.version();
                     cache.read(entry, {});
                 }
