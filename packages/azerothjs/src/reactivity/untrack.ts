@@ -10,7 +10,8 @@
  * slot for the duration of the call.
  */
 
-import { currentSubscriber, setCurrentSubscriber } from './graph.ts';
+import { currentTrackingFrame, setTrackingFrame } from './graph.ts';
+import type { TrackingFrame } from './graph.ts';
 import { assertFunction } from './validate.ts';
 
 /**
@@ -42,9 +43,14 @@ import { assertFunction } from './validate.ts';
 export function untrack<T>(fn: () => T): T
 {
     assertFunction(fn, 'untrack', 'Pass the reads as a function: untrack(() => signal()).');
+    return withTrackingFrame(null, fn);
+}
 
-    const previousSubscriber = currentSubscriber;
-    setCurrentSubscriber(null);
+/** Runs synchronously in one frame while preserving the active owner and cleanup scope. @internal */
+export function withTrackingFrame<T>(frame: TrackingFrame, fn: () => T): T
+{
+    const previousFrame = currentTrackingFrame;
+    setTrackingFrame(frame);
 
     try
     {
@@ -52,6 +58,6 @@ export function untrack<T>(fn: () => T): T
     }
     finally
     {
-        setCurrentSubscriber(previousSubscriber);
+        setTrackingFrame(previousFrame);
     }
 }

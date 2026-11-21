@@ -195,9 +195,9 @@ interface FactoryDeclBase extends Span
 
 /**
  * A `resource <name> = <fetcher> [with { source: <signal> }] ;` declaration. Lowers to
- * `createResource(fetcher)` (standalone) or `createResource(() => (source), fetcher)` (source-driven, so
- * it refetches when `source` changes). Read as `name.data()` / `name.loading()` / `name.error()` /
- * `name.refetch()`.
+ * `createResource(fetcher)` (standalone) or `createResource(() => (source), fetcher)` (source-driven).
+ * The runtime tracks the source expression and passes its value to the untracked fetcher.
+ * Read as `name.data()` / `name.loading()` / `name.error()` / `name.refetch()`.
  */
 export interface ResourceDecl extends FactoryDeclBase { kind: 'resource' }
 

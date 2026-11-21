@@ -84,6 +84,28 @@ A `Signal<T>` is the tuple `[Getter<T>, Setter<T>]`, where `Getter<T>` is `() =>
 `Setter<T>` is called with the next value or with `(prev) => next` - a function argument is
 always read as the updater - and also carries `set(value)`, which stores the value as given.
 
+## Resource dependencies
+
+Pass a changing request parameter as the resource source. The runtime tracks the source
+and passes its value to the fetcher. For example, `createResource(userId, loadUser)`
+calls `loadUser(id, signal)` when `userId()` changes. A standalone resource starts its
+initial load and can be refreshed with `refetch()`.
+
+A fetcher that reads `userId()` inside its body samples the current ID for that request.
+If an older fetcher relied on that read to trigger another request, move it into the source.
+For a `cached` family, make the ID an argument so each user has a separate cache entry.
+
+```ts
+const getUser = cached('user', (id: string, signal: AbortSignal) =>
+    fetch(`/api/users/${id}`, { signal }).then(response => response.json()));
+const user = createResource(userId, getUser);
+```
+
+In development, a warning identifies a fetcher that reads reactive state during its
+synchronous call. To take a deliberate snapshot, write `untrack(() => token())` inside
+the fetcher. Vite production builds disable this diagnostic. When loading the package's
+raw ES modules, `NODE_ENV=production` disables it in Node. A browser loading raw modules
+without build-mode information or a `process` global uses the development default.
 
 ## Mutations
 
@@ -109,6 +131,13 @@ addToCart.pending();        // reactive: any run in flight
 addToCart.error();          // reactive: the last failure, or null
 await addToCart.run(item);  // { ok: true, data } | { ok: false, error }
 ```
+
+An effect can choose what triggers an autosave with `createEffect(() => { void save.run(draft()); })`.
+Here the effect tracks `draft()`. A token or other signal read inside the write is sampled
+for that run, so refreshing the token alone does not send another write.
+
+Form validation has its own tracking rules. With an async field check, a synchronous
+validation rule that reads outside state can still cause the field check to run again.
 
 Resources subscribed to `getCart` share their optimistic changes. A header badge and the
 cart page show the new count in the same frame. Before the first value arrives, a resource

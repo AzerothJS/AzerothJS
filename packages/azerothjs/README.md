@@ -214,7 +214,10 @@ const useCart = createStore(() =>
     return { items, add: (id: string) => setItems([...items(), id]) };
 });
 
-const user = createResource(() => fetch(`/api/users/${id()}`).then((response) => response.json()));
+const [id, setId] = createSignal('alice');
+const user = createResource(id, (userId, signal) =>
+    fetch(`/api/users/${userId}`, { signal }).then((response) => response.json()));
+setId('bob');   // starts a fetch for /api/users/bob
 user.loading(); // true while a fetch is in flight
 user.data();    // the resolved value, or undefined
 ```
@@ -337,8 +340,8 @@ after hydration.
 A boundary names the resources it waits on, so nothing has to infer which reads are async:
 
 ```azeroth
-resource orders = () => fetchOrders(userId);
-resource offers = () => fetchOffers(userId);
+resource orders = (id) => fetchOrders(id) with { source: userId };
+resource offers = (id) => fetchOffers(id) with { source: userId };
 
 <Suspense fallback={ <p>Loading your account...</p> } on={ [orders, offers] }>
     <OrderList rows={ orders.data() ?? [] } />

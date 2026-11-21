@@ -26,6 +26,7 @@ import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
 import { currentStreamSession, isHydrating, isStringMode } from './render-mode.ts';
 import { allocateSeedId, takeStreamSeed } from './stream-seeds.ts';
 import { untrack } from './untrack.ts';
+import { invokeFetcher } from './invoke-fetcher.ts';
 import { cachedFamilyOf, getDataCache, projectedValue, readValue as readCachedValue } from './data-cache.ts';
 
 /**
@@ -138,7 +139,9 @@ function isOptionsBag(value: unknown): boolean
 /**
  * Wraps an async fetcher into a reactive {@link Resource}. Two forms: standalone, which
  * loads once, and source-driven, which re-runs whenever its source signal changes and
- * passes the source value to the fetcher.
+ * passes the source value to the fetcher. The fetcher runs synchronously up to its first
+ * await with dependency tracking suspended. Pass a reactive fetch key as the source.
+ * Explicit refetch and shared-cache invalidation can also start a request.
  *
  * A source returning `false`, `null` or `undefined` SKIPS the fetch and resets `data` to
  * undefined - the idiomatic way to wait for a parameter. `0` and `''` are valid keys, not
@@ -350,9 +353,9 @@ export function createResource<T, S>(
         let pending: Promise<T>;
         try
         {
-            pending = Promise.resolve(hasSource
+            pending = Promise.resolve(invokeFetcher(fetcher, undefined, () => hasSource
                 ? (fetcher as SourceFetcher<S, T>)(sourceValue as S, controller.signal)
-                : (fetcher as StandaloneFetcher<T>)(controller.signal));
+                : (fetcher as StandaloneFetcher<T>)(controller.signal)));
         }
         catch (error)
         {

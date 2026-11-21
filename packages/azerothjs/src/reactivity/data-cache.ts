@@ -27,6 +27,7 @@ import { createStore } from './create-store.ts';
 import { getStoreScope, isDefaultScope } from './store-scope.ts';
 import { getRenderMode, isStringMode } from './render-mode.ts';
 import { untrack } from './untrack.ts';
+import { invokeFetcher } from './invoke-fetcher.ts';
 import { isSSRNode } from './ssr.ts';
 import { DEV } from './dev.ts';
 
@@ -675,7 +676,7 @@ export class DataCache
         try
         {
             const fetcher = entry.family.fetcher;
-            pending = Promise.resolve(fetcher(...entry.args, controller.signal));
+            pending = Promise.resolve(invokeFetcher(fetcher, entry.family.name, () => fetcher(...entry.args, controller.signal)));
         }
         catch (thrown)
         {
@@ -1342,7 +1343,7 @@ export function cached<F extends (...args: never[]) => Promise<unknown>>(
                     signal.addEventListener('abort', () => controller.abort(), { once: true });
                 }
             }
-            return rawFetcher(...plainArgs, controller.signal) as Promise<T>;
+            return invokeFetcher(rawFetcher, family.name, () => rawFetcher(...plainArgs, controller.signal)) as Promise<T>;
         }
         return readValue<T>(cache, family, plainArgs, signal);
     };

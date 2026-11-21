@@ -16,8 +16,9 @@
  * cannot grow without bound.
  */
 
-import type { Getter, Producer, SelectorOptions } from './types.ts';
-import { currentSubscriber, createProducer, track } from './graph.ts';
+import type { Getter, Producer, SelectorOptions, Subscriber } from './types.ts';
+import { currentTrackingFrame, createProducer, observeFetcherRead, track } from './graph.ts';
+import { DEV_FETCHER_READS } from './dev.ts';
 import { notifyWrite } from './batch.ts';
 import { createEffect } from './create-effect.ts';
 import { untrack } from './untrack.ts';
@@ -98,9 +99,10 @@ export function createSelector<T>(
     }, { name: options.name });
     dtExitPrimitive(frame);
 
-    return function isSelected(key: T): boolean
+    function isSelected(key: T): boolean
     {
-        if (currentSubscriber !== null && !currentSubscriber.isDisposed)
+        const subscriber = currentTrackingFrame as Subscriber | null;
+        if (subscriber !== null && !subscriber.isDisposed)
         {
             let producer = keyProducers.get(key);
             if (!producer)
@@ -118,5 +120,10 @@ export function createSelector<T>(
         }
 
         return equals(currentValue, key);
-    };
+    }
+
+    // An observed lookup has no subscriber and must never create a per-key producer.
+    return DEV_FETCHER_READS
+        ? (key: T): boolean => observeFetcherRead() ? equals(currentValue, key) : isSelected(key)
+        : isSelected;
 }

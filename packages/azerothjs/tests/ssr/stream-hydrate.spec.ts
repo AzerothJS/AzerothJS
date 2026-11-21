@@ -3,7 +3,8 @@
 // ids the client re-derives. The swap function under test is the REAL azsRuntime - the same
 // code browsers execute - applied chunk by chunk exactly as the wire would.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Show, Suspense, createResource, createSignal, h, hydrate, renderToStream } from 'azerothjs';
+import { Show, Suspense, createMemo, createResource, createSignal, h, hydrate, render, renderToStream } from 'azerothjs';
+import type { Resource } from 'azerothjs';
 import { azsRuntime } from '../../src/renderer/stream-swap.ts';
 
 interface AzsGlobal
@@ -71,6 +72,80 @@ afterEach(() =>
 
 describe('hydrating a streamed page', () =>
 {
+    it('streams the first resource made by a memo when its fetcher reads a signal that changes during rendering', async () =>
+    {
+        const starts: string[] = [];
+        const app = (): HTMLElement =>
+        {
+            const [token, setToken] = createSignal('first');
+            const resource = createMemo(() => createResource(() =>
+            {
+                starts.push(token());
+                return Promise.resolve('streamed value');
+            }));
+            const pending = resource();
+            setToken('second');
+            return h('main', {}, Suspense({
+                on: [pending],
+                fallback: () => h('i', {}, 'waiting'),
+                children: () => h('b', {}, () => resource().data() ?? 'empty')
+            }));
+        };
+        const chunks = await streamAll(renderToStream(app));
+        expect(starts).toEqual(['first']);
+        expect(chunks[0]).toContain('waiting');
+        expect(chunks.slice(1).join('')).toContain('streamed value');
+        expect(chunks.slice(1).join('')).not.toContain('empty');
+    });
+
+    it('adopts the streamed seed and keeps the first client refetch independent of later incidental changes', async () =>
+    {
+        const [token, setToken] = createSignal('server');
+        const starts: string[] = [];
+        let resource!: Resource<string>;
+        const app = (): HTMLElement =>
+        {
+            resource = createResource(() =>
+            {
+                const current = token();
+                starts.push(current);
+                return Promise.resolve(current);
+            });
+            return h('main', {}, Suspense({
+                on: [resource],
+                fallback: () => h('i', {}, 'waiting'),
+                children: () => h('b', {}, () => resource.data() ?? '')
+            }));
+        };
+        const chunks = await streamAll(renderToStream(app));
+        const container = mount();
+        container.innerHTML = chunks[0]!;
+        azsRuntime();
+        for (const chunk of chunks.slice(1))
+        {
+            applyChunk(container, chunk);
+        }
+        const serverNode = container.querySelector('b');
+        expect(serverNode?.textContent).toBe('server');
+        try
+        {
+            hydrate(app, container);
+            expect(container.querySelector('b')).toBe(serverNode);
+            setToken('client');
+            expect(starts).toEqual(['server']);
+            await resource.refetch();
+            expect(container.querySelector('b')?.textContent).toBe('client');
+            const clientNode = container.querySelector('b');
+            setToken('later');
+            expect(starts).toEqual(['server', 'client']);
+            expect(container.querySelector('b')).toBe(clientNode);
+        }
+        finally
+        {
+            render(() => h('i', {}), container);
+        }
+    });
+
     it('adopts swapped content with no mismatch and no refetch; handlers work post-hydrate', async () =>
     {
         const fetcher = vi.fn(() => Promise.resolve('from-server'));

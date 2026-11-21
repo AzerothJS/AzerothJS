@@ -452,7 +452,7 @@ export function createMutation<In, Out>(
     return {
         pending: () => inFlight() > 0,
         error,
-        run,
+        run: (input, options) => untrack(() => run(input, options)),
         cancel(): void
         {
             // Copied first: aborting settles runs, which mutates the set being walked.

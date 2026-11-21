@@ -22,3 +22,7 @@
 /** True outside `NODE_ENV=production` - including browsers with no `process` at all. */
 export const DEV: boolean =
     (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.NODE_ENV !== 'production';
+
+/** Vite can erase the fetcher read probe from production getters. Raw ESM uses the runtime mode. */
+export const DEV_FETCHER_READS: boolean =
+    (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV ?? DEV;

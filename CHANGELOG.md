@@ -12,6 +12,12 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- Resource fetchers, cached fetchers and client route loaders now sample reactive values
+  during their synchronous call. To reload when an ID changes, move the ID into the resource
+  source, pass it as a cached family argument, or load it at the route level that binds it.
+  Development diagnostics identify fetchers that read reactive state. Use `untrack` around
+  a read that deliberately takes a snapshot.
+
 - Direct calls to a `cached` fetcher now return the committed cache value on both a cache
   hit and a joined fetch. A pending optimistic guess previously appeared on a hit and could
   persist in a loader after rollback. Use a subscribed resource to display pending guesses.
@@ -183,6 +189,11 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   without a router, now does the same in an app with one.
 
 ### Fixed
+
+- Moving an incidental signal read by a resource fetcher could abort a request, rebuild a
+  Suspense subtree and discard text typed into it. An autosave effect could send another
+  write when a signal read inside the mutation changed. Resource requests now follow
+  their explicit triggers, and `mutation.run()` executes its synchronous work untracked.
 
 - Optimistic cart writes now reach the server while their first load is pending or has
   failed. Resources wait for a base before projecting. A projection that cannot use a

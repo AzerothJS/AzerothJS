@@ -151,6 +151,11 @@ loader: async ({ params, query, signal, parent }) =>
   that same slice, so a value derived from a descendant's param would be served for every
   other value that param can take. To use a descendant's param, read it in a COMPONENT via
   `useParams()`, or read that level's data via `useLoader(handle)`.
+- Put a request that depends on a leaf parameter in that leaf's loader and pass
+  `params.id` to the fetcher. For data keyed by a search parameter, declare the query
+  on the route and use its `query` argument. A signal read inside the loader samples its
+  current value. Use `router.revalidate()` when application code needs to refresh the
+  current loaders explicitly.
 
 ## Guards, redirects, blockers
 
@@ -166,6 +171,8 @@ loader: async ({ params, query, signal, parent }) =>
 - `guard` runs root-to-leaf BEFORE loaders and rendering: `true` passes, a target or
   `redirect(...)` goes elsewhere, and `false` / `forbidden()` / `unauthorized()` DENY.
   Async guards hold the navigation; first veto wins.
+- A synchronous client guard can track reactive state. In the example above, changing
+  `auth.signedIn()` causes the guard to evaluate access again.
 - A denied navigation settles AT the target URL in the blocked state - it does not rewind.
   `<Routes blocked={...}>` renders it, SSR answers 401 or 403 with that same UI, and the
   route itself never renders in either mode, so a deep link and an in-app click agree.

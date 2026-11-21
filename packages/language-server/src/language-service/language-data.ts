@@ -299,9 +299,9 @@ export const KEYWORD_DOCS: Record<string, string> =
         '```azeroth\ndispose\n{\n    socket.close();\n}\n```',
     resource:
         '**`resource`** - async data\n\n' +
-        'Declares an async resource (lowers to `createResource`). The value is the fetcher; `with { source }` makes ' +
-        'it refetch when a signal changes (and skip while that signal is falsy). Read it explicitly: `name.data()`, ' +
-        '`name.loading()`, `name.error()`, `name.refetch()`.\n\n' +
+        'Declares an async resource (lowers to `createResource`). Put changing request inputs in `with { source }`. ' +
+        'The runtime tracks the source and passes its value to the untracked fetcher. Read the result with `name.data()`, ' +
+        'check `name.loading()` or `name.error()`, and refresh with `name.refetch()`.\n\n' +
         '```azeroth\nresource user = (id) => fetchUser(id) with { source: selectedId };\n```',
     stream:
         '**`stream`** - streaming async data\n\n' +
@@ -418,7 +418,7 @@ export const KEYWORD_OPTIONS: Record<string, readonly KeywordOption[]> =
     ],
     resource:
     [
-        { name: 'source', type: '() => S | false | null | undefined', doc: 'A signal/getter that drives the fetch - the resource refetches when it changes, and skips fetching while it is falsy (the fetched value is passed to the fetcher). Omit `source` for a one-shot fetch.' },
+        { name: 'source', type: '() => S | false | null | undefined', doc: 'The tracked source passes its value to the fetcher and refetches on change. A source value of `false`, `null` or `undefined` skips the fetch. Omit `source` for a one-shot fetch. Reads in the fetcher take a snapshot.' },
         { name: 'name', type: 'string', doc: 'Debug name for devtools; groups the resource\'s data/loading/error nodes. The dev server passes the declared identifier automatically.' }
     ],
     stream:

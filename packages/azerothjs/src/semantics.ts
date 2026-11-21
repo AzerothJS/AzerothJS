@@ -44,6 +44,13 @@ export function hostEventType(name: string): string | null
     return null;
 }
 
+/** Development advice for an implicit reactive read in a fetcher's synchronous body. */
+export function fetcherReadMessage(name: string): string
+{
+    return `[azeroth] '${ name }' read reactive data inside its fetcher. To reload when that value changes, `
+        + 'include it in the fetch source, cached arguments or route inputs. For an intentional snapshot, use untrack(() => value()).';
+}
+
 /** The whole `on*` name family, case-insensitive - handler-form plus the reserved remainder. */
 const EVENT_NAMESPACE = /^on/i;
 

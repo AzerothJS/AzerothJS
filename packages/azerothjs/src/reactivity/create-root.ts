@@ -325,7 +325,7 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
     // disposes". Without clearing the ambient cleanup array, a createRoot opened from inside an
     // effect run - which is how every control-flow row and reactive hole is built - would leave
     // the effect's array installed, and the body's onCleanup would fire on that effect's next
-    // re-run instead. currentSubscriber is deliberately untouched: a root is not a tracking
+    // re-run instead. currentTrackingFrame is deliberately untouched: a root is not a tracking
     // boundary, and h.ts's per-run roots must keep tracking into the driving effect.
     const previousCleanups = currentCleanups;
     setCurrentCleanups(null);

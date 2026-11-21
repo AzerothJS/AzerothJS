@@ -22,8 +22,8 @@
 
 import type { EffectFn, DisposeFn, CleanupFn, Subscriber, EffectOptions } from './types.ts';
 import {
-    currentSubscriber,
-    setCurrentSubscriber,
+    currentTrackingFrame,
+    setTrackingFrame,
     currentCleanups,
     setCurrentCleanups,
     beginTrack,
@@ -274,9 +274,9 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
         // computation's tracked run (which is exactly what error-boundary.ts does when it tears a
         // branch down) made that a foreign subscriber. The graph then woke computations that never
         // read the signal at all. Cleanups tear down; they must not subscribe.
-        const teardownSubscriber = currentSubscriber;
+        const teardownFrame = currentTrackingFrame;
         const teardownCleanups = currentCleanups;
-        setCurrentSubscriber(null);
+        setTrackingFrame(null);
         setCurrentCleanups(null);
         try
         {
@@ -295,14 +295,14 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
         }
         finally
         {
-            setCurrentSubscriber(teardownSubscriber);
+            setTrackingFrame(teardownFrame);
             setCurrentCleanups(teardownCleanups);
         }
 
         // While fn runs, getters link this subscriber to their producer and onCleanup() pushes
         // onto `cleanups`. The previous context is saved so nested effects restore correctly.
-        const previousSubscriber = currentSubscriber;
-        setCurrentSubscriber(subscriber);
+        const previousFrame = currentTrackingFrame;
+        setTrackingFrame(subscriber);
 
         const previousCleanups = currentCleanups;
         setCurrentCleanups(cleanups);
@@ -361,7 +361,7 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
             setCurrentErrorHandler(previousHandler);
             setCurrentOwner(previousOwner);
             setCurrentCleanups(previousCleanups);
-            setCurrentSubscriber(previousSubscriber);
+            setTrackingFrame(previousFrame);
             hasRun = true;
             if (devtoolsId !== 0)
             {
@@ -408,9 +408,9 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
 
         // Same neutral scope as the re-run teardown, and for the same reason: disposal is often
         // driven from inside another computation's tracked run.
-        const teardownSubscriber = currentSubscriber;
+        const teardownFrame = currentTrackingFrame;
         const teardownCleanups = currentCleanups;
-        setCurrentSubscriber(null);
+        setTrackingFrame(null);
         setCurrentCleanups(null);
         try
         {
@@ -428,7 +428,7 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
         }
         finally
         {
-            setCurrentSubscriber(teardownSubscriber);
+            setTrackingFrame(teardownFrame);
             setCurrentCleanups(teardownCleanups);
         }
 

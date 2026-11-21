@@ -60,6 +60,7 @@ import { compilePath, type PathMatcher } from './path-pattern.ts';
 import type { CacheEntry, DataCache, FamilyRecord } from '../reactivity/data-cache.ts';
 import { CACHED_FAMILY, entryKeyFor, getDataCache, readValue, stableSerialize } from '../reactivity/data-cache.ts';
 import { DEV } from '../reactivity/dev.ts';
+import { invokeFetcher } from '../reactivity/invoke-fetcher.ts';
 import { isRedirect } from './redirect.ts';
 import { currentRenderDenial, deniedStatus, isDenied, seededDenial } from './denied.ts';
 import { notFound } from './not-found.ts';
@@ -1392,7 +1393,8 @@ function buildRouter(config: RouterConfig): Router
             const parent = parentPromiseFor(cache ?? null, trigger.parentKey, selfEntry);
             // `request` is null in the browser, for the reason the guard context states: a
             // synthesised Request would carry an empty cookie jar and read as the visitor's.
-            return trigger.loader({ params: trigger.params, query: trigger.query, signal, parent, request: null });
+            return invokeFetcher(trigger.loader, undefined, () =>
+                trigger.loader({ params: trigger.params, query: trigger.query, signal, parent, request: null }));
         }) as FamilyRecord['fetcher'],
         fresh: 0,
         retain: 5 * 60 * 1000

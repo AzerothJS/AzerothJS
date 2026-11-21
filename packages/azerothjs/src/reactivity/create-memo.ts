@@ -31,8 +31,8 @@ import {
     endTrack,
     unlinkAll,
     depsChanged,
-    currentSubscriber,
-    setCurrentSubscriber,
+    currentTrackingFrame,
+    setTrackingFrame,
     currentCleanups,
     setCurrentCleanups
 } from './graph.ts';
@@ -194,9 +194,9 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
         // never legitimately read. The work the last compute owned is then drained, not disposed:
         // this node has to survive for the next compute.
         {
-            const teardownSubscriber = currentSubscriber;
+            const teardownFrame = currentTrackingFrame;
             const teardownCleanups = currentCleanups;
-            setCurrentSubscriber(null);
+            setTrackingFrame(null);
             setCurrentCleanups(null);
             try
             {
@@ -213,13 +213,13 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
             }
             finally
             {
-                setCurrentSubscriber(teardownSubscriber);
+                setTrackingFrame(teardownFrame);
                 setCurrentCleanups(teardownCleanups);
             }
         }
 
-        const previousSubscriber = currentSubscriber;
-        setCurrentSubscriber(node);
+        const previousFrame = currentTrackingFrame;
+        setTrackingFrame(node);
         const previousCleanups = currentCleanups;
         setCurrentCleanups(cleanups);
         const previousOwner = setCurrentOwner(owner);
@@ -256,7 +256,7 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
             setCurrentErrorHandler(previousHandler);
             setCurrentOwner(previousOwner);
             setCurrentCleanups(previousCleanups);
-            setCurrentSubscriber(previousSubscriber);
+            setTrackingFrame(previousFrame);
             if (devtoolsId !== 0)
             {
                 dtRun(devtoolsId);
@@ -312,9 +312,9 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
         }
         node.isDisposed = true;
 
-        const teardownSubscriber = currentSubscriber;
+        const teardownFrame = currentTrackingFrame;
         const teardownCleanups = currentCleanups;
-        setCurrentSubscriber(null);
+        setTrackingFrame(null);
         setCurrentCleanups(null);
         try
         {
@@ -330,7 +330,7 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
         }
         finally
         {
-            setCurrentSubscriber(teardownSubscriber);
+            setTrackingFrame(teardownFrame);
             setCurrentCleanups(teardownCleanups);
         }
 

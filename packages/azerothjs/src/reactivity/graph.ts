@@ -22,14 +22,18 @@
  */
 
 import type { Subscriber, Producer, Link, CleanupFn } from './types.ts';
+import { DEV_FETCHER_READS } from './dev.ts';
 
-/** The effect or memo currently running; null outside a tracked run. @internal */
-export let currentSubscriber: Subscriber | null = null;
+/** A development fetcher can observe a read without creating a graph link. @internal */
+export type TrackingFrame = Subscriber | (() => void) | null;
+
+/** The innermost dependency-tracking or read-observation frame. @internal */
+export let currentTrackingFrame: TrackingFrame = null;
 
 /** @internal */
-export function setCurrentSubscriber(sub: Subscriber | null): void
+export function setTrackingFrame(sub: TrackingFrame): void
 {
-    currentSubscriber = sub;
+    currentTrackingFrame = sub;
 }
 
 /** Cleanup array of the running consumer; where onCleanup() pushes. @internal */
@@ -63,9 +67,31 @@ export function createProducer(): Producer
  *
  * @internal
  */
-export function track(producer: Producer): void
+export const track: (producer: Producer) => void = DEV_FETCHER_READS
+    ? (producer: Producer): void =>
+    {
+        if (!observeFetcherRead())
+        {
+            trackSubscriber(producer);
+        }
+    }
+    : trackSubscriber;
+
+/** Reports a read in a diagnostic frame before graph or selector-key allocation. @internal */
+export function observeFetcherRead(): boolean
 {
-    const consumer = currentSubscriber;
+    if (typeof currentTrackingFrame === 'function')
+    {
+        currentTrackingFrame();
+        return true;
+    }
+    return false;
+}
+
+function trackSubscriber(producer: Producer): void
+{
+    // Diagnostic frames are handled by the development entry above and never installed in production.
+    const consumer = currentTrackingFrame as Subscriber | null;
     if (consumer === null || consumer.isDisposed)
     {
         return;
