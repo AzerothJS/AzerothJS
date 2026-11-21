@@ -11,9 +11,9 @@
 // route-position identity across same-path siblings, seed adoption (fresh, stale-heal,
 // static, rejected v2), and back-navigation serving from the cache.
 import { describe, it, expect, afterEach } from 'vitest';
-import { createRoot, createRouter, createMemoryHistory, matchAndLoad, LOADER_HANDOFF_VERSION } from 'azerothjs';
+import { batch, createRoot, createRouter, createMemoryHistory, matchAndLoad, LOADER_HANDOFF_VERSION } from 'azerothjs';
 import type { Route, Router } from 'azerothjs';
-import { resetDataCache } from 'azerothjs/internal';
+import { markServerRuntime, resetDataCache } from 'azerothjs/internal';
 
 const leaf = (): HTMLElement => document.createElement('div');
 
@@ -49,6 +49,62 @@ async function withRouter(routes: Route[], initialUrl: string, fn: (router: Rout
 
 describe('the refetch blast radius', () =>
 {
+    it('restages the right cache-disabled nested loader on an explicit refetch after batched construction', async () =>
+    {
+        markServerRuntime();
+        const calls: string[] = [];
+        let router!: Router;
+        const dispose = createRoot(d =>
+        {
+            batch(() =>
+            {
+                router = createRouter({
+                    history: createMemoryHistory('/projects/one/first'),
+                    routes: [{
+                        path: '/projects/:project',
+                        component: leaf,
+                        loader: ({ params }) =>
+                        {
+                            const value = 'parent ' + String(params.project);
+                            calls.push(value);
+                            return Promise.resolve(value);
+                        },
+                        children: [{
+                            path: ':part',
+                            component: leaf,
+                            loader: ({ params }) =>
+                            {
+                                const value = 'child ' + String(params.part);
+                                calls.push(value);
+                                return Promise.resolve(value);
+                            }
+                        }]
+                    }]
+                });
+            });
+            return d;
+        });
+        try
+        {
+            await flush();
+            expect(calls).toEqual(['parent one', 'child first']);
+            await router.loaders[0]!.refetch();
+            expect(calls).toEqual(['parent one', 'child first', 'parent one']);
+            expect(router.loaders[0]!.error()).toBeNull();
+            router.navigate('/projects/one/second');
+            await flush();
+            expect(calls).toEqual(['parent one', 'child first', 'parent one', 'child second']);
+            await router.loaders[0]!.refetch();
+            expect(calls).toEqual(['parent one', 'child first', 'parent one', 'child second', 'parent one']);
+            expect(router.loaders[0]!.error()).toBeNull();
+            expect(router.loaders[1]!.data()).toBe('child second');
+        }
+        finally
+        {
+            dispose();
+        }
+    });
+
     it('a leaf-param change runs ONLY the leaf; a schema-less query change runs both', async () =>
     {
         let parentRuns = 0;

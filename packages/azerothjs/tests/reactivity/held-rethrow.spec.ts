@@ -1470,7 +1470,7 @@ describe('a catcher around the write does not see a dropped read', () =>
             res = createResource(async () => next);
         }, (e) => log.push('H ' + (e as Error).name)));
         await tick();
-        const host = mount(() => h('div', null, Show({ when: () => res.loading(), fallback: () => h('i', null, 'idle'), children: () => h('b', null, () => 'refreshing ' + res.data()!.name) })));
+        const host = mount(() => h('div', null, Show({ when: () => res.refreshing(), fallback: () => h('i', null, 'idle'), children: () => h('b', null, () => 'refreshing ' + res.data()!.name) })));
         next = null;
         const settled = res.refetch();
         const during = host.textContent;
@@ -1492,7 +1492,7 @@ describe('a catcher around the write does not see a dropped read', () =>
             }
         })));
         await tick();
-        const reader = mount(() => h('div', null, Show({ when: () => res.loading(), fallback: () => h('i', null, 'idle'), children: () => h('b', null, () => 'refreshing ' + res.data()!.name) })));
+        const reader = mount(() => h('div', null, Show({ when: () => res.refreshing(), fallback: () => h('i', null, 'idle'), children: () => h('b', null, () => 'refreshing ' + res.data()!.name) })));
         next = null;
         const settled = res.refetch();
         const during = reader.textContent;

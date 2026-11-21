@@ -19,7 +19,7 @@
  *
  * cancel() aborts the request in flight, preserving `partial()` and flipping `done()`
  * without setting an error. refetch() cancels, resets `partial()` to `initial`, and starts
- * again on the same source value. Both converge on the driving effect's cleanup.
+ * again after sampling the current source. Both converge on the driving effect's cleanup.
  *
  * Doing this by hand means driving a reader loop, decoding with `{ stream: true }` so
  * multi-byte UTF-8 split across reads is not corrupted, reassembling deltas across chunk
@@ -30,6 +30,7 @@
 
 import type { Getter } from './types.ts';
 import { createSignal } from './create-signal.ts';
+import { createSourceKey } from './source-key.ts';
 import { createEffect, routeAsyncError } from './create-effect.ts';
 import { onCleanup } from './on-cleanup.ts';
 import { batch } from './batch.ts';
@@ -47,11 +48,17 @@ export type StreamParseMode = 'text' | 'sse' | 'ndjson';
 export interface StreamOptions<S = void>
 {
     /**
-     * Changing this cancels the current request and starts a new one. Returning `null`,
+     * A change to the selected key cancels the current request and starts a new one. Returning `null`,
      * `undefined` or `false` skips the fetch entirely, which is how "wait until the user is
      * logged in" is expressed.
      */
     source?: () => S | false | null | undefined;
+
+    /**
+     * Compares usable source keys. Defaults to `Object.is`. An equal result keeps the
+     * previous key and its stream. For a key mutated in place, call `refetch()` explicitly.
+     */
+    equals?: (previous: S, next: S) => boolean;
 
     /**
      * Returns a Response whose body is a ReadableStream. Receives the resolved source value,
@@ -93,11 +100,12 @@ export interface Stream
 
     /**
      * Aborts the stream in flight. `partial()` keeps whatever it had and `done()` flips true.
-     * A no-op once the stream has ended.
+     * A later key change or explicit refetch starts a fresh stream. Cancellation takes
+     * precedence over a key change or refetch in the same batch. A no-op after completion.
      */
     cancel: () => void;
 
-    /** Cancels, resets `partial()` to `initial`, and starts again on the current source value. */
+    /** Resamples the source and starts again, resetting `partial()` to `initial`. */
     refetch: () => void;
 }
 
@@ -378,18 +386,6 @@ function makeParser(
 }
 
 /**
- * Returns true for the values we treat as "no source": null,
- * undefined, or boolean false. `0` and `''` are valid source
- * values; we don't treat them as missing.
- *
- * @internal
- */
-function isSkipSource(value: unknown): boolean
-{
-    return value === null || value === undefined || value === false;
-}
-
-/**
  * @internal Normalizes createStream's three call forms into one {@link StreamOptions} object.
  * A positional fetcher `(sourceValue, signal) => Response` is wrapped into the internal
  * `({ source, signal }) => Response` shape, so the object-form fetcher and the positional
@@ -425,7 +421,7 @@ type PositionalSourceFetcher<S> = (source: S, signal: AbortSignal) => Promise<Re
 /** A positional fetcher with no source: receives only the abort signal. */
 type PositionalStandaloneFetcher = (signal: AbortSignal) => Promise<Response>;
 
-/** The `parse` and `initial` tail shared by the positional forms. */
+/** The options shared by the positional forms after supplying the source and fetcher. */
 type StreamTail<S> = Omit<StreamOptions<S>, 'fetcher' | 'source'>;
 
 /**
@@ -434,7 +430,7 @@ type StreamTail<S> = Omit<StreamOptions<S>, 'fetcher' | 'source'>;
  * and `cancel()` / `refetch()` control it.
  *
  * This positional form is what the `stream` keyword lowers to, mirroring
- * `createResource(source, fetcher)`. A source change cancels the current request and starts
+ * `createResource(source, fetcher)`. A different source key cancels the current request and starts
  * a new one; a source returning `false`, `null` or `undefined` skips the fetch entirely and
  * resets to `initial`, while `0` and `''` remain valid keys.
  *
@@ -449,9 +445,10 @@ type StreamTail<S> = Omit<StreamOptions<S>, 'fetcher' | 'source'>;
  * Client-side only. The reader loop does not run inside a synchronous SSR render.
  *
  * @typeParam S - The source value type.
- * @param source - Getter for the fetch key. Falsy values skip the fetch.
+ * @param source - Getter for the fetch key. `false`, `null` and `undefined` skip the fetch.
  * @param fetcher - Returns a Response whose body is a ReadableStream.
  * @param options - Optional settings.
+ * @param options.equals - Compares source keys. Defaults to `Object.is`.
  * @param options.parse - `'text'` (default), `'sse'`, `'ndjson'`, or a `(chunk) => string`
  *                        function. Built-in parsers buffer across reads, so a delta split
  *                        over two chunks is reassembled into one event.
@@ -524,7 +521,6 @@ export function createStream<S = void>(
     const options = normalizeStreamOptions<S>(a, b, c);
     const initial = options.initial ?? '';
     const source = options.source;
-    const hasSource = source !== undefined;
 
     // Captured at construction, matching how an effect captures its catchError scope: a
     // subscriber that throws while a settle propagates (the flush rethrows one it does not drop) is
@@ -536,10 +532,16 @@ export function createStream<S = void>(
     const [done, setDone] = createSignal(true, { name: 'done' });  // true until first fetch starts
     const [error, setError] = createSignal<unknown>(null, { name: 'error' });
 
-    // `tick` lets `refetch()` force the driving effect to re-run
-    // even when the source hasn't changed - same trick as in
-    // createResource. Internal, never exposed.
-    const [tick, setTick] = createSignal(0, { name: 'tick' });
+    // Refetch must resample even a nonreactive source. Cancellation wakes the driver
+    // separately so it can abort without evaluating application source code again.
+    const [refresh, setRefresh] = createSignal(0, { name: 'refetch' });
+    const [cancel, setCancel] = createSignal(0, { name: 'cancel' });
+    const readKey = source && createSourceKey<S>(source, options.equals, refresh);
+    let disposed = false;
+    onCleanup(() =>
+    {
+        disposed = true;
+    });
 
     /**
      * Resets the user-facing state to "fresh stream". Wrapped in
@@ -582,6 +584,12 @@ export function createStream<S = void>(
             for (;;)
             {
                 const { done: readerDone, value } = await reader.read();
+                // A superseded reader can still deliver a chunk or close with a buffered
+                // parser record. Only the current reader may append either kind of output.
+                if (controller.signal.aborted)
+                {
+                    return;
+                }
                 if (readerDone)
                 {
                     // Flush whatever the parser was holding back.
@@ -593,22 +601,12 @@ export function createStream<S = void>(
                     return;
                 }
 
-                // A re-run / cancel / source-change may have aborted
-                // us mid-read. Stop WITHOUT appending: a new stream
-                // (if any) now owns `partial`, and `done` is managed
-                // by the driving effect - a stale run must not write
-                // either. Returning here (rather than letting a late
-                // chunk through) keeps a fetcher that ignores its
-                // signal from corrupting the fresh stream's output.
-                if (controller.signal.aborted)
-                {
-                    return;
-                }
-
                 // `{ stream: true }` is critical - keeps multi-byte
                 // UTF-8 sequences split across reads from breaking.
                 const text = decoder.decode(value, { stream: true });
                 const out = parser.feed(text);
+                // A custom parser can cancel or select another key before it returns.
+                controller.signal.throwIfAborted();
                 if (out.append)
                 {
                     appendPartial(out.append);
@@ -712,7 +710,7 @@ export function createStream<S = void>(
     /**
      * Externally-callable cancel. We can't reach the active
      * AbortController from here directly (it's in startStream's
-     * closure) - instead, we bump tick which fires the effect's
+     * closure) - instead, we wake the driver, which fires the effect's
      * onCleanup, which calls controller.abort. Net effect is the
      * same; one path covers cancel + refetch + source-change +
      * unmount.
@@ -727,14 +725,12 @@ export function createStream<S = void>(
         // `pendingCancel = true` so the next iteration sets done
         // without starting a new fetch.
         pendingCancel = true;
-        setTick(t => t + 1);
+        setCancel(t => t + 1);
     }
 
     function refetch(): void
     {
-        // Just bump tick - the effect will tear down (onCleanup
-        // fires the controller.abort) and start fresh.
-        setTick(t => t + 1);
+        setRefresh(t => t + 1);
     }
 
     let pendingCancel = false;
@@ -742,38 +738,38 @@ export function createStream<S = void>(
     // The reactive driver.
     createEffect(() =>
     {
-        tick(); // subscribe so refetch / cancel can force a re-run
+        refresh();
+        cancel();
+        const key = readKey?.();
 
-        if (pendingCancel)
+        if (disposed || pendingCancel || key?.kind === 'error')
         {
-            // The previous run's onCleanup already aborted. Mark
-            // done and stay idle until the next refetch or
-            // source change.
+            // The source or comparator can dispose this owner. Preserve its last snapshot
+            // while routing any error from that callback through the drive's captured scope.
             pendingCancel = false;
-            setDone(true);
+            if (!disposed)
+            {
+                setDone(true);
+            }
+            if (key?.kind === 'error')
+            {
+                throw key.error;
+            }
             return;
         }
 
-        let sourceValue: S = undefined as S;
-        if (hasSource)
+        if (key?.kind === 'skip')
         {
-            const v = source();
-            if (isSkipSource(v))
+            batch(() =>
             {
-                // No source, no fetch. Reset to initial state
-                // ("idle, nothing streamed yet").
-                batch(() =>
-                {
-                    setPartial(initial);
-                    setDone(true);
-                    setError(null);
-                });
-                return;
-            }
-            sourceValue = v as S;
+                setPartial(initial);
+                setDone(true);
+                setError(null);
+            });
+            return;
         }
 
-        startStream(sourceValue);
+        startStream(key === undefined ? undefined as S : key.value);
     }, { name: 'drive' });
     dtExitPrimitive(frame);
 

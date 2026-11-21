@@ -201,9 +201,9 @@ value the row reads and then removes an item before it.
 
 ### Stores & resources
 
-`createStore` is a lazily-built singleton with per-request isolation under SSR; `createResource`
-wraps async data with `data`/`loading`/`error` getters and `refetch`; `createStream` consumes a
-streaming source.
+`createStore` is a lazily-built singleton with per-request isolation under SSR.
+`createResource` exposes the current data, loading and refresh state, and any error.
+`createStream` exposes a response incrementally through `partial()`.
 
 ```ts
 import { createStore, createResource, createSignal } from 'azerothjs';
@@ -218,9 +218,15 @@ const [id, setId] = createSignal('alice');
 const user = createResource(id, (userId, signal) =>
     fetch(`/api/users/${userId}`, { signal }).then((response) => response.json()));
 setId('bob');   // starts a fetch for /api/users/bob
-user.loading(); // true while a fetch is in flight
+user.loading(); // true while the new key is waiting for its first value
 user.data();    // the resolved value, or undefined
 ```
+
+Resources and streams compare source keys with `Object.is`. Pass `equals(previous, next)`
+when separately allocated keys represent the same request. Call `refetch()` to request
+the current key again. On a plain resource with a successful value for that key,
+`refreshing()` becomes true and the displayed value stays available. Overlapping calls
+to `refetch()` can await the same published result. [Resource keys and refetching](docs/reactivity.md#resource-keys-and-refetching)
 
 ### Forms
 
@@ -351,7 +357,8 @@ resource offers = (id) => fetchOffers(id) with { source: userId };
 
 `on` is required and captured once at construction: pass a stable list of resource
 references, not an array built from a signal. An empty list renders the children
-immediately. The fallback shows while ANY listed resource is loading.
+immediately. A listed resource that is loading shows the fallback. A same-key refresh
+of a plain resource with a successful value keeps the children and their local state.
 
 ```ts
 import { renderToStream } from 'azerothjs';

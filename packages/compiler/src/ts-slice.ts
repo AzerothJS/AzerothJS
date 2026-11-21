@@ -25,6 +25,7 @@
 import * as ts from 'typescript';
 
 import type { StateDecl, DerivedDecl, DeferredDecl, ResourceDecl, StreamDecl, StoreDecl, SelectorDecl, FormDecl } from './ast.ts';
+import type { Span } from './types.ts';
 
 import { RUNTIME_FN, type FactoryKind } from './keyword-spec.ts';
 
@@ -263,42 +264,41 @@ export function formFieldKeys(source: string, decl: FormDecl): { keys: string[];
     return { keys, open };
 }
 
-/**
- * Splits a factory `with { ... }` options object into its `source` property (the signal that drives a
- * `resource`/`stream` refetch) and the REST of the options. Returns each as TypeScript source TEXT - no
- * offset mapping, since a `source`/option expression is almost always a single signal read. `source` is
- * null when the clause has no `source` key; `rest` is null when nothing else remains.
- *
- * @param optionsText - The `with` clause's `{ ... }` object-literal text (braces included).
- * @returns `{ source, rest }` as source text (either may be null).
- * @internal
- */
-function parseFactoryOptions(optionsText: string): { source: string | null; rest: string | null }
+/** Positions relative to the opening brace of a resource or stream's `with` clause. */
+interface FactoryOptionSpans
 {
-    const sf = parse(`const __o = ${ optionsText };`);
+    source: Span | null;
+    rest: Span[];
+}
+
+/** Splits off the source initializer, keeping the original ranges for editor diagnostics and hover. */
+function parseFactoryOptions(optionsText: string): FactoryOptionSpans | null
+{
+    const prefix = 'const __o = ';
+    const sf = parse(`${ prefix }${ optionsText };`);
     const stmt = sf.statements[0];
     const init = stmt !== undefined && ts.isVariableStatement(stmt)
         ? stmt.declarationList.declarations[0]?.initializer
         : undefined;
     if (init === undefined || !ts.isObjectLiteralExpression(init))
     {
-        // Not an object literal we can split (a malformed clause); keep it whole so nothing is dropped.
-        return { source: null, rest: optionsText };
+        return null;
     }
-    let sourceText: string | null = null;
-    const rest: string[] = [];
+    const span = (node: ts.Node): Span => ({ start: node.getStart(sf) - prefix.length, end: node.getEnd() - prefix.length });
+    let source: Span | null = null;
+    const rest: Span[] = [];
     for (const prop of init.properties)
     {
         if (ts.isPropertyAssignment(prop) && prop.name.getText(sf) === 'source')
         {
-            sourceText = prop.initializer.getText(sf);
+            source = span(prop.initializer);
         }
         else
         {
-            rest.push(prop.getText(sf));
+            rest.push(span(prop));
         }
     }
-    return { source: sourceText, rest: rest.length > 0 ? `{ ${ rest.join(', ') } }` : null };
+    return { source, rest };
 }
 
 /**
@@ -332,13 +332,27 @@ function isFactoryInitializer(init: ts.Node | undefined): boolean
  * @returns The runtime fn name and the argument-shape decisions.
  * @internal
  */
-export function factoryPlan(kind: FactoryKind, optsText: string | null, initializer: ts.Node | undefined): { fn: string; source: string | null; rest: string | null; opts: string | null; wrapValue: boolean }
+export function factoryPlan(kind: FactoryKind, optsText: string | null, initializer: ts.Node | undefined): {
+    fn: string; source: string | null; rest: string | null; opts: string | null; wrapValue: boolean; spans?: FactoryOptionSpans | null;
+}
 {
     const fn = RUNTIME_FN[kind];
     if (kind === 'resource' || kind === 'stream')
     {
-        const split = optsText !== null ? parseFactoryOptions(optsText) : { source: null, rest: null };
-        return { fn, source: split.source, rest: split.rest, opts: null, wrapValue: false };
+        const spans = optsText !== null ? parseFactoryOptions(optsText) : null;
+        let source: string | null = null;
+        // Keep a malformed clause whole so the emitter still reports it.
+        let rest = optsText;
+        if (optsText !== null && spans !== null)
+        {
+            if (spans.source)
+            {
+                source = optsText.slice(spans.source.start, spans.source.end);
+            }
+            const properties = spans.rest.map(({ start, end }) => optsText.slice(start, end));
+            rest = properties.length > 0 ? `{ ${ properties.join(', ') } }` : null;
+        }
+        return { fn, source, rest, spans, opts: null, wrapValue: false };
     }
     if (kind === 'selector')
     {

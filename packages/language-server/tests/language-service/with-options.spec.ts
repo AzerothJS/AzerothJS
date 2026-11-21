@@ -13,9 +13,9 @@ import { AzerothLanguageService } from '../../src/language-service/index.ts';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const tsconfig = path.join(fixtures, 'tsconfig.json');
 
-function open(name: string, source: string)
+function open(name: string, source: string, config = tsconfig)
 {
-    const service = new AzerothLanguageService(fixtures, tsconfig);
+    const service = new AzerothLanguageService(fixtures, config);
     const uri = pathToFileURL(path.join(fixtures, name)).href;
     service.didOpen(uri, source);
     return { service, uri };
@@ -34,6 +34,40 @@ function optionLabels(items: { kind?: number; label: string }[])
 {
     return items.filter(item => item.kind === 5).map(item => item.label).sort();
 }
+
+describe('resource and stream with-clause TypeScript mappings', () =>
+{
+    it.each(['resource', 'stream'] as const)('maps the %s source, comparator parameters and property diagnostic', keyword =>
+    {
+        const fetcher = keyword === 'resource' ? 'async () => 1' : 'async () => new Response()';
+        const comparator = 'equals: (previous, next) => previous.missingField === next.id';
+        const options = keyword === 'resource'
+            ? [comparator, 'source: selection']
+            : ['source: selection', comparator];
+        const src = [
+            'interface SearchKey { id: number }',
+            'export default component Editor',
+            '{',
+            '    state selection: SearchKey = { id: 1 };',
+            `    ${ keyword } rows = ${ fetcher } with {`,
+            `        ${ options.join(',\n        ') }`,
+            '    };',
+            '    <p>ready</p>',
+            '}'
+        ].join('\n');
+        // The workspace config resolves the live runtime declarations, including its comparator overload.
+        const workspaceConfig = fileURLToPath(new URL('../../../../tsconfig.json', import.meta.url));
+        const { service, uri } = open(`Types-${ keyword }.azeroth`, src, workspaceConfig);
+        const diagnostic = service.getDiagnostics(uri).find(item => item.code === 2339 && item.message.includes('missingField'));
+        expect(diagnostic?.range).toEqual({
+            start: posAfter(src, '=> previous.'),
+            end: posAfter(src, '=> previous.missingField')
+        });
+        expect(service.getHover(uri, posAfter(src, '=> previ'))?.contents).toContain('previous: SearchKey');
+        expect(service.getHover(uri, posAfter(src, 'source: selec'))?.contents).toContain('selection: SearchKey');
+        expect(service.getHover(uri, posAfter(src, 'next.i'))?.contents).toContain('id: number');
+    });
+});
 
 describe('completion: `with { ... }` options per keyword', () =>
 {
@@ -228,7 +262,7 @@ describe('diagnostics: unknown `with` option', () =>
         expect(unknownOption(uri, service)).toBeUndefined();
     });
 
-    it('is per-keyword: `equals` is unknown for effect (valid only for state/derived)', () =>
+    it('flags `equals` on an effect', () =>
     {
         const src = 'export default component A\n{\n    state c = 0;\n    effect with { equals: 1 }\n    {\n        c;\n    }\n    <p>{c}</p>\n}\n';
         const { service, uri } = open('J3.azeroth', src);

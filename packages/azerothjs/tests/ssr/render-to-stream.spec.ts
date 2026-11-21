@@ -79,6 +79,46 @@ function pendingPage(gate: Deferred<string>, signals?: AbortSignal[]): { app: ()
 
 describe('renderToStream - the synchronous shell', () =>
 {
+    it('keeps resource refetch inert during buffered and streaming SSR while the stream owns its eager fetch', async () =>
+    {
+        const gate = deferred<string>();
+        let reads = 0;
+        let starts = 0;
+        let callsSettled = 0;
+        const app = (): HTMLElement =>
+        {
+            const resource = createResource(() =>
+            {
+                reads++;
+                return 'server key';
+            }, () =>
+            {
+                starts++;
+                return gate.promise;
+            });
+            void resource.refetch().then(() =>
+            {
+                callsSettled++;
+            });
+            return h('main', {}, Suspense({
+                on: [resource],
+                fallback: () => h('i', {}, 'waiting'),
+                children: () => h('b', {}, () => resource.data() ?? 'initial')
+            }));
+        };
+        renderToString(app);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect([reads, starts, callsSettled]).toEqual([0, 0, 1]);
+        const stream = readAll(renderToStream(app));
+        await Promise.resolve();
+        await Promise.resolve();
+        expect([reads, starts, callsSettled]).toEqual([1, 1, 2]);
+        gate.resolve('streamed result');
+        expect((await stream).join('')).toContain('streamed result');
+        expect(starts).toBe(1);
+    });
+
     it('a page with no pending boundary streams one chunk, byte-identical to renderToString', async () =>
     {
         const page = (): HTMLElement => h('main', {}, h('h1', {}, 'static'), h('p', {}, 'body'));

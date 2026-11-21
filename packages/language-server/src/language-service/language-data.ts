@@ -299,14 +299,16 @@ export const KEYWORD_DOCS: Record<string, string> =
         '```azeroth\ndispose\n{\n    socket.close();\n}\n```',
     resource:
         '**`resource`** - async data\n\n' +
-        'Declares an async resource (lowers to `createResource`). Put changing request inputs in `with { source }`. ' +
-        'The runtime tracks the source and passes its value to the untracked fetcher. Read the result with `name.data()`, ' +
-        'check `name.loading()` or `name.error()`, and refresh with `name.refetch()`.\n\n' +
+        'The tracked `source` supplies the key for the untracked fetcher. Equal keys keep the current request. ' +
+        'Read `name.data()` and `name.error()` for the result. A plain resource reports a cold load through ' +
+        '`name.loading()` and a same-key refresh after success through `name.refreshing()`. ' +
+        'Await `name.refetch()` to read the published result.\n\n' +
         '```azeroth\nresource user = (id) => fetchUser(id) with { source: selectedId };\n```',
     stream:
         '**`stream`** - streaming async data\n\n' +
-        'Declares a streaming resource (lowers to `createStream`) for SSE / chunked / incremental responses. Like ' +
-        '`resource` plus `name.done()` and `name.cancel()`; `with { parse }` selects the chunk mode.\n\n' +
+        'Read incremental text with `name.partial()`. An equal source key keeps the current stream. ' +
+        '`name.cancel()` stops an active response and sets `name.done()`. A later key change or `name.refetch()` starts it again. ' +
+        '`with { parse }` selects the chunk format.\n\n' +
         '```azeroth\nstream feed = (id) => openFeed(id) with { source: channelId, parse: \'sse\' };\n```',
     store:
         '**`store`** - per-render store\n\n' +
@@ -386,6 +388,13 @@ const SIGNAL_OPTIONS: readonly KeywordOption[] =
     { name: 'name', type: 'string', doc: 'Optional debug name, surfaced by error tooling.' }
 ];
 
+const SOURCE_KEY_EQUALS: KeywordOption =
+{
+    name: 'equals',
+    type: '(previous: S, next: S) => boolean',
+    doc: 'Compares usable source keys. Return `true` to keep the previously accepted key and its request. Defaults to `Object.is`.'
+};
+
 /**
  * The `with { ... }` options each authoring keyword accepts. This is the SINGLE place to maintain
  * them: to add an option to (say) `effect`, add one entry to the `effect` array below and it flows
@@ -418,14 +427,16 @@ export const KEYWORD_OPTIONS: Record<string, readonly KeywordOption[]> =
     ],
     resource:
     [
-        { name: 'source', type: '() => S | false | null | undefined', doc: 'The tracked source passes its value to the fetcher and refetches on change. A source value of `false`, `null` or `undefined` skips the fetch. Omit `source` for a one-shot fetch. Reads in the fetcher take a snapshot.' },
+        { name: 'source', type: 'S | false | null | undefined', doc: 'The compiler tracks this expression and passes each distinct key to the fetcher. `false`, `null` and `undefined` skip the fetch. Omit `source` for a one-shot fetch. Reads in the fetcher take a snapshot.' },
+        SOURCE_KEY_EQUALS,
         { name: 'name', type: 'string', doc: 'Debug name for devtools; groups the resource\'s data/loading/error nodes. The dev server passes the declared identifier automatically.' }
     ],
     stream:
     [
-        { name: 'source', type: '() => S | false | null | undefined', doc: 'A signal/getter that drives the stream - it restarts when this changes, and is idle while falsy.' },
+        { name: 'source', type: 'S | false | null | undefined', doc: 'The compiler tracks this expression. A distinct key starts a stream, including after cancellation. `false`, `null` and `undefined` skip it.' },
+        SOURCE_KEY_EQUALS,
         { name: 'parse', type: "'text' | 'sse' | 'ndjson' | ((chunk: string) => string)", doc: 'How to split the byte stream into chunks. Default `text` (raw decoded text).' },
-        { name: 'initial', type: 'T', doc: 'The value `data()` holds before the first chunk arrives.' },
+        { name: 'initial', type: 'string', doc: 'The text `partial()` holds before the first chunk arrives.' },
         { name: 'name', type: 'string', doc: 'Debug name for devtools; groups the stream\'s partial/done/error nodes. The dev server passes the declared identifier automatically.' }
     ],
     selector:

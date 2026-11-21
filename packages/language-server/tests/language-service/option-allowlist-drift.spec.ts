@@ -79,13 +79,13 @@ describe('KEYWORD_OPTIONS matches the runtime option surface', () =>
         expect(allowed('form').has('schema')).toBe(true);
     });
 
-    it('resource is curated: source + name (initialValue stays an internal SSR seam)', () =>
+    it('resource accepts source-key equality and a debug name', () =>
     {
-        expect(allowed('resource')).toEqual(new Set(['source', 'name']));
+        expect(allowed('resource')).toEqual(new Set(['source', 'equals', 'name']));
     });
 
     it('stream is curated: source + the StreamOptions the clause carries', () =>
     {
-        expect(allowed('stream')).toEqual(new Set(['source', 'parse', 'initial', 'name']));
+        expect(allowed('stream')).toEqual(new Set(['source', 'equals', 'parse', 'initial', 'name']));
     });
 });

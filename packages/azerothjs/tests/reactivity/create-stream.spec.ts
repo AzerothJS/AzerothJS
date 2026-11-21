@@ -6,11 +6,14 @@
 // network boundary (the fetcher) is supplied by the test.
 import { describe, it, expect } from 'vitest';
 import {
+    batch,
     createStream,
     createRoot,
     createSignal,
     createEffect,
     catchError,
+    h,
+    renderToString,
     type Stream
 } from 'azerothjs';
 
@@ -181,6 +184,343 @@ describe('createStream - error and cancellation', () =>
         expect(stream.partial()).toBe('partial-data');
         expect(stream.error()).toBeNull();
         dispose();
+    });
+});
+
+describe('createStream - source identity and commands', () =>
+{
+    it('first samples the source when the batch flushes and never samples it during string rendering', async () =>
+    {
+        const trace: string[] = [];
+        const source = () =>
+        {
+            trace.push('source');
+            return 'A';
+        };
+        const fetcher = () =>
+        {
+            trace.push('fetch');
+            return Promise.resolve(responseOf([]));
+        };
+        const html = renderToString(() => h('p', {}, createStream(source, fetcher, { initial: 'seed' }).partial()));
+        expect(html).toBe('<p>seed</p>');
+        expect(trace).toEqual([]);
+        const dispose = createRoot(dispose =>
+        {
+            batch(() =>
+            {
+                createStream(source, fetcher);
+                expect(trace).toEqual([]);
+            });
+            return dispose;
+        });
+        expect(trace).toEqual(['source']);
+        await Promise.resolve();
+        expect(trace).toEqual(['source', 'fetch']);
+        dispose();
+    });
+
+    it('clears a cancelled partial on skip and accepts zero and empty-string keys', async () =>
+    {
+        const [key, setKey] = createSignal<string | number | false | null | undefined>(0);
+        const starts: Array<string | number> = [];
+        const { stream, dispose } = createRoot(dispose => ({
+            dispose,
+            stream: createStream<string | number>({
+                source: key,
+                initial: 'seed',
+                fetcher: async ({ source }) =>
+                {
+                    starts.push(source);
+                    return new Response(new ReadableStream({
+                        start(controller)
+                        {
+                            controller.enqueue(encoder.encode('!'));
+                        }
+                    }));
+                }
+            })
+        }));
+        await until(() => stream.partial() === 'seed!');
+        expect(stream.partial()).toBe('seed!');
+        stream.cancel();
+        for (const skip of [false, null, undefined] as const)
+        {
+            setKey(skip);
+            expect(stream.done()).toBe(true);
+            expect(stream.partial()).toBe('seed');
+        }
+        setKey('');
+        await Promise.resolve();
+        expect(starts).toEqual([0, '']);
+        dispose();
+    });
+
+    it('keeps a custom-equal request alive, observes keys after cancellation and resamples on refetch', async () =>
+    {
+        const [version, setVersion] = createSignal(0);
+        let id = 'first';
+        let reads = 0;
+        const starts: Array<{ id: string; version: number; signal: AbortSignal }> = [];
+        const { stream, dispose } = createRoot(dispose => ({
+            dispose,
+            stream: createStream(() =>
+            {
+                reads++;
+                return { id, version: version() };
+            }, (key, signal) =>
+            {
+                starts.push({ ...key, signal });
+                return new Promise<Response>(() => undefined);
+            }, { equals: (previous, next) => previous.id === next.id })
+        }));
+
+        await Promise.resolve();
+        setVersion(1);
+        await Promise.resolve();
+        expect(starts).toHaveLength(1);
+        expect(starts[0]?.signal.aborted).toBe(false);
+        const beforeCancel = reads;
+        stream.cancel();
+        expect(reads).toBe(beforeCancel);
+        expect(starts[0]?.signal.aborted).toBe(true);
+        setVersion(2);
+        await Promise.resolve();
+        expect(starts).toHaveLength(1);
+        expect(stream.done()).toBe(true);
+        stream.refetch();
+        await Promise.resolve();
+        expect(starts.map(call => call.version)).toEqual([0, 0]);
+        stream.cancel();
+
+        id = 'second';
+        setVersion(3);
+        await Promise.resolve();
+        expect(starts.map(call => call.id)).toEqual(['first', 'first', 'second']);
+        expect(stream.done()).toBe(false);
+        id = 'third'; // No reactive write: an explicit fetch samples the source again.
+        stream.refetch();
+        await Promise.resolve();
+        expect(starts.map(call => call.id)).toEqual(['first', 'first', 'second', 'third']);
+        expect(starts[2]?.signal.aborted).toBe(true);
+        dispose();
+    });
+
+    it.each(['cancel then key', 'key then cancel', 'cancel then refetch', 'refetch then cancel'])(
+        'keeps observing the selected key when a batch contains %s', async order =>
+        {
+            const [key, setKey] = createSignal('A');
+            const starts: string[] = [];
+            const { stream, dispose } = createRoot(dispose => ({
+                dispose,
+                stream: createStream(key, value =>
+                {
+                    starts.push(value);
+                    return new Promise<Response>(() => undefined);
+                })
+            }));
+            await Promise.resolve();
+            const otherCommand = order.includes('key') ? () => setKey('B') : stream.refetch;
+            batch(() =>
+            {
+                if (order.startsWith('cancel'))
+                {
+                    stream.cancel();
+                    otherCommand();
+                }
+                else
+                {
+                    otherCommand();
+                    stream.cancel();
+                }
+            });
+            await Promise.resolve();
+            expect(starts).toEqual(['A']);
+            expect(stream.done()).toBe(true);
+            setKey('C');
+            await Promise.resolve();
+            expect(starts).toEqual(['A', 'C']);
+            dispose();
+        }
+    );
+
+    it('routes a source error in a cancellation batch once and recovers on the next valid key', async () =>
+    {
+        const failure = new Error('source');
+        const caught: unknown[] = [];
+        const [bad, setBad] = createSignal(false);
+        const signals: AbortSignal[] = [];
+        let stream!: Stream;
+        const dispose = createRoot(dispose =>
+        {
+            catchError(() =>
+            {
+                stream = createStream(() =>
+                {
+                    if (bad())
+                    {
+                        throw failure;
+                    }
+                    return 'A';
+                }, (_key, signal) =>
+                {
+                    signals.push(signal);
+                    return new Promise<Response>(() => undefined);
+                });
+            }, error =>
+            {
+                caught.push(error);
+            });
+            return dispose;
+        });
+        await Promise.resolve();
+        batch(() =>
+        {
+            setBad(true);
+            stream.cancel();
+        });
+        expect(caught).toEqual([failure]);
+        expect(caught[0]).toBe(failure);
+        expect(stream.done()).toBe(true);
+        expect(stream.error()).toBeNull();
+        expect(signals[0]?.aborted).toBe(true);
+        setBad(false);
+        await Promise.resolve();
+        expect(signals).toHaveLength(2);
+        expect(stream.done()).toBe(false);
+        dispose();
+    });
+
+    it('flushes only the current parser when a replaced reader closes with a buffered tail', async () =>
+    {
+        const [key, setKey] = createSignal('old');
+        const bodies = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
+        const { stream, dispose } = createRoot(dispose => ({
+            dispose,
+            stream: createStream(key, id => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+                start(controller)
+                {
+                    bodies.set(id, controller);
+                    controller.enqueue(encoder.encode(`{"text":"${ id }:"}\n{"text":"${ id }-tail"}`));
+                }
+            }))), { parse: 'ndjson' })
+        }));
+        await until(() => stream.partial() === 'old:');
+        expect(stream.partial()).toBe('old:');
+        setKey('new');
+        await until(() => stream.partial() === 'new:');
+        expect(stream.partial()).toBe('new:');
+        bodies.get('old')!.close();
+        bodies.get('new')!.close();
+        await until(() => stream.done());
+        expect(stream.partial()).toBe('new:new-tail');
+        dispose();
+    });
+
+    it('discards a custom parser result if the parser itself selects a new key', async () =>
+    {
+        const [key, setKey] = createSignal('old');
+        const starts: string[] = [];
+        const { stream, dispose } = createRoot(dispose => ({
+            dispose,
+            stream: createStream(key, id =>
+            {
+                starts.push(id);
+                return id === 'old' ? Promise.resolve(responseOf(['old text'])) : new Promise<Response>(() => undefined);
+            }, {
+                initial: 'seed',
+                parse(text)
+                {
+                    setKey('new');
+                    return text;
+                }
+            })
+        }));
+        await until(() => starts.includes('new'));
+        expect(starts).toEqual(['old', 'new']);
+        expect(stream.partial()).toBe('seed');
+        dispose();
+    });
+
+    it('does not request the first key when its source disposes the owner', async () =>
+    {
+        const starts: string[] = [];
+        const stream = createRoot(dispose => createStream(() =>
+        {
+            dispose();
+            return 'key';
+        }, key =>
+        {
+            starts.push(key);
+            return Promise.resolve(responseOf([]));
+        }, { initial: 'seed' }));
+        await Promise.resolve();
+        expect(starts).toEqual([]);
+        expect([stream.partial(), stream.done()]).toEqual(['seed', true]);
+    });
+
+    it.each([
+        ['source', false], ['source', true], ['comparator', false], ['comparator', true]
+    ] as const)('retains the stream snapshot when the %s disposes it (throws: %s)', async (callback, throws) =>
+    {
+        const [key, setKey] = createSignal('A');
+        const starts: string[] = [];
+        const caught: unknown[] = [];
+        const failure = new Error('after disposal');
+        let stream!: Stream;
+        createRoot(dispose =>
+        {
+            function disposeOnB(from: 'source' | 'comparator', value: string): void
+            {
+                if (from === callback && value === 'B')
+                {
+                    dispose();
+                    if (throws)
+                    {
+                        throw failure;
+                    }
+                }
+            }
+            catchError(() =>
+            {
+                stream = createStream(() =>
+                {
+                    const value = key();
+                    disposeOnB('source', value);
+                    return value;
+                }, value =>
+                {
+                    starts.push(value);
+                    return Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+                        start(controller)
+                        {
+                            controller.enqueue(encoder.encode(value));
+                        }
+                    })));
+                }, {
+                    equals(previous, next)
+                    {
+                        disposeOnB('comparator', next);
+                        return previous === next;
+                    }
+                });
+            }, error =>
+            {
+                caught.push(error);
+            });
+        });
+        await until(() => stream.partial() === 'A');
+        expect([stream.partial(), stream.done()]).toEqual(['A', false]);
+        setKey('B');
+        stream.refetch();
+        await Promise.resolve();
+        expect(starts).toEqual(['A']);
+        expect([stream.partial(), stream.done(), stream.error()]).toEqual(['A', false, null]);
+        expect(caught).toHaveLength(throws ? 1 : 0);
+        if (throws)
+        {
+            expect(caught[0]).toBe(failure);
+        }
     });
 });
 

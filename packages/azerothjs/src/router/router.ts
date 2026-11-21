@@ -1351,12 +1351,9 @@ function buildRouter(config: RouterConfig): Router
     // with no eviction of its own: its keys fold route params, so it grew once per
     // distinct URL for the router's lifetime while the cache beside it expired normally.
     const triggerFor = new WeakMap<CacheEntry, StagedTrigger>();
-    // The cache-disabled path (a latched server at the default scope, a released scope, a
-    // DOM test after a server entry point ran) has no entry to hang the trigger on. There
-    // it is a one-frame handoff: createResource's fetch effect reads its source - which
-    // stages - and calls the fetcher inside the SAME synchronous body, so at most one
-    // stage is ever outstanding. If that ever stops holding, the fetcher below throws its
-    // named internal error rather than reading someone else's trigger.
+    // Without cache entries, the level source stages this descriptor as its key is sampled.
+    // Its driver consumes it synchronously. An explicit refetch resamples the source even
+    // on the same key, so another level's earlier stage cannot displace this one.
     let handoff: { key: string; trigger: StagedTrigger } | null = null;
 
     /** Records one level's trigger against the entry that will carry it. */

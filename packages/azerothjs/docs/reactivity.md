@@ -107,6 +107,43 @@ the fetcher. Vite production builds disable this diagnostic. When loading the pa
 raw ES modules, `NODE_ENV=production` disables it in Node. A browser loading raw modules
 without build-mode information or a `process` global uses the development default.
 
+### Resource keys and refetching
+
+Resources and streams compare source keys with `Object.is` by default. For an object
+source, compare the fields that determine the request. In a `.azeroth` component,
+both keywords accept the same `source` and `equals` options.
+
+```azeroth
+const pageKey = () => ({ team: selected.team, page: selected.page });
+const samePage = (a: PageKey, b: PageKey) => a.team === b.team && a.page === b.page;
+resource results = (key, signal) => fetchPage(key, signal) with { source: pageKey(), equals: samePage };
+stream updates = (key, signal) => openUpdates(key, signal) with { source: pageKey(), equals: samePage };
+```
+
+Here `PageKey` has a string `team` and a numeric `page`. The comparator runs untracked.
+An equal key keeps the previously accepted key and its request. `false`, `null` and
+`undefined` skip the request. Both `0` and the empty string are usable keys. To reload
+an object mutated in place, or retry a failed read whose key stayed equal, call `refetch()`.
+
+For a plain resource, a new key clears the old value and sets `loading()` while the
+first request is pending. A same-key refetch after success leaves the value visible,
+sets `refreshing()` and preserves Suspense children. Even a successful `undefined`
+counts as a settled value. A failed refresh exposes its error and retains the last
+success. For a cached resource, the cache entry for the selected key supplies its state.
+
+`await resource.refetch()` lets you read `data()` and `error()` after the result has
+been published. If the request is superseded, pending callers follow the resource to
+the first accepted settlement covering their call or an available result on the new key.
+A skipped or throwing source and disposal release a pending caller. Calls in one batch
+can share a request for the batch's final key. An explicit refetch in the construction
+batch of a seeded resource shows the seed while fetching and waits for that request.
+
+Calling `stream.cancel()` on an active stream stops the current response and sets
+`done()`. If a batch also changes the key or calls `refetch()`, cancelling the active
+stream leaves it stopped when that batch ends. The stream continues to observe its
+source. A later change to a different usable key or an explicit `refetch()` starts a
+new response. Calling `cancel()` on an idle stream has no effect.
+
 ## Mutations
 
 A mutation is the write half of the data layer: the thing a form, a button or a keypress

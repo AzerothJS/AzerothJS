@@ -9,12 +9,11 @@
  * An async fetcher wrapped into reactive data, loading and error signals plus an imperative
  * refetch. This is the primitive behind route loaders, manual resource calls and suspense.
  *
- * Every fetch gets its own AbortController, and a source change, a refetch or scope
- * disposal aborts the one in flight. A superseded fetch that resolves anyway is dropped
- * rather than applied, so a slow old response can never overwrite newer state.
+ * A plain resource aborts its active request on a key change, refetch or disposal. Shared
+ * entries own their requests and track their remaining readers. Both discard stale results.
  */
 
-import type { Getter } from './types.ts';
+import type { EqualsFn, Getter } from './types.ts';
 import type { CacheEntry, DataCache } from './data-cache.ts';
 import { createSignal } from './create-signal.ts';
 import { createEffect, routeAsyncError } from './create-effect.ts';
@@ -27,6 +26,7 @@ import { currentStreamSession, isHydrating, isStringMode } from './render-mode.t
 import { allocateSeedId, takeStreamSeed } from './stream-seeds.ts';
 import { untrack } from './untrack.ts';
 import { invokeFetcher } from './invoke-fetcher.ts';
+import { createSourceKey, type SourceKey } from './source-key.ts';
 import { cachedFamilyOf, getDataCache, projectedValue, readValue as readCachedValue } from './data-cache.ts';
 
 /**
@@ -37,13 +37,13 @@ import { cachedFamilyOf, getDataCache, projectedValue, readValue as readCachedVa
 export interface Resource<T>
 {
     /**
-     * The most recently resolved value, or `undefined` before the first one lands, while the
-     * source is falsy, or when the fetch failed before producing a value.
+     * The most recently resolved value for the current key, or `undefined` while a new key
+     * has no value or the source is skipped.
      */
     data: Getter<T | undefined>;
 
     /**
-     * Whether a fetch with NO value to show is in flight. Flips true synchronously when one
+     * Whether a fetch without a successful value for this key is in flight. Flips true synchronously when one
      * starts and false once the fetcher settles. A background revalidation of data already
      * on screen reports through {@link Resource.refreshing} instead.
      */
@@ -51,8 +51,7 @@ export interface Resource<T>
 
     /**
      * Whether a background revalidation is in flight while `data()` still serves the
-     * retained value. Only a cache-shared resource (a `cached` fetcher) revalidates in the
-     * background; for a plain fetcher this stays false.
+     * retained value for the same key, including a successful null or undefined result.
      */
     refreshing: Getter<boolean>;
 
@@ -60,10 +59,12 @@ export interface Resource<T>
     error: Getter<unknown>;
 
     /**
-     * Re-runs the fetcher with the current source value, aborting anything in flight first,
-     * and resolves when that fetch settles - success or failure alike, so a mutation can
-     * sequence on revalidation completing. Resolves immediately while the source is falsy,
-     * since there is no key to fetch.
+     * Requests a fresh read of the current key. Calls in one batch use its final key.
+     * Resolves on the first authoritative result (success or failure) covering this call.
+     * If the read is superseded, follows its replacement, including after a key change or
+     * mutation. A new key with available data may already be settled. A skipped or throwing
+     * source, disposal or string rendering releases the wait without a result. Reads started
+     * after publication of the qualifying result have their own settlement.
      */
     refetch: () => Promise<void>;
 }
@@ -75,17 +76,18 @@ type StandaloneFetcher<T> = (signal: AbortSignal) => Promise<T>;
 type SourceFetcher<S, T> = (sourceValue: S, signal: AbortSignal) => Promise<T>;
 
 /** Options for {@link createResource}. */
-export interface ResourceOptions<T>
+export interface ResourceOptions<T, S = unknown>
 {
+    /** Compares usable source keys without tracking. Defaults to Object.is in the source-driven form. */
+    equals?: EqualsFn<S> | undefined;
+
     /**
-     * Seeds the resource as ALREADY SETTLED: `data()` returns this synchronously and the
-     * first fetch is skipped entirely, so `loading` never flips.
+     * Supplies an already settled value for the first key. The value is available immediately.
+     * An explicit refetch in the construction batch adopts the seed and starts a fresh read.
      *
      * This is the SSR handoff seam. The server rendered with this data, so a client adopting
-     * that markup must not refetch it, and a synchronous server render must see it without
-     * waiting for an effect. Everything after the first key behaves normally - a source
-     * change fetches, refetch fetches, and a skip-key reset discards the seed along with the
-     * data it clears.
+     * that markup can reuse it, and a synchronous server render can see it without waiting
+     * for an effect. A different key fetches normally. A skipped key clears the seed.
      *
      * `undefined` is no seed: the resource fetches as if the option were absent. `null` is the
      * settled-empty seed, with a `T` that admits null, and `0`, `''` and `false` seed as written.
@@ -93,9 +95,8 @@ export interface ResourceOptions<T>
     initialValue?: T | undefined;
 
     /**
-     * Seeds the resource as already settled in the FAILED state: `error()` returns this
-     * synchronously and the first fetch is skipped, exactly as {@link initialValue} does for a
-     * success.
+     * Supplies an already settled failure. `error()` returns it synchronously. An explicit
+     * refetch in the construction batch retries, as with {@link initialValue}.
      *
      * The other half of the SSR handoff seam. A server that could not load a level still
      * renders that level's own failure UI, so a client adopting the markup has to reach the
@@ -138,7 +139,7 @@ function isOptionsBag(value: unknown): boolean
 
 /**
  * Wraps an async fetcher into a reactive {@link Resource}. Two forms: standalone, which
- * loads once, and source-driven, which re-runs whenever its source signal changes and
+ * loads once, and source-driven, which re-runs when its logical key changes and
  * passes the source value to the fetcher. The fetcher runs synchronously up to its first
  * await with dependency tracking suspended. Pass a reactive fetch key as the source.
  * Explicit refetch and shared-cache invalidation can also start a request.
@@ -161,7 +162,7 @@ function isOptionsBag(value: unknown): boolean
  * @param maybeFetcherOrOptions - The fetcher when a source was passed first, otherwise the
  *                                options bag.
  * @param maybeOptions - Options, in the source-driven form.
- * @param options.initialValue - Seeds the resource as already settled, skipping the first fetch;
+ * @param options.initialValue - Supplies a settled value for the initial automatic read;
  *                               `undefined` is no seed, and `null` is the settled-empty seed for a
  *                               `T` that admits null.
  * @param options.initialError - Seeds the resource as settled in the failed state; `undefined`
@@ -177,7 +178,7 @@ function isOptionsBag(value: unknown): boolean
  *     (await fetch('/api/config', { signal })).json());
  *
  * @example
- * // Source-driven: refetches whenever postId changes, and skips entirely while it is falsy.
+ * // Source-driven: fetches when postId changes and skips a missing id.
  * const post = createResource(
  *     () => postId(),
  *     async (id, signal) => (await fetch(`/api/posts/${ id }`, { signal })).json()
@@ -195,18 +196,18 @@ export function createResource<T>(
     options?: ResourceOptions<T>
 ): Resource<T>;
 /**
- * Source-driven form: re-fetches whenever `source` changes, passing its resolved value to the
- * fetcher.
+ * Source-driven form. Fetches when the key changes according to `options.equals`
+ * (Object.is by default) and passes the accepted key to the fetcher.
  *
  * A source returning `false`, `null` or `undefined` SKIPS the fetch and resets `data` to
  * undefined - the idiomatic way to wait for a parameter. `0` and `''` are valid keys.
  *
  * @typeParam T - The fetched value type.
  * @typeParam S - The source value type.
- * @param source - The fetch key. Falsy values skip.
+ * @param source - The fetch key. Only `false`, `null` and `undefined` skip.
  * @param fetcher - Receives the resolved source value and an AbortSignal.
  * @param options - Optional settings.
- * @param options.initialValue - Seeds the resource as already settled, skipping the first fetch;
+ * @param options.initialValue - Supplies a settled value for the initial automatic read;
  *                               `undefined` is no seed, and `null` is the settled-empty seed for a
  *                               `T` that admits null.
  * @param options.initialError - Seeds the resource as settled in the failed state; `undefined`
@@ -222,12 +223,12 @@ export function createResource<T>(
 export function createResource<T, S>(
     source: () => S | false | null | undefined,
     fetcher: SourceFetcher<S, T>,
-    options?: ResourceOptions<T>
+    options?: ResourceOptions<T, S>
 ): Resource<T>;
 export function createResource<T, S>(
     sourceOrFetcher: (() => S | false | null | undefined) | StandaloneFetcher<T>,
     maybeFetcherOrOptions?: SourceFetcher<S, T> | ResourceOptions<T>,
-    maybeOptions?: ResourceOptions<T>
+    maybeOptions?: ResourceOptions<T, S>
 ): Resource<T>
 {
     // Both overloads take a callable first. A non-function here is the `resource r = fetch(url)`
@@ -271,10 +272,9 @@ export function createResource<T, S>(
     let seedFailure = initialError !== undefined && initialError !== null;
     let seedValue: T | undefined = initialValue;
     // The hydration seed, consumed or discarded at the effect's first run. See ResourceOptions.
-    // A FAILURE seed settles the resource exactly as a value seed does - the point of both is
-    // that the first run starts no fetch and `loading` never flips.
+    // An explicit refetch in the construction batch still demands a fresh read.
     let pendingInitial = seedFailure || initialValue !== undefined;
-    // A seeded failure the shared entry never learned; released once the entry settles.
+    // A failure seed belongs to this instance until an explicit retry or shared outcome.
     let seededFailureHeld = false;
 
     // Captured at construction, as an effect captures its catchError scope: a subscriber that
@@ -292,21 +292,54 @@ export function createResource<T, S>(
     const [tick, setTick] = createSignal(0, { name: 'tick' });
 
     // A `cached` fetcher routes every fetch through the scope's shared registry: entries own
-    // the fetches, this instance subscribes and mirrors. A plain fetcher keeps the island
-    // path below byte-for-byte.
+    // the fetches, this instance subscribes and mirrors. Plain fetches belong to the instance.
     const family = cachedFamilyOf(fetcher);
     let cacheRef: DataCache | null = null;
     let currentEntry: CacheEntry | null = null;
+    let stopObserving: (() => void) | undefined;
+    let disposed = false;
+    const stringMode = isStringMode();
+    let requested = 0;
+    let driven = 0;
+    let hasValue = !seedFailure && initialValue !== undefined;
+    const waiters: Array<{ request: number; resolve: () => void }> = [];
 
-    // Instance disposal releases the shared-entry subscription; per-run cleanup would drop
-    // it on every re-run and churn the entry through transient zeros.
-    onCleanup(() =>
+    function finishRequests(through: number): void
     {
+        let count = 0;
+        for (const waiter of waiters)
+        {
+            if (waiter.request > through)
+            {
+                break;
+            }
+            waiter.resolve();
+            count++;
+        }
+        if (count > 0)
+        {
+            waiters.splice(0, count);
+        }
+    }
+
+    function leaveEntry(): void
+    {
+        stopObserving?.();
+        stopObserving = undefined;
         if (cacheRef !== null && currentEntry !== null)
         {
             cacheRef.unsubscribe(currentEntry);
             currentEntry = null;
         }
+    }
+
+    // Instance disposal releases the shared-entry subscription; per-run cleanup would drop
+    // it on every re-run and churn the entry through transient zeros.
+    onCleanup(() =>
+    {
+        disposed = true;
+        leaveEntry();
+        finishRequests(Infinity);
     });
 
     // Mirrors the shared entry into this instance's signals, in one batch. The entry's
@@ -337,12 +370,17 @@ export function createResource<T, S>(
     }
 
     // Returns the settle chain: the streaming driver awaits it, the effect path ignores it.
-    function startFetch(controller: AbortController, sourceValue: S | undefined): Promise<void>
+    function startFetch(controller: AbortController, sourceValue: S | undefined, request: number): Promise<void>
     {
         // Batched so subscribers never see loading=true with the previous error still set.
         batch(() =>
         {
-            setLoading(true);
+            if (!hasValue)
+            {
+                setData(() => undefined);
+            }
+            setLoading(!hasValue);
+            setRefreshing(hasValue);
             setError(null);
         });
 
@@ -363,47 +401,43 @@ export function createResource<T, S>(
             pending = Promise.reject(error);
         }
 
-        // The terminal catch is load-bearing: both settle arms run batch(), whose flush rethrows
-        // the first subscriber error it does not drop, and here that lands in a promise reaction
-        // with nothing downstream - an unhandled rejection, which kills the process on Node. It
-        // never swallows a FETCHER failure; the arm above has already captured that in error().
-        return pending.then(
-            (result) =>
+        function settle(outcome: { value: T } | { error: unknown }): void
+        {
+            if (controller.signal.aborted)
             {
-                // May resolve after a newer fetch aborted this one.
-                if (controller.signal.aborted)
-                {
-                    return;
-                }
-
+                return;
+            }
+            try
+            {
                 batch(() =>
                 {
-                    // Wrapper-arrow form, so a function result is stored rather than called.
-                    setData(() => result);
+                    if ('value' in outcome)
+                    {
+                        hasValue = true;
+                        setData(() => outcome.value);
+                    }
+                    else
+                    {
+                        setError(() => outcome.error);
+                    }
                     setLoading(false);
-                });
-            },
-            (err: unknown) =>
-            {
-                if (controller.signal.aborted)
-                {
-                    return;
-                }
-
-                batch(() =>
-                {
-                    setError(() => err);
-                    setLoading(false);
+                    setRefreshing(false);
                 });
             }
-        ).catch((err: unknown) =>
-        {
-            routeAsyncError(err, settleErrorHandler, options?.name);
-        });
-    }
+            catch (observerError)
+            {
+                // An observer threw during publication. Deliver it to the construction scope
+                // before making the accepted fetch visible to code awaiting refetch().
+                routeAsyncError(observerError, settleErrorHandler, options?.name);
+            }
+            finally
+            {
+                finishRequests(request);
+            }
+        }
 
-    // The latest island-path settle chain, so refetch() has a promise to hand back.
-    let lastSettle: Promise<void> | undefined;
+        return pending.then(result => settle({ value: result }), (error: unknown) => settle({ error }));
+    }
 
     // The string-mode variant of startFetch for cached fetchers: same instance-signal settle
     // shape (Suspense and the seed serializer read these), fetch shared through the registry.
@@ -453,20 +487,18 @@ export function createResource<T, S>(
         error,
         refetch(): Promise<void>
         {
-            if (family !== null && cacheRef !== null && currentEntry !== null)
+            if (disposed || stringMode)
             {
-                // Force through the entry: bypasses freshness, aborts the shared in-flight
-                // fetch, and resolves at the superseding settle.
-                return cacheRef.force(currentEntry);
+                return Promise.resolve();
             }
-            setTick(t => t + 1);
-            // The effect runs synchronously on the tick outside a batch; inside one it runs
-            // at flush, which the microtask hop clears either way.
-            return Promise.resolve().then(() => lastSettle);
+            const request = ++requested;
+            const settled = new Promise<void>(resolve => waiters.push({ request, resolve }));
+            setTick(request);
+            return settled;
         }
     };
 
-    if (isStringMode())
+    if (stringMode)
     {
         // Effects never run in string mode, so inside a streaming session the fetch starts here,
         // eagerly at creation, and fetch time overlaps serialization. The session records the
@@ -499,7 +531,7 @@ export function createResource<T, S>(
                     const cache = family !== null ? getDataCache() : null;
                     const promise = family !== null && cache !== null
                         ? startCachedStringFetch(cache, controller, sourceValue as S | undefined)
-                        : startFetch(controller, sourceValue as S | undefined);
+                        : startFetch(controller, sourceValue as S | undefined, 0);
                     session.registerFetch(resource, {
                         promise,
                         controller,
@@ -537,6 +569,7 @@ export function createResource<T, S>(
                 {
                     seedValue = seed.d as T;
                     seedFailure = false;
+                    hasValue = true;
                     setData(() => seed.d as T);
                 }
                 else if (seed.e !== undefined)
@@ -549,28 +582,80 @@ export function createResource<T, S>(
         }
     }
 
-    // Reads `tick` and `source`. On either change the previous run's onCleanup aborts the fetch
-    // in flight, then this body starts the next one. A cached fetcher takes the entry path
-    // instead: the entry owns the fetch, this effect subscribes, tracks the entry's version
-    // signal, and mirrors - so a settle, a revalidation or another subscriber's fetch reaches
-    // this instance as an ordinary re-run.
+    const readKey = source === null ? undefined : createSourceKey(source, options?.equals, tick);
+    let previousKey: SourceKey<S> | undefined;
+
+    function driveEntry(cache: DataCache, entry: CacheEntry, force: boolean, request: number): void
+    {
+        const entering = entry !== currentEntry;
+        const fromZero = entry.subscribers === 0;
+        if (entering)
+        {
+            leaveEntry();
+            cacheRef = cache;
+            currentEntry = entry;
+            cache.subscribe(entry);
+        }
+
+        const adopting = pendingInitial;
+        pendingInitial = false;
+        if (adopting)
+        {
+            seededFailureHeld = seedFailure;
+            if (!seedFailure && !entry.hasValue)
+            {
+                cache.writeEntry(entry, seedValue);
+            }
+        }
+        entry.version();
+        if (force)
+        {
+            seededFailureHeld = false;
+            cache.restart(entry);
+        }
+        else if (!adopting)
+        {
+            cache.read(entry, { subscribing: entering, fromZero });
+        }
+
+        // Cache invalidations and mutation landings can replace a fetch without another
+        // resource run. The cache's generation-qualified settlement is authoritative.
+        if ((entering || force) && waiters.length > 0)
+        {
+            stopObserving?.();
+            stopObserving = cache.observeFetch(entry, () => finishRequests(request));
+        }
+        if (!adopting || !seedFailure || force)
+        {
+            mirrorEntry(entry);
+        }
+    }
+
     createEffect(() =>
     {
-        tick(); // subscribe so refetch() can force a re-run on the island path
-
-        let sourceValue: S | undefined;
-        if (source !== null)
+        const request = tick();
+        const force = request !== driven;
+        driven = request;
+        const key = readKey?.();
+        // A source can synchronously unmount the component that asked for this read.
+        if (disposed)
         {
-            const v = source();
-            if (isSkipValue(v))
+            if (key?.kind === 'error')
             {
-                // No key, no fetch: reset to "nothing loaded". Anything in flight was already
-                // aborted by the cleanup that ran before this body.
-                if (cacheRef !== null && currentEntry !== null)
-                {
-                    cacheRef.unsubscribe(currentEntry);
-                    currentEntry = null;
-                }
+                throw key.error;
+            }
+            return;
+        }
+        const changed = key !== previousKey;
+        previousKey = key;
+        if (key !== undefined && key.kind !== 'value')
+        {
+            leaveEntry();
+            hasValue = false;
+            pendingInitial = false;
+            seededFailureHeld = false;
+            try
+            {
                 batch(() =>
                 {
                     setData(() => undefined);
@@ -578,78 +663,52 @@ export function createResource<T, S>(
                     setRefreshing(false);
                     setError(null);
                 });
-                pendingInitial = false; // the reset cleared the seeded data; the seed is gone
-                seededFailureHeld = false;
-                return;
             }
-            sourceValue = v as S;
+            finally
+            {
+                finishRequests(request);
+            }
+            if (key.kind === 'error')
+            {
+                throw key.error;
+            }
+            return;
         }
 
+        const value = key?.value;
         if (family !== null)
         {
             const cache = getDataCache();
             if (cache !== null)
             {
-                cacheRef = cache;
-                const entry = cache.entryFor(family, source !== null ? [sourceValue] : []);
-                if (entry !== currentEntry)
+                try
                 {
-                    const fromZero = entry.subscribers === 0;
-                    if (currentEntry !== null)
-                    {
-                        cache.unsubscribe(currentEntry);
-                    }
-                    cache.subscribe(entry);
-                    currentEntry = entry;
-                    if (pendingInitial)
-                    {
-                        pendingInitial = false;
-                        if (seedFailure)
-                        {
-                            // The entry holds values, never a failure: stay subscribed, write
-                            // nothing, and keep the seeded error until the entry settles.
-                            seededFailureHeld = true;
-                            entry.version();
-                            return;
-                        }
-                        // A value seed is the key's result: the entry takes it and every later
-                        // reader shares it.
-                        if (!entry.hasValue)
-                        {
-                            cache.writeEntry(entry, seedValue);
-                        }
-                        entry.version();
-                        mirrorEntry(entry);
-                        return;
-                    }
-                    entry.version();
-                    cache.read(entry, { subscribing: true, fromZero });
+                    const entry = cache.entryFor(family, key === undefined ? [] : [value]);
+                    driveEntry(cache, entry, force, request);
                 }
-                else
+                catch (error)
                 {
-                    // A version wake or another dependency: re-apply the machine, which joins a
-                    // fetch in flight, fetches a stale entry or serves, then mirror the entry.
-                    entry.version();
-                    cache.read(entry, {});
+                    finishRequests(request);
+                    throw error;
                 }
-                mirrorEntry(entry);
                 return;
             }
+            leaveEntry();
         }
 
-        if (pendingInitial)
+        const adopting = pendingInitial;
+        pendingInitial = false;
+        if (adopting && !force)
         {
-            // The seed IS this key's result: data() has served it since construction, loading
-            // never flips, and no fetch happens. The SSR adoption path.
-            pendingInitial = false;
             return;
         }
-
+        if (changed && !adopting)
+        {
+            hasValue = false;
+        }
         const controller = new AbortController();
-        lastSettle = startFetch(controller, sourceValue);
-
-        // Aborting on the next re-run, or at disposal, is the cancellation guarantee.
         onCleanup(() => controller.abort());
+        void startFetch(controller, value, request);
     }, { name: 'fetch' });
     dtExitPrimitive(frame);
 

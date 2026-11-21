@@ -155,7 +155,10 @@ loader: async ({ params, query, signal, parent }) =>
   `params.id` to the fetcher. For data keyed by a search parameter, declare the query
   on the route and use its `query` argument. A signal read inside the loader samples its
   current value. Use `router.revalidate()` when application code needs to refresh the
-  current loaders explicitly.
+  current loaders explicitly. To refresh one level, capture its resource with
+  `const data = useLoader(handle)` in the component and call `data.refetch()` from the
+  refresh control. With the data cache disabled, a nested level refreshes using its
+  own current parameters and declared query.
 
 ## Guards, redirects, blockers
 

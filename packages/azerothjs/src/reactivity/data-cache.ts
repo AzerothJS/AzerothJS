@@ -584,7 +584,7 @@ export class DataCache
     }
 
     /** Bypasses freshness: aborts any in-flight fetch and starts over. */
-    public force(entry: CacheEntry): Promise<void>
+    public restart(entry: CacheEntry): void
     {
         if (entry.inflight !== null)
         {
@@ -592,8 +592,32 @@ export class DataCache
             entry.inflight = null;
         }
         this.#startFetch(entry);
-        const started = entry.inflight as CacheEntry['inflight'];
-        return this.settlementFor(entry, started === null ? 0 : started.startedSeq);
+    }
+
+    public force(entry: CacheEntry): Promise<void>
+    {
+        this.restart(entry);
+        return new Promise(resolve => this.observeFetch(entry, resolve));
+    }
+
+    /** Join the current generation. An instance changing keys withdraws its own listener. */
+    public observeFetch(entry: CacheEntry, resolve: () => void): (() => void) | undefined
+    {
+        if (entry.inflight === null)
+        {
+            resolve();
+            return undefined;
+        }
+        const waiter = { minSeq: entry.inflight.startedSeq, resolve };
+        entry.settleWaiters.push(waiter);
+        return () =>
+        {
+            const index = entry.settleWaiters.indexOf(waiter);
+            if (index !== -1)
+            {
+                entry.settleWaiters.splice(index, 1);
+            }
+        };
     }
 
     /**
@@ -641,18 +665,19 @@ export class DataCache
         });
     }
 
-    #resolveWaitersUpTo(entry: CacheEntry, settledSeq: number): void
+    #takeWaitersUpTo(entry: CacheEntry, settledSeq: number): CacheEntry['settleWaiters']
     {
         if (entry.settleWaiters.length === 0)
         {
-            return;
+            return [];
         }
         const remaining: CacheEntry['settleWaiters'] = [];
+        const ready: CacheEntry['settleWaiters'] = [];
         for (const waiter of entry.settleWaiters)
         {
             if (settledSeq >= waiter.minSeq)
             {
-                waiter.resolve();
+                ready.push(waiter);
             }
             else
             {
@@ -660,6 +685,15 @@ export class DataCache
             }
         }
         entry.settleWaiters = remaining;
+        return ready;
+    }
+
+    #resolveWaitersUpTo(entry: CacheEntry, settledSeq: number): void
+    {
+        for (const waiter of this.#takeWaitersUpTo(entry, settledSeq))
+        {
+            waiter.resolve();
+        }
     }
 
     #startFetch(entry: CacheEntry): void
@@ -732,6 +766,9 @@ export class DataCache
             entry.hasError = true;
             entry.error = outcome.error;
         }
+        // An observer notified below may force another fetch or move its resource to a
+        // different key. Reserve the callers covered by THIS result before publishing it.
+        const ready = this.#takeWaitersUpTo(entry, startedSeq);
         try
         {
             entry.bumpVersion();
@@ -744,14 +781,16 @@ export class DataCache
         }
         finally
         {
+            for (const waiter of ready)
+            {
+                waiter.resolve();
+            }
             this.#finishSettlement(entry, startedSeq, 'value' in outcome);
         }
     }
 
     #finishSettlement(entry: CacheEntry, startedSeq: number, succeeded: boolean): void
     {
-        this.#resolveWaitersUpTo(entry, startedSeq);
-
         // The post-mark follow-up: a settle that predates the last mark owes the mark one
         // fetch for a subscriber or a direct reader that arrived after the mark. An earlier
         // read settles here. A mark-only revalidation cannot start a fetch on its own.

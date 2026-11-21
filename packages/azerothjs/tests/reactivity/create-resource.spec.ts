@@ -5,6 +5,7 @@
 // skipping, and re-fetching. Uses real promises (no mocked async).
 import { describe, it, expect, vi } from 'vitest';
 import {
+    cached,
     createSignal,
     createResource,
     createEffect,
@@ -15,6 +16,72 @@ import {
 
 // Flush pending microtasks + a macrotask so the fetcher promise settles.
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe.each(['plain', 'shared'])('createResource - %s source teardown', (mode) =>
+{
+    it('does not acquire a request when the initial source disposes its owner', () =>
+    {
+        const fetcher = vi.fn(async (key: string) => key);
+        const read = mode === 'shared' ? cached('dispose-at-first-key', fetcher) : fetcher;
+        createRoot(dispose => createResource(() =>
+        {
+            dispose();
+            return 'orphan';
+        }, read));
+        expect(fetcher).not.toHaveBeenCalled();
+    });
+
+    it('routes the original error if the source disposes its owner and then throws', () =>
+    {
+        const thrown = new Error('source failed after teardown');
+        const caught = vi.fn();
+        const fetcher = vi.fn(async (key: string) => key);
+        const read = mode === 'shared' ? cached('dispose-and-throw', fetcher) : fetcher;
+        createRoot(dispose => catchError(() => createResource<string, string>(() =>
+        {
+            dispose();
+            throw thrown;
+        }, read), caught));
+        expect(caught).toHaveBeenCalledExactlyOnceWith(thrown);
+        expect(fetcher).not.toHaveBeenCalled();
+    });
+
+    it('releases waiting callers and keeps the last value when the next key disposes its owner', async () =>
+    {
+        const [key, select] = createSignal('kept');
+        const requests: Array<{ key: string; signal: AbortSignal }> = [];
+        const fetcher = (key: string, signal: AbortSignal): Promise<string> =>
+        {
+            requests.push({ key, signal });
+            return new Promise(() =>
+            {
+                // This read ignores cancellation. Only the instance can release the wait.
+            });
+        };
+        const read = mode === 'shared' ? cached('dispose-at-next-key', fetcher) : fetcher;
+        const resource = createRoot(dispose => createResource(() =>
+        {
+            const value = key();
+            if (value === 'orphan')
+            {
+                dispose();
+            }
+            return value;
+        }, read, { initialValue: 'seed' }));
+        let settled = false;
+        void resource.refetch().then(() =>
+        {
+            settled = true;
+        });
+        expect(requests.map(request => request.key)).toEqual(['kept']);
+        select('orphan');
+        await Promise.resolve();
+        expect(requests.map(request => request.key)).toEqual(['kept']);
+        expect(requests[0]?.signal.aborted).toBe(true);
+        expect(settled).toBe(true);
+        expect(resource.data()).toBe('seed');
+    });
+});
 
 describe('createResource - standalone', () =>
 {
@@ -101,9 +168,12 @@ describe('createResource - standalone', () =>
         expect(calls).toEqual([1]);
 
         void resource.refetch();
-        expect(resource.loading()).toBe(true);
+        expect(resource.loading()).toBe(false);
+        expect(resource.refreshing()).toBe(true);
+        expect(resource.data()).toBe('v');
         await flush();
         expect(calls).toEqual([1, 1]);
+        expect(resource.refreshing()).toBe(false);
         expect(resource.data()).toBe('v');
         dispose();
     });
@@ -253,15 +323,16 @@ describe('createResource - settle error routing', () =>
         // drain - a promise reaction with nothing downstream (an unhandled rejection that kills the
         // process on Node). It must instead route to the handler captured when the resource was made.
         let caught: unknown = null;
+        let calls = 0;
+        let resource!: Resource<string>;
         let dispose!: () => void;
         createRoot((d) =>
         {
             dispose = d;
-            let resource!: Resource<string>;
             catchError(
                 () =>
                 {
-                    resource = createResource(async () => 'ok');
+                    resource = createResource(async () => String(++calls));
                 },
                 (err) =>
                 {
@@ -280,7 +351,11 @@ describe('createResource - settle error routing', () =>
         });
 
         await flush();
+        expect(caught).toEqual(new Error('subscriber-boom'));
+        caught = null;
+        await resource.refetch();
+        expect(resource.data()).toBe('2');
         dispose();
-        expect((caught as Error).message).toBe('subscriber-boom');
+        expect(caught).toEqual(new Error('subscriber-boom'));
     });
 });

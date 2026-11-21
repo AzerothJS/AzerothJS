@@ -12,6 +12,13 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- Sourced resources and streams now compare keys with `Object.is` by default. Use
+  `equals(previous, next)` for structural keys. An equal key keeps the current request.
+  Call `refetch()` to retry a failed request or reload after mutating a key object in place.
+- A plain resource refreshing a successful value for the same key keeps its data and
+  Suspense children on screen. Use `refreshing()` for this state and `loading()` for
+  a cold load. Changing to a different key clears the old value.
+
 - Resource fetchers, cached fetchers and client route loaders now sample reactive values
   during their synchronous call. To reload when an ID changes, move the ID into the resource
   source, pass it as a cached family argument, or load it at the route level that binds it.
@@ -189,6 +196,13 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   without a router, now does the same in an app with one.
 
 ### Fixed
+
+- Overlapping `refetch()` calls now wait for an accepted result for the resource's
+  current key. A superseded response could previously release a caller with stale data
+  or keep it waiting after the replacement arrived. An explicit refetch in the batch
+  that constructs a seeded resource now runs after seed adoption.
+- A cancelled stream resumes on its next distinct key or on explicit `refetch()`.
+  Data buffered by a superseded reader can no longer appear in the next stream.
 
 - A signal read by a field's synchronous rule or initial-value getter could restart its
   debounce or abort an in-flight async validation. Changing that signal alone now leaves

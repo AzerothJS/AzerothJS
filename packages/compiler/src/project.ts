@@ -962,10 +962,8 @@ export function generateVirtualCode(source: string): VirtualCode
                 // A factory reads explicitly (NAME.data() / NAME(key)), so it must be typed as what the
                 // runtime returns - project the REAL createX(...) call so TypeScript infers Resource<T> /
                 // Stream<T> / the store / the selector. (state/derived above instead type the VALUE,
-                // because they read plain.) The value/fetcher is copied with mapping; the with-clause
-                // source/options are emitted as text (a `source` is almost always one signal read, and
-                // type errors there are rare). factoryPlan (ts-slice) owns the shared argument-shape
-                // decision; here it is rendered as mapped TS.
+                // because they read plain.) factoryPlan supplies the source and option ranges moved into
+                // separate arguments, so TypeScript can report errors at their original positions.
                 const parsed = parseDeclarationSlice(source, c);
                 const optsText = c.optionsStart !== null && c.optionsEnd !== null ? source.slice(c.optionsStart, c.optionsEnd) : null;
                 const plan = factoryPlan(c.kind, optsText, parsed?.initializer);
@@ -977,9 +975,11 @@ export function generateVirtualCode(source: string): VirtualCode
                 builder.emit('const ');
                 builder.copy(c.nameStart, c.nameEnd, 'script');
                 builder.emit(` = ${ plan.fn }(`);
-                if (plan.source !== null)
+                if (plan.spans?.source && c.optionsStart !== null)
                 {
-                    builder.emit(`() => (${ plan.source }), `);
+                    builder.emit('() => (');
+                    emitCode(c.optionsStart + plan.spans.source.start, c.optionsStart + plan.spans.source.end);
+                    builder.emit('), ');
                 }
                 if (plan.wrapValue)
                 {
@@ -991,9 +991,26 @@ export function generateVirtualCode(source: string): VirtualCode
                 {
                     emitCode(valueStart, valueEnd);
                 }
-                if (plan.rest !== null)
+                if (plan.rest !== null && c.optionsStart !== null && c.optionsEnd !== null)
                 {
-                    builder.emit(`, ${ plan.rest }`);
+                    builder.emit(', ');
+                    if (plan.spans)
+                    {
+                        builder.emit('{ ');
+                        for (const [index, prop] of plan.spans.rest.entries())
+                        {
+                            if (index > 0)
+                            {
+                                builder.emit(', ');
+                            }
+                            emitCode(c.optionsStart + prop.start, c.optionsStart + prop.end);
+                        }
+                        builder.emit(' }');
+                    }
+                    else
+                    {
+                        emitCode(c.optionsStart, c.optionsEnd);
+                    }
                 }
                 else if (plan.opts !== null)
                 {
