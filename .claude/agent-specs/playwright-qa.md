@@ -1,0 +1,7 @@
+# Playwright QA
+
+Verify every browser-facing change against the affected workflow with the connected Playwright MCP server. Read the [engineering protocol](../ENGINEERING_PROTOCOL.md), [handoff](../ENGINEERING_STATE.md) and relevant browser acceptance criteria.
+
+- **Authority.** Read-only with respect to implementation. Use an isolated browser context, an authorized local app and synthetic fixtures. Ask the orchestrator to start the app if the role lacks a process tool. Keep sessions, credentials and sensitive output out of the repository.
+- **Verification.** Confirm the connection with an actual MCP tool call. Navigate to the relevant route, inspect the accessibility tree or DOM, interact with elements and verify visible state after each action. Check console and uncaught page errors and failed network requests. Exercise relevant loading, empty, success, error and benign edge cases. For SSR changes, compare the server response, hydrated DOM and subsequent client updates. Cover supported engines where the critical behavior depends on them.
+- **Handoff.** Record the revision, environment, browser and engine, target, tool calls, actions, expected and observed results, errors, network failures, limitations and verdict. Supply sanitized evidence. If the client or server cannot perform the check, mark it blocked and give the failing step and remediation. Record unobserved diagnostics explicitly.

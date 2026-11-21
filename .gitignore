@@ -23,7 +23,28 @@ coverage/
 
 # Logs
 *.log
+
+# Allow only shared configuration in the root Claude directory.
+# Keep local settings, legacy dossiers and nested worktrees private.
 .claude
+!/.claude/
+/.claude/*
+!/.claude/ENGINEERING_PROTOCOL.md
+!/.claude/ENGINEERING_STATE.md
+!/.claude/ARCHITECTURE_INDEX.md
+!/.claude/PLAYWRIGHT_MCP.md
+!/.claude/ROADMAP.md
+!/.claude/framework-bugs.md
+!/.claude/decisions/
+/.claude/decisions/*
+!/.claude/decisions/*.md
+!/.claude/settings.json
+!/.claude/agent-specs/
+/.claude/agent-specs/*
+!/.claude/agent-specs/*.md
+!/.claude/agents/
+/.claude/agents/*
+!/.claude/agents/*.md
 
 # Gradle / JetBrains plugin build output (editors/jetbrains)
 .gradle/
