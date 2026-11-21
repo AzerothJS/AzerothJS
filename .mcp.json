@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["--yes", "@playwright/mcp@0.0.86", "--isolated", "--headless", "--no-webmcp", "--sandbox"],
+      "env": {
+        "PLAYWRIGHT_MCP_ALLOWED_ORIGINS": "http://127.0.0.1:*;http://localhost:*"
+      }
+    }
+  }
+}
