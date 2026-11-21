@@ -38,6 +38,8 @@
 import type { Getter } from './types.ts';
 import { createSignal } from './create-signal.ts';
 import { batch } from './batch.ts';
+import { currentErrorHandler } from './catch-error.ts';
+import { routeAsyncError } from './create-effect.ts';
 import { untrack } from './untrack.ts';
 import { assertFunction } from './validate.ts';
 import { DEV } from './dev.ts';
@@ -86,7 +88,7 @@ export interface MutationOptions<In>
 {
     /**
      * Declares what this mutation EXPECTS to happen, before the server has said so. Every
-     * reader of a patched family shows the guess immediately; a failure removes it.
+     * subscribed resource shows the guess once its entry has a usable base. A failure removes it.
      *
      * Called once per run, with that run's input. A run that patches nothing is still a
      * mutation - it just has no optimistic phase.
@@ -213,6 +215,31 @@ export function createMutation<In, Out>(
     const running = new Set<AbortController>();
 
     const policy = options.policy ?? 'parallel';
+    const errorHandler = currentErrorHandler;
+
+    /** A completed mutation transition can wake a failing observer. Report that error
+     * independently so it cannot change a receipt or strand the next queued write. */
+    function publish(transition: () => void): void
+    {
+        let completed = false;
+        try
+        {
+            batch(() =>
+            {
+                transition();
+                completed = true;
+            });
+        }
+        catch (error)
+        {
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- batch may throw after its callback set this flag
+            if (!completed)
+            {
+                throw error;
+            }
+            queueMicrotask(() => routeAsyncError(error, errorHandler, 'createMutation'));
+        }
+    }
 
     /**
      * The tail of the `queue` policy's chain. Each run waits on the one called before it, so
@@ -221,7 +248,7 @@ export function createMutation<In, Out>(
     let queued: Promise<unknown> = Promise.resolve();
 
     /** Applies this run's guesses and reports which entries they touched. */
-    function applyGuess(input: In): { layers: AppliedLayer[]; touched: PatchTarget[] }
+    function applyGuess(input: In, cancelled: boolean): { layers: AppliedLayer[]; touched: PatchTarget[] }
     {
         const layers: AppliedLayer[] = [];
         const touched: PatchTarget[] = [];
@@ -231,6 +258,7 @@ export function createMutation<In, Out>(
         {
             return { layers, touched };
         }
+        const patches: { entry: CacheEntry; project: (value: unknown) => unknown }[] = [];
         const patch = (target: unknown, argsOrNext: unknown, maybeNext?: unknown): void =>
         {
             const family = cachedFamilyOf(target);
@@ -245,10 +273,20 @@ export function createMutation<In, Out>(
             const next = (hasArgs ? maybeNext : argsOrNext) as (value: unknown) => unknown;
             assertFunction(next, 'createMutation', 'a patch projection');
             const entry = cache.entryFor(family, args);
-            layers.push({ entry, id: cache.patchEntry(entry, next) });
+            patches.push({ entry, project: next });
             touched.push({ fetcher: target as AnyCached, args });
         };
-        batch(() => untrack(() => declare(input, patch as unknown as PatchFn)));
+        publish(() =>
+        {
+            untrack(() => declare(input, patch as unknown as PatchFn));
+            if (!cancelled)
+            {
+                for (const { entry, project } of patches)
+                {
+                    layers.push({ entry, id: cache.patchEntry(entry, project) });
+                }
+            }
+        });
         return { layers, touched };
     }
 
@@ -286,7 +324,7 @@ export function createMutation<In, Out>(
                 inFlightRun.abort();
             }
         }
-        const { layers, touched } = applyGuess(input);
+        const { layers, touched } = applyGuess(input, runOptions.signal?.aborted === true);
         const controller = new AbortController();
         running.add(controller);
         // The caller's signal drives this run's, so one run can be cancelled without reaching
@@ -314,7 +352,7 @@ export function createMutation<In, Out>(
                     .catch(() => undefined);
             }
         };
-        batch(() =>
+        publish(() =>
         {
             setInFlight((count) => count + 1);
             setError(() => null);
@@ -358,14 +396,14 @@ export function createMutation<In, Out>(
             const landed = cache?.nextSeq();
             // The server accepted it, so the guess is now truth, folded in before anything else can
             // read it; the revalidation runs behind rather than the screen waiting on it.
-            batch(() =>
+            publish(() =>
             {
                 for (const layer of layers)
                 {
                     cache?.settleLayer(layer.entry, layer.id, sent, landed ?? 0);
                 }
             });
-            revalidateTargets(landed);
+            publish(() => revalidateTargets(landed));
             return { ok: true, data };
         }
         catch (failure)
@@ -374,7 +412,7 @@ export function createMutation<In, Out>(
             {
                 return abandon(failure);
             }
-            batch(() =>
+            publish(() =>
             {
                 const cache = getDataCache();
                 for (const layer of layers)
@@ -389,14 +427,14 @@ export function createMutation<In, Out>(
         {
             running.delete(controller);
             caller?.removeEventListener('abort', relay);
-            setInFlight((count) => count - 1);
+            publish(() => setInFlight((count) => count - 1));
             leaveQueue();
         }
 
         /** Withdraws this run's guess and goes to look at what the server actually did. */
         function abandon(reason: unknown): MutationResult<Out>
         {
-            batch(() =>
+            publish(() =>
             {
                 const cache = getDataCache();
                 for (const layer of layers)
@@ -404,7 +442,7 @@ export function createMutation<In, Out>(
                     cache?.dropLayer(layer.entry, layer.id);
                 }
             });
-            revalidateTargets();
+            publish(() => revalidateTargets());
             // `error()` is deliberately untouched: nothing failed, and a banner here would
             // report the user's own cancel back to them.
             return { ok: false, cancelled: true, error: reason };

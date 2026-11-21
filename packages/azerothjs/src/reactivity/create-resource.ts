@@ -320,7 +320,7 @@ export function createResource<T, S>(
         seededFailureHeld = false;
         batch(() =>
         {
-            setData(() => (entry.hasValue || entry.layers.length > 0 ? projectedValue(entry) as T : undefined));
+            setData(() => projectedValue(entry) as T | undefined);
             setError(() => (entry.hasError ? entry.error : null));
             setLoading(fetching && !entry.hasValue);
             setRefreshing(fetching && entry.hasValue);

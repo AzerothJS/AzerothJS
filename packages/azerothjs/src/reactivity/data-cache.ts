@@ -22,6 +22,7 @@
 
 import type { Getter } from './types.ts';
 import { createSignal } from './create-signal.ts';
+import { routeAsyncError } from './create-effect.ts';
 import { createStore } from './create-store.ts';
 import { getStoreScope, isDefaultScope } from './store-scope.ts';
 import { getRenderMode, isStringMode } from './render-mode.ts';
@@ -107,6 +108,9 @@ export interface OptimisticLayer
     /** Pure: receives the value below it in the stack and returns the guessed one. */
     project: (value: unknown) => unknown;
 
+    /** A development diagnostic has already reported this layer's projection failure. */
+    warned?: true;
+
     /** True once its mutation succeeded; a settled layer folds into the base at the bottom. */
     settled: boolean;
 
@@ -136,7 +140,7 @@ export interface CacheEntry
      * Waiters for a settle whose startedSeq >= minSeq. All resolve without one at a written value,
      * an abort with no audience, a follow-up owed to no subscriber, eviction, reset and teardown.
      */
-    settleWaiters: { minSeq: number; resolve: () => void }[];
+    settleWaiters: { minSeq: number; resolve: () => void; valueRead?: boolean }[];
     stale: boolean;
     writtenAt: number;
     subscribers: number;
@@ -173,6 +177,26 @@ export interface CacheEntry
 /** Distinguishes every optimistic layer this process creates. */
 let layerSerial = 0;
 
+const refusedProjection = Symbol('refused projection');
+
+/** Only the application projector is fallible. A fetched undefined is a valid value. */
+function tryProject(entry: CacheEntry, layer: OptimisticLayer, value: unknown): unknown
+{
+    try
+    {
+        return layer.project(value);
+    }
+    catch (error)
+    {
+        if (DEV && !layer.warned)
+        {
+            layer.warned = true;
+            queueMicrotask(() => console.warn(`[azeroth] Optimistic projection for '${ entry.family.name }' could not use its input.`, error));
+        }
+        return refusedProjection;
+    }
+}
+
 /**
  * The value a reader sees: the entry's own value with every optimistic guess applied, oldest
  * first. Computed on READ rather than stored, so removing a failed guess needs no repair - the
@@ -180,10 +204,18 @@ let layerSerial = 0;
  */
 export function projectedValue(entry: CacheEntry): unknown
 {
+    if (!entry.hasValue)
+    {
+        return undefined;
+    }
     let value = entry.value;
     for (const layer of entry.layers)
     {
-        value = layer.project(value);
+        const projected = tryProject(entry, layer, value);
+        if (projected !== refusedProjection)
+        {
+            value = projected;
+        }
     }
     return value;
 }
@@ -567,15 +599,44 @@ export class DataCache
      * Resolves at the first settle whose startedSeq >= minSeq, or earlier when the entry's waiters
      * all resolve without one (see {@link CacheEntry.settleWaiters}).
      */
-    public settlementFor(entry: CacheEntry, minSeq: number): Promise<void>
+    public settlementFor(entry: CacheEntry, minSeq: number, reader?: { signal: AbortSignal | undefined; release: () => void }): Promise<void>
     {
         if (entry.inflight === null && entry.markSeq < minSeq)
         {
             return Promise.resolve();
         }
-        return new Promise((resolve) =>
+        if (reader?.signal === undefined)
         {
-            entry.settleWaiters.push({ minSeq, resolve });
+            return new Promise(resolve => entry.settleWaiters.push({ minSeq, valueRead: reader !== undefined, resolve }));
+        }
+        const { signal, release } = reader;
+        return new Promise((resolve, reject) =>
+        {
+            const waiter = {
+                minSeq,
+                valueRead: true,
+                resolve(): void
+                {
+                    signal.removeEventListener('abort', abort);
+                    resolve();
+                }
+            };
+            const abort = (): void =>
+            {
+                entry.settleWaiters = entry.settleWaiters.filter(candidate => candidate !== waiter);
+                release();
+                // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- reproduce the caller's cancellation reason verbatim
+                reject(signal.reason);
+            };
+            entry.settleWaiters.push(waiter);
+            if (signal.aborted)
+            {
+                abort();
+            }
+            else
+            {
+                signal.addEventListener('abort', abort, { once: true });
+            }
         });
     }
 
@@ -585,7 +646,7 @@ export class DataCache
         {
             return;
         }
-        const remaining: { minSeq: number; resolve: () => void }[] = [];
+        const remaining: CacheEntry['settleWaiters'] = [];
         for (const waiter of entry.settleWaiters)
         {
             if (settledSeq >= waiter.minSeq)
@@ -670,14 +731,32 @@ export class DataCache
             entry.hasError = true;
             entry.error = outcome.error;
         }
-        entry.bumpVersion();
+        try
+        {
+            entry.bumpVersion();
+        }
+        catch (error)
+        {
+            // This async settle has no user call stack. Surface an escaped observer error
+            // after completing the cache transition, even if the application's handler throws.
+            queueMicrotask(() => routeAsyncError(error, null, entry.family.name));
+        }
+        finally
+        {
+            this.#finishSettlement(entry, startedSeq, 'value' in outcome);
+        }
+    }
+
+    #finishSettlement(entry: CacheEntry, startedSeq: number, succeeded: boolean): void
+    {
         this.#resolveWaitersUpTo(entry, startedSeq);
 
         // The post-mark follow-up: a settle that predates the last mark owes the mark one
-        // fetch, but only an audience justifies it - at zero subscribers the mark persists.
+        // fetch for a subscriber or a direct reader that arrived after the mark. An earlier
+        // read settles here. A mark-only revalidation cannot start a fetch on its own.
         if (startedSeq < entry.markSeq)
         {
-            if (entry.subscribers > 0)
+            if (entry.subscribers > 0 || entry.settleWaiters.some(waiter => waiter.valueRead))
             {
                 this.ensureFetch(entry);
             }
@@ -690,7 +769,7 @@ export class DataCache
         // Parent renewal propagates to the children that AWAITED it: subscribed children
         // refetch (an in-flight child just joins), unsubscribed ones go stale for their
         // next reader. Trees have no cycles, so the chain terminates.
-        if ('value' in outcome)
+        if (succeeded)
         {
             for (const child of this.#entries.values())
             {
@@ -832,8 +911,9 @@ export class DataCache
         }
         layer.settled = true;
         layer.landedSeq = landed;
-        // A base that settled while the write was on the wire may already hold it.
-        const suspect = entry.baseSeq > sent;
+        // A cold entry needs authoritative data. A base received while the write was on the
+        // wire may already include it. Both need a fetch that began after the landing.
+        const suspect = !entry.hasValue || entry.baseSeq > sent;
         if (suspect)
         {
             entry.markSeq = Math.max(entry.markSeq, landed + 1);
@@ -851,13 +931,27 @@ export class DataCache
     /** Folds the settled layers at the bottom of the stack into the entry's value. */
     #fold(entry: CacheEntry): void
     {
+        if (!entry.hasValue)
+        {
+            return;
+        }
         let folded = false;
         while (entry.layers[0]?.settled === true)
         {
-            // Removed before it projects, so a projection that throws drops its own layer.
             const bottom = entry.layers.shift() as OptimisticLayer;
-            entry.value = bottom.project(entry.value);
-            entry.hasValue = true;
+            const projected = tryProject(entry, bottom, entry.value);
+            if (projected === refusedProjection)
+            {
+                // Preserve successful earlier folds but leave their original freshness window.
+                entry.markSeq = Math.max(entry.markSeq, bottom.landedSeq + 1);
+                entry.stale = true;
+                if (entry.subscribers > 0)
+                {
+                    this.ensureFetch(entry);
+                }
+                return;
+            }
+            entry.value = projected;
             folded = true;
         }
         // Only a fold that completes restarts the freshness window.
@@ -909,52 +1003,42 @@ export class DataCache
             return;
         }
         entry.layers.splice(index, 1);
-        // With no value yet, a settled guess gives way to the first data fetched for it.
-        if (entry.hasValue)
-        {
-            const before = entry.layers.slice();
-            try
-            {
-                this.#fold(entry);
-            }
-            catch
-            {
-                // The last layer the fold took off could not read this base: it stays dropped, and
-                // the entry is marked at its landing so data that holds its write is fetched.
-                const thrown = before.findLast((layer) => !entry.layers.includes(layer)) as OptimisticLayer;
-                entry.markSeq = Math.max(entry.markSeq, thrown.landedSeq + 1);
-                entry.stale = true;
-                if (entry.subscribers > 0)
-                {
-                    this.ensureFetch(entry);
-                }
-            }
-        }
+        this.#fold(entry);
         entry.bumpVersion();
     }
 
     /** The mutation seam: writes a settled value as if fetched, notifying subscribers. */
     public writeEntry(entry: CacheEntry, value: unknown): void
     {
+        // A first seed can predate a cold write. Its fetch and mark-bound readers still need
+        // a post-landing answer. Every other write supersedes the fetch normally.
+        const reconcile = !entry.hasValue && entry.layers.some(layer => layer.settled);
         // A write is newer than anything in flight: the superseded fetch must not
         // overwrite it at settle (stale results never overwrite newer state, for writes
         // exactly as for fetches), and its waiters resolve HERE - the superseded settle
         // exits at the generation guard without touching them, and a stranded waiter
         // would both hang its reader and block eviction forever.
-        if (entry.inflight !== null)
+        if (!reconcile && entry.inflight !== null)
         {
             entry.inflight.controller.abort();
             entry.inflight = null;
             this.#resolveWaitersUpTo(entry, Infinity);
         }
-        entry.generation += 1;
+        if (!reconcile)
+        {
+            entry.generation += 1;
+        }
         entry.value = value;
         entry.baseSeq = this.nextSeq();
         entry.hasValue = true;
         entry.hasError = false;
         entry.error = undefined;
         entry.writtenAt = Date.now();
-        entry.stale = false;
+        entry.stale = reconcile;
+        if (reconcile && this.#hasAudience(entry))
+        {
+            this.ensureFetch(entry);
+        }
         entry.bumpVersion();
     }
 
@@ -1168,7 +1252,9 @@ export function resetDataCache(): void
  * request and one entry; `revalidate(fn)` reaches every subscriber.
  *
  * Composes with `createResource` (and the `resource` keyword) as an ordinary fetcher, and
- * is callable directly - a direct call reads through the cache too.
+ * is callable directly. A direct call reads the committed base on a hit or a joined fetch.
+ * Subscribed resources also apply pending optimistic layers to that base. An aborted direct
+ * read rejects with its signal's reason and releases its share of the fetch.
  *
  * @param name - The family's key-space name. One name = one fetcher; reusing a name for a
  *               different fetcher is undefined behavior in production builds.
@@ -1272,12 +1358,17 @@ export function cached<F extends (...args: never[]) => Promise<unknown>>(
  */
 export function readValue<T>(cache: DataCache, family: FamilyRecord, args: unknown[], signal?: AbortSignal): Promise<T>
 {
+    if (signal?.aborted === true)
+    {
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- preserve the caller's abort reason
+        return Promise.reject(signal.reason);
+    }
     const entry = cache.entryFor(family, args);
     if (entry.inflight === null && entry.hasValue && !entry.stale && !entry.hasError)
     {
-        // The PROJECTED value, so a one-shot read and a subscribed resource never disagree about
-        // the same entry while a guess is in flight.
-        return Promise.resolve(projectedValue(entry) as T);
+        // A one-shot result may itself be cached by a loader. Only resources can roll back
+        // an optimistic layer, so a hit and a joined fetch both serve the committed base.
+        return Promise.resolve(entry.value as T);
     }
     // A one-shot reader is its own audience: it holds a waiter, so a stale or errored entry
     // fetches for it even with zero subscribers (a fresh consumer always retries).
@@ -1289,41 +1380,35 @@ export function readValue<T>(cache: DataCache, family: FamilyRecord, args: unkno
         // only through a microtask, so even a fetcher that returns an already-resolved promise
         // leaves it set. The reachable route is a fetcher that synchronously writes, forces or
         // resets its OWN key, clearing the entry from under the read that started it.
-        if (entry.hasError)
+        return new Promise<T>(resolve =>
         {
-            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- the fetcher's failure propagates VERBATIM to the reader
-            return Promise.reject(entry.error);
-        }
-        if (!entry.hasValue)
-        {
-            return Promise.reject(new Error('[azeroth] a cached read found no value: its fetcher '
-                + 'cleared its own entry while the read was starting.'));
-        }
-        return Promise.resolve(entry.value as T);
+            // The fetcher may also have aborted its caller before adopting a seed. Take
+            // the result synchronously, with the same cancellation precedence as a join.
+            signal?.throwIfAborted();
+            if (entry.hasError)
+            {
+                throw entry.error;
+            }
+            if (!entry.hasValue)
+            {
+                throw new Error('[azeroth] a cached read found no value: its fetcher '
+                    + 'cleared its own entry while the read was starting.');
+            }
+            resolve(entry.value as T);
+        });
     }
-    const awaited = started.startedSeq;
+    const awaited = Math.max(started.startedSeq, entry.markSeq);
     cache.holdWaiter(entry);
-    let released = false;
+    let held = true;
     const release = (): void =>
     {
-        if (!released)
+        if (held)
         {
-            released = true;
+            held = false;
             cache.releaseWaiter(entry);
         }
     };
-    if (signal !== undefined)
-    {
-        if (signal.aborted)
-        {
-            release();
-        }
-        else
-        {
-            signal.addEventListener('abort', release, { once: true });
-        }
-    }
-    return cache.settlementFor(entry, awaited).then(() =>
+    return cache.settlementFor(entry, awaited, { signal, release }).then(() =>
     {
         if (entry.hasError)
         {

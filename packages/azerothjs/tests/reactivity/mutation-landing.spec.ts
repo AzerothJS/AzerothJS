@@ -405,7 +405,7 @@ describe('callers waiting on a fetch a landing supersedes', () =>
         await server.drain();
         await until(() => first.done(), 'the first read');
         expect(run.failure()).toBeUndefined();
-        expect(run.value()?.ok).toBe(false);
+        expect(run.value()).toEqual({ ok: true, data: server.count });
         expect(first.value()?.count).toBe(server.count);
     });
 });

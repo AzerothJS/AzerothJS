@@ -12,6 +12,11 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- Direct calls to a `cached` fetcher now return the committed cache value on both a cache
+  hit and a joined fetch. A pending optimistic guess previously appeared on a hit and could
+  persist in a loader after rollback. Use a subscribed resource to display pending guesses.
+  Aborting a direct call rejects that reader with its signal's reason.
+
 - **The runtime contract moves to v5.** Compiled output changes shape for a sole `{ expr }` in a
   `<Show>` or `<Match>` branch and for a `fallback` on `<Show>` or `<Switch>` that is not an arrow
   or a bare markup literal, and for a hole inside a `<textarea>` or `<title>`, which calls the new
@@ -178,6 +183,11 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   without a router, now does the same in an app with one.
 
 ### Fixed
+
+- Optimistic cart writes now reach the server while their first load is pending or has
+  failed. Resources wait for a base before projecting. A projection that cannot use a
+  fetched value leaves the last usable value visible, and a confirmed write still reports
+  success and reconciles its entry. Refetches and revalidations settle normally.
 
 - **A hole inside a `<textarea>` or a `<title>` served its anchors as text, and text beside one
   blanked the page.** The browser reads a textarea's and a title's content as one text, so the
@@ -619,8 +629,8 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   entry and, while something subscribes to it, resolves when a fetch begun after the call settles,
   as it already did without a router and during a client navigation's own loader fetch; a write that
   lands during the wait moves it to the fetch that follows the write. An entry nothing subscribes to
-  is marked and the call returns at once: a read already in flight, or one that joins that fetch,
-  answers it, and the next read that fetches gets fresh data. In development, editing the module of
+  is marked and the call returns at once. A direct read already in flight can receive that fetch.
+  A direct read that arrives after the mark waits for a newer fetch. In development, editing the module of
   a cached fetcher left such an entry with the old code's data until its next fetch, although the
   log said it was invalidated; it now refetches through the new code.
 

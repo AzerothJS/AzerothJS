@@ -64,22 +64,23 @@ describe('revalidate() with a fetch in flight, no router', () =>
         m.dispose();
     });
 
-    it('at zero subscribers marks and returns at once; the read in flight answers its own fetch, the next read fetches', async () =>
+    it('at zero subscribers returns after marking and serves earlier readers without starting a follow-up', async () =>
     {
         const server = new GatedServer(0);
         const getCart = cartFamily(server, 'zero-subscribers');
         const inFlight = track(getCart());
         await server.arrived(0);
+        const joined = track(getCart());
         server.count = 5;
         const awaited = track(revalidate(getCart));
         await turns();
         expect(awaited.done()).toBe(true);
         expect(server.gets).toHaveLength(1);
-        const joined = track(getCart());
         await server.drain();
         await until(() => inFlight.done() && joined.done(), 'the reads');
         expect(inFlight.value()?.count).toBe(0);
         expect(joined.value()?.count).toBe(0);
+        expect(server.gets).toHaveLength(1);
         const next = track(getCart());
         await server.drain();
         await until(() => next.done(), 'the next read');

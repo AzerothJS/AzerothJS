@@ -110,10 +110,17 @@ addToCart.error();          // reactive: the last failure, or null
 await addToCart.run(item);  // { ok: true, data } | { ok: false, error }
 ```
 
-The guess goes into the CACHE, not beside one resource, so every reader of `getCart` moves
-together: a header badge and the cart page show the new number in the same frame. A guess held
-in one component's own signal moves only that component, which is how a badge ends up lagging
-the page by a full round trip.
+Resources subscribed to `getCart` share their optimistic changes. A header badge and the
+cart page show the new count in the same frame. Before the first value arrives, a resource
+keeps its loading or error state and the mutation still sends the write. Once a base arrives,
+pending guesses run in call order. A guess that throws leaves its input visible. Development
+builds report the exception once for that guess.
+
+Calling `await getCart()` directly returns the committed cache value on a hit or a joined
+fetch. This lets a loader keep the result safely if the pending write later rolls back. Use
+`createResource(getCart).data()` for optimistic presentation. If a direct read starts after
+an invalidation, it waits for a fetch begun after the mark. Aborting the read rejects with
+its signal's reason. Other readers can still receive the shared response.
 
 What the mutation guarantees:
 
@@ -127,6 +134,11 @@ What the mutation guarantees:
   write, so the landing discards it and, while anything reads the entry, fetches again; an awaited
   `refetch()`, `revalidate()` or one-shot read it interrupted resolves at that new fetch. A refetch
   that is slow, or that fails, cannot revert a change the server already accepted.
+- **A confirmed guess needs a usable base.** A cold entry waits for data fetched after
+  the write. If its first value is a hydration seed, the resource can show the seed with
+  its guesses while a fetch reconciles it. A seed may already include a confirmed write.
+  A confirmed projection that throws on an existing base marks the entry for a fresh
+  read, including when `invalidates` is empty. The mutation still returns the server receipt.
 - **A confirmed guess gives way to data that holds it.** A guess still waiting on an earlier run
   retires once data fetched after its landing arrives, and data that settled while its write was
   on the wire may already hold the write, so it is fetched again: at once while something

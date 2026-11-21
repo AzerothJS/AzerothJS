@@ -1617,26 +1617,27 @@ describe('a catcher around the write does not see a dropped read', () =>
                 patch(getList, (list: string[] | undefined) => [...(list ?? []), 'draft']);
             }
         });
-        const res = createRoot(() => createResource(getList));
+        const res = createRoot(() => createResource(getList, { initialValue: [] }));
         const host = mount(() => h('div', null, Show({
-            when: res.loading,
-            fallback: () => h('i', null, 'ready'),
+            when: () => !res.refreshing(),
+            fallback: () => h('i', null, 'refreshing'),
             children: () => h('i', null, () =>
             {
                 const list = res.data() ?? [];
-                // Loading and refreshing never hold together while this branch is open.
                 if (res.refreshing())
                 {
-                    throw new TypeError('refreshing inside the loading branch');
+                    throw new TypeError('refreshing inside the ready branch');
                 }
-                return 'loading ' + list.join(',');
+                return 'ready ' + list.join(',');
             })
         })));
         await tick();
         const before = host.textContent;
-        const result = await add.run(undefined);
+        const run = add.run(undefined);
+        const guessed = host.textContent;
+        const result = await run;
         await tick();
-        expect(`${ before } > ${ host.textContent } | ${ result.ok ? 'ok' : 'failed' } | ${ String(add.error()) }`).toBe('loading  > ready | ok | null');
+        expect([before, guessed, host.textContent, result.ok, add.error()]).toEqual(['ready ', 'ready draft', 'refreshing', true, null]);
     });
 });
 
