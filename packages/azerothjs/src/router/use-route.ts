@@ -6,10 +6,11 @@
  */
 
 /**
- * Five composables handing back the slice of a Router the caller actually cares about:
+ * Composables for the route state a caller observes:
  *
  *     useRoute    -> the full RouteLocation snapshot
  *     useMatch    -> the matched route and chain, or null
+ *     useRenderedMatch -> the ready selection of the enclosing Routes dispatcher
  *     useParams   -> the path params, slice-memoized
  *     useQuery    -> the query, slice-memoized
  *     useNavigate -> the imperative navigation API, as one destructurable object
@@ -27,13 +28,13 @@ import { createMemo } from '../reactivity/index.ts';
 import type { Params, Query, RouteLocation, RouteMatch } from './types.ts';
 import type { Router } from './router.ts';
 import { shallowEqualRecord } from './shallow-equal.ts';
-import { resolveRouter } from './provider.ts';
+import { currentRouteFrame, resolveRouter } from './provider.ts';
 
 /**
  * Returns a getter for the full reactive `RouteLocation`.
  *
- * Equivalent to `router.location`; with no argument the router
- * resolves from the nearest <RouterProvider>.
+ * URL fields follow the current history entry. Inside a matching routed segment,
+ * params follow its displayed match. Outside that scope this returns `router.location`.
  *
  * @example
  * ```ts
@@ -47,15 +48,26 @@ import { resolveRouter } from './provider.ts';
  */
 export function useRoute(router?: Router): Getter<RouteLocation>
 {
-    return resolveRouter(router, 'useRoute').location;
+    const resolved = resolveRouter(router, 'useRoute');
+    const frame = currentRouteFrame();
+    if (frame === null || frame.router !== resolved)
+    {
+        return resolved.location;
+    }
+    return createMemo(() =>
+    {
+        const location = resolved.location();
+        const params = frame.match()?.params ?? {};
+        return params === location.params ? location : { ...location, params };
+    });
 }
 
 /**
  * Returns a getter for the currently matched route (with full root-to-leaf
  * chain), or `null` if no route matches.
  *
- * Already memoized in the router with structural equality on route + params, so
- * cosmetic location changes (e.g. only the hash) do not invalidate it.
+ * Inside a matching routed segment this follows its selection through a hold or
+ * leave. Outside a segment it follows the admitted route. Hash changes preserve the match.
  *
  * @example
  * ```ts
@@ -71,7 +83,24 @@ export function useRoute(router?: Router): Getter<RouteLocation>
  */
 export function useMatch(router?: Router): Getter<RouteMatch | null>
 {
-    return resolveRouter(router, 'useMatch').match;
+    const resolved = resolveRouter(router, 'useMatch');
+    const frame = currentRouteFrame();
+    return frame !== null && frame.router === resolved ? frame.match : resolved.match;
+}
+
+/**
+ * The route ready for the enclosing Routes instance to display, or null for its fallback.
+ * Use a change of this getter to retry an outlet boundary when the replacement is ready.
+ * A synchronous read can precede DOM placement. Requires a matching Routes context.
+ */
+export function useRenderedMatch(router?: Router): Getter<RouteMatch | null>
+{
+    const frame = currentRouteFrame();
+    if (frame === null || (router !== undefined && frame.router !== router))
+    {
+        throw new Error('useRenderedMatch() requires a matching <Routes> context.');
+    }
+    return frame.rendered;
 }
 
 /**
@@ -96,12 +125,10 @@ export function useMatch(router?: Router): Getter<RouteMatch | null>
 export function useParams(router?: Router): Getter<Params>
 {
     const resolved = resolveRouter(router, 'useParams');
-    // Params are the RENDERED truth: they derive from the guarded match (through
-    // location's params slice), so during an async guard hold a live component keeps
-    // observing the params of the chain actually on screen, never a pending or vetoed
-    // target's. Under an async BOOT guard this is `{}` until first acceptance.
+    const frame = currentRouteFrame();
+    const readMatch = frame !== null && frame.router === resolved ? frame.match : resolved.match;
     return createMemo<Params>(
-        () => resolved.location().params,
+        () => readMatch()?.params ?? {},
         { equals: shallowEqualRecord }
     );
 }

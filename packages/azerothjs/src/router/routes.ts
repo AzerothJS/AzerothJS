@@ -18,11 +18,9 @@
  * same DOM, same state, no body re-execution. Transitions and focus play at the OUTERMOST
  * REBUILT segment.
  *
- * The rendering source is one Routes-level signal, `committed`: the guarded match, HELD at
- * its previous value while the chain awaits a lazy chunk, with a PENDING state for a cold
- * start (renders NOTHING - never the fallback). After first fill only `committed` reads
- * `chainReady()`;
- * slot identity memos derive from it and nothing else.
+ * Each Routes instance latches the match, accepted search and loader bindings together.
+ * It keeps the last presentation while the next chain awaits a lazy chunk and leaves a
+ * cold start empty. Nested slot identities follow only their owning placement.
  *
  * Hydration adopts the whole chain in one synchronous top-down walk under the pass: slots
  * adopt their `azc:outlet` ranges INLINE at placement (an effect's first run cannot be
@@ -45,7 +43,8 @@ import type { Params, RouteMatch } from './types.ts';
 import type { NavigationKind, Router } from './router.ts';
 import { componentOf } from './router.ts';
 import { paramNamesOf } from './path-pattern.ts';
-import { withRouteLevel, resolveRouter } from './provider.ts';
+import { withRouteFrame, resolveRouter } from './provider.ts';
+import { createSegmentPlacement, currentSelection, type SegmentPlacement, type RouteSelection } from './segment-owner.ts';
 
 /** What a `transition` FUNCTION receives to pick (or veto) a name per swap. */
 export interface RouteTransitionContext
@@ -158,11 +157,12 @@ interface RoutesShared
     router: Router;
     props: RoutesProps;
 
-    /** The rendering source: the guarded match, held while unready, PENDING cold. */
-    committed: () => Committed;
-
     /** Per-instance adoption freeze. */
-    adopting: () => RouteMatch | null;
+    adopting: () => RouteSelection | null;
+
+    /** The exact displayed location and loader bindings for this Routes instance. */
+    presented: () => RouteSelection;
+    rendered: () => RouteMatch | null;
 
     /** The previous/current committed chain, for the transition context's from/to. */
     previousMatch: RouteMatch | null;
@@ -198,11 +198,12 @@ export function Routes(props: RoutesProps): MountNode
     // slot. Slot handles serialize themselves through serializeChild's branded dispatch.
     if (isStringMode())
     {
-        const matchResult = untrack(() => router.match());
+        const selected = untrack(() => currentSelection(router, router.match()));
+        const root = placementFor(router, selected, selected.match === null ? -1 : 0);
         const settled = fallbackFor(props, router);
-        const inner = matchResult !== null
-            ? serializeChild(buildSegmentValue(router, matchResult, 0))
-            : (settled !== null ? serializeChild(settled()) : '');
+        const inner = selected.match !== null
+            ? buildSegment(root, undefined, serializeChild)
+            : (settled !== null ? withRouteFrame(root.frame, () => serializeChild(settled())) : '');
         return wrapContentsAnchored('routes', inner) as unknown as MountNode;
     }
 
@@ -236,29 +237,27 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
     // A closure-latched compute (the memo `equals` option cannot implement the hold: the
     // first value bypasses equals, and an equals-time chainReady read runs outside the
     // memo's tracking frame). A deliberate, framework-internal exception to compute purity.
-    let latched: RouteMatch | null = null;
-    let everReady = false;
+    let latched: RouteSelection | typeof PENDING = PENDING;
+    const selected = createMemo<RouteSelection | typeof PENDING>(() =>
+    {
+        const match = router.match();
+        const ready = router.chainReady();
+        if (match === null ? router.state().kind === 'pending' : !ready)
+        {
+            return latched;
+        }
+        const next = currentSelection(router, match);
+        if (latched === PENDING || latched.match !== next.match
+            || latched.search !== next.search || latched.loaders !== next.loaders)
+        {
+            latched = next;
+        }
+        return latched;
+    });
     const committed = createMemo<Committed>(() =>
     {
-        const m = router.match();
-        const ready = router.chainReady();
-        if (m === null)
-        {
-            if (router.state().kind === 'pending')
-            {
-                return everReady ? latched : PENDING;
-            }
-            everReady = true;
-            latched = null;
-            return null;
-        }
-        if (ready)
-        {
-            everReady = true;
-            latched = m;
-            return m;
-        }
-        return everReady ? latched : PENDING;
+        const value = selected();
+        return value === PENDING ? PENDING : value.match;
     });
 
     // The kind DISCRIMINATOR: the driver's only tracked read after first fill. chain -> chain navigations
@@ -280,13 +279,22 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         return state.kind === 'blocked' ? `blocked:${ state.status }` : 'null';
     });
 
-    const [adopting, setAdopting] = createSignal<RouteMatch | null>(null);
+    const [adopting, setAdopting] = createSignal<RouteSelection | null>(null);
+    const empty: RouteSelection = { match: null, search: '', loaders: [] };
+    // Ending adoption with the same tuple must preserve the adopted child bindings.
+    // A direct read of adopting() here would re-run them inside the hydration pass.
+    const presented = createMemo<RouteSelection>(() =>
+    {
+        const value = adopting() ?? selected();
+        return value === PENDING ? empty : value;
+    });
 
     const shared: RoutesShared = {
         router,
         props,
-        committed,
         adopting,
+        presented,
+        rendered: createMemo(() => presented().match),
         previousMatch: null,
         currentMatch: null,
         mounted: false
@@ -357,7 +365,8 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         createRoot((dispose) =>
         {
             fallbackDispose = dispose;
-            const built = resolveMountNode(untrack(settled)) ?? null;
+            const scope = placementFor(router, untrack(presented), -1, shared);
+            const built = withRouteFrame(scope.frame, () => resolveMountNode(untrack(settled))) ?? null;
             appendToCo(target, built);
             // The match -> fallback swap is a real navigation: focus the fallback
             // content - the driver-level swap presents too.
@@ -403,14 +412,14 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
                 {
                     if (k === 'chain')
                     {
-                        const match = untrack(committed) as RouteMatch;
-                        setAdopting(match);
+                        const selection = untrack(presented);
+                        setAdopting(selection);
                         try
                         {
                             createRoot((dispose) =>
                             {
                                 chainDispose = dispose;
-                                adoptSegmentSlot(shared, match, 0, target, null, cursor);
+                                adoptSegmentSlot(shared, selection, 0, target, null, cursor);
                             });
                         }
                         finally
@@ -428,7 +437,8 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
                                 openRoot((dispose) =>
                                 {
                                     fallbackDispose = dispose;
-                                    hydrateChild(untrack(settled), cursor);
+                                    const scope = placementFor(router, untrack(presented), -1, shared);
+                                    withRouteFrame(scope.frame, () => hydrateChild(untrack(settled), cursor));
                                 });
                             }
                             cursor.assertExhausted('<Routes> content');
@@ -512,29 +522,25 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
     }
 }
 
-/**
- * The value a segment build produces for `mode`:
- *   - 'dom'     the component's built output (a Node / co-range fragment / handle);
- *   - 'string'  the component's SSRNode tree (serializeChild consumes it);
- *   - 'hydrate' the component's descriptor tree (hydrateChild consumes it).
- *
- * The build itself is identical in all three: `componentOf(route)({ children: handle })`
- * under `withRouteLevel`, untracked. The child handle is created per build; its behavior
- * per mode lives in the SlotDriver below.
- *
- * @internal
- */
-function buildSegmentValue(router: Router, match: RouteMatch, level: number, shared?: RoutesShared): unknown
+function placementFor(router: Router, selected: RouteSelection, level: number, shared?: RoutesShared,
+    parent?: SegmentPlacement): SegmentPlacement
 {
-    const route = match.matched[level];
-    if (route === undefined)
+    const displayed = shared?.presented ?? (() => selected);
+    return createSegmentPlacement(router, level, selected, displayed, shared?.rendered ?? (() => selected.match), parent);
+}
+
+/** Resolve returned thunks and descriptors under the same owner as the component body. */
+function buildSegment<T>(placement: SegmentPlacement, shared: RoutesShared | undefined, consume: (value: MountNode | null) => T): T
+{
+    const level = placement.frame.level;
+    const route = untrack(placement.selection).match?.matched[level];
+    return withRouteFrame(placement.frame, () =>
     {
-        return null;
-    }
-    // Every segment receives a slot handle - a leaf simply renders it empty, so an
-    // index-child <-> param-child swap under a retained layout fills the same position.
-    const handle = createChildHandle(router, match, level + 1, shared);
-    return untrack(() => withRouteLevel(router, level, () => componentOf(route)({ children: handle as unknown as MountNode })));
+        const handle = createChildHandle(placement, level + 1, shared);
+        placement.outlet = handle;
+        const value = route === undefined ? null : untrack(() => componentOf(route)({ children: handle as unknown as MountNode }));
+        return consume(value);
+    });
 }
 
 /**
@@ -544,14 +550,15 @@ function buildSegmentValue(router: Router, match: RouteMatch, level: number, sha
  *
  * @internal
  */
-function createChildHandle(router: Router, buildMatch: RouteMatch, level: number, shared?: RoutesShared): SlotHandle
+function createChildHandle(parentPlacement: SegmentPlacement, level: number, shared?: RoutesShared): SlotHandle
 {
+    const router = parentPlacement.frame.router;
     const handle: SlotHandle = createSlotHandle({
         place(parent: Node, before: ChildNode | null): void
         {
             // Guard BEFORE claim: a claim with no machinery would leave the handle
             // stuck live with nothing registered to release it.
-            if (shared === undefined)
+            if (shared === undefined || !untrack(parentPlacement.frame.active))
             {
                 return;
             }
@@ -565,15 +572,16 @@ function createChildHandle(router: Router, buildMatch: RouteMatch, level: number
             parent.insertBefore(start, before);
             parent.insertBefore(end, before);
             const slotTarget: CoTarget = { parent: (): Node => end.parentNode as Node, start, end };
-            driveSegmentSlot(shared, level, slotTarget, handle, null, null);
+            driveSegmentSlot(shared, level, slotTarget, handle, null, null, parentPlacement);
         },
 
         serialize(): string
         {
             // String mode: eager, no effects. The slot's content is the next level's
             // serialized tree (empty at the leaf), wrapped in the outlet range.
-            const inner = buildMatch.matched[level] !== undefined
-                ? serializeChild(buildSegmentValue(router, buildMatch, level))
+            const displayed = untrack(parentPlacement.selection);
+            const inner = displayed.match?.matched[level] !== undefined
+                ? buildSegment(placementFor(router, displayed, level, shared, parentPlacement), shared, serializeChild)
                 : '';
             return (wrapContentsAnchored('outlet', inner) as unknown as { html: string }).html;
         },
@@ -581,7 +589,7 @@ function createChildHandle(router: Router, buildMatch: RouteMatch, level: number
         adopt(rawCursor: unknown): void
         {
             const cursor = rawCursor as HydrationCursorType;
-            if (shared === undefined)
+            if (shared === undefined || !untrack(parentPlacement.frame.active))
             {
                 return;
             }
@@ -594,8 +602,8 @@ function createChildHandle(router: Router, buildMatch: RouteMatch, level: number
             // walk cannot ride effects. The nested segment constructs and hydrates here,
             // recursively; the slot effect is then created with its first run consumed.
             const { target: slotTarget, contentCursor } = adoptCoRange(cursor, 'outlet');
-            const match = untrack(shared.adopting) ?? untrack(shared.committed);
-            adoptSegmentSlot(shared, match === PENDING ? null : match, level, slotTarget, handle, contentCursor);
+            const selection = untrack(parentPlacement.selection);
+            adoptSegmentSlot(shared, selection, level, slotTarget, handle, contentCursor, parentPlacement);
         }
     });
     return handle;
@@ -605,19 +613,24 @@ function createChildHandle(router: Router, buildMatch: RouteMatch, level: number
  * Adopts the segment and transfers its root to the live slot only after its entire range
  * matches. A rejected subtree must release subscriptions before the pass rebuilds the DOM.
  */
-function adoptSegmentSlot(shared: RoutesShared, match: RouteMatch | null, level: number, target: CoTarget,
-    handle: SlotHandle | null, cursor: HydrationCursorType): void
+function adoptSegmentSlot(shared: RoutesShared, selection: RouteSelection, level: number, target: CoTarget,
+    handle: SlotHandle | null, cursor: HydrationCursorType, parent?: SegmentPlacement): void
 {
     const owner = getOwner();
+    const match = selection.match;
+    let placement: SegmentPlacement | undefined;
     withHydrationRoots(openRoot =>
     {
         const adopted = match === null || match.matched[level] === undefined ? null : openRoot((dispose) =>
         {
-            const value = buildSegmentValue(shared.router, match, level, shared);
-            if (!owner?.disposed)
+            placement = placementFor(shared.router, selection, level, shared, parent);
+            buildSegment(placement, shared, value =>
             {
-                hydrateChild(value as never, cursor);
-            }
+                if (!owner?.disposed)
+                {
+                    hydrateChild(value, cursor);
+                }
+            });
             return dispose;
         });
         if (owner?.disposed)
@@ -626,14 +639,22 @@ function adoptSegmentSlot(shared: RoutesShared, match: RouteMatch | null, level:
             return;
         }
         cursor.assertExhausted(handle === null ? '<Routes> content' : `route slot (level ${ level })`);
-        driveSegmentSlot(shared, level, target, handle, match, adopted);
+        if (placement === undefined)
+        {
+            parent?.record(selection);
+        }
+        else
+        {
+            placement.mount();
+        }
+        driveSegmentSlot(shared, level, target, handle, match, adopted, parent, placement);
     });
 }
 
 /** Mounts level `level` directly into `target` (the Routes-level chain mount). */
 function mountSegmentSlot(shared: RoutesShared, level: number, target: CoTarget, adopted: RouteMatch | null, presentFirstBuild = false): void
 {
-    driveSegmentSlot(shared, level, target, null, adopted, null, presentFirstBuild);
+    driveSegmentSlot(shared, level, target, null, adopted, null, undefined, undefined, presentFirstBuild);
 }
 
 /**
@@ -644,7 +665,7 @@ function mountSegmentSlot(shared: RoutesShared, level: number, target: CoTarget,
  *
  * @internal
  */
-function driveSegmentSlot(shared: RoutesShared, level: number, target: CoTarget, handle: SlotHandle | null, adoptedMatch: RouteMatch | null, adoptedDispose: DisposeFn | null, presentFirstBuild = false): void
+function driveSegmentSlot(shared: RoutesShared, level: number, target: CoTarget, handle: SlotHandle | null, adoptedMatch: RouteMatch | null, adoptedDispose: DisposeFn | null, parent?: SegmentPlacement, branch?: SegmentPlacement, presentFirstBuild = false): void
 {
     const { router, props } = shared;
 
@@ -708,8 +729,8 @@ function driveSegmentSlot(shared: RoutesShared, level: number, target: CoTarget,
         {
             return frozenIdentity;
         }
-        const c = shared.committed();
-        if (c === PENDING || c === null)
+        const c = (parent === undefined ? shared.presented() : parent.available())?.match;
+        if (c === null || c === undefined)
         {
             // The driver is about to tear this slot down (or hold); keep the last
             // identity so no spurious slot work happens first.
@@ -797,16 +818,23 @@ function driveSegmentSlot(shared: RoutesShared, level: number, target: CoTarget,
 
     const buildInto = (animatedName: string | null, moveFocus: boolean): void =>
     {
-        const c = untrack(shared.committed);
-        if (c === PENDING || c === null)
+        const selection = untrack(parent?.available ?? shared.presented);
+        if (selection === null || selection.match === null)
         {
             return;
         }
         createRoot((dispose) =>
         {
             branchDispose = dispose;
-            const built = resolveMountNode(buildSegmentValue(router, c, level, shared)) ?? null;
+            branch = placementFor(router, selection, level, shared, parent);
+            const built = buildSegment(branch, shared, resolveMountNode) ?? null;
+            if (!untrack(branch.frame.active))
+            {
+                dispose();
+                return;
+            }
             appendToCo(target, built);
+            branch.mount();
             currentEl = built instanceof HTMLElement ? built : null;
             if (animatedName !== null && currentEl !== null)
             {
@@ -828,6 +856,7 @@ function driveSegmentSlot(shared: RoutesShared, level: number, target: CoTarget,
         {
             return;
         }
+        branch?.retire();
         const isFirstBuild = lastRendered === NEVER;
         lastRendered = id;
 
@@ -879,6 +908,14 @@ function driveSegmentSlot(shared: RoutesShared, level: number, target: CoTarget,
             {
                 buildInto(animated ? name : null, moveFocus);
             }
+            else if (parent !== undefined)
+            {
+                const selection = untrack(parent.available);
+                if (selection !== null)
+                {
+                    parent.record(selection);
+                }
+            }
         });
     });
 
@@ -887,6 +924,7 @@ function driveSegmentSlot(shared: RoutesShared, level: number, target: CoTarget,
     // its range, removes its markers when it owns them, and re-arms the handle.
     onRootDispose(() =>
     {
+        branch?.retire();
         flushLeaving();
         teardownBranch();
         if (handle !== null)

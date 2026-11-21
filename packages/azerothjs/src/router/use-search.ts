@@ -59,7 +59,8 @@ export function useSearch<Path extends string, Data, Search>(handle: RouteHandle
 /**
  * Untyped form, validating through whichever route's `search` schema applies: this level's
  * inside a route component body, otherwise the matched leaf's, tracking navigation. A route
- * declaring no schema passes the raw query through.
+ * declaring no schema passes the raw query through. During a cold hold or leave, the
+ * selected schema still belongs to its segment and the query input follows the URL.
  *
  * @param router - Optional explicit router. Resolved from context when omitted.
  * @returns A getter for the validated query, `{}` when validation fails.
@@ -77,7 +78,7 @@ export function useSearch(
     const frame = currentRouteFrame();
     if (first === undefined && frame !== null)
     {
-        const route = untrack(() => frame.router.match())?.matched[frame.level];
+        const route = untrack(frame.match)?.matched[frame.level];
         return validated(frame.router, route?.search);
     }
 

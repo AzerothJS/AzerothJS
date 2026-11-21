@@ -160,6 +160,43 @@ loader: async ({ params, query, signal, parent }) =>
   refresh control. With the data cache disabled, a nested level refreshes using its
   own current parameters and declared query.
 
+## Route state during navigation
+
+A guard can admit a destination while its lazy component is still loading. During
+that hold, and while a replaced segment animates out, `useMatch()`, `useParams()`
+and the params returned by `useRoute()` belong to that segment.
+A retained layout follows the ready descendant. The pathname, query and hash follow
+the URL. A missing or blocked page has a null segment match, empty params and idle loaders.
+
+`useLoader()` keeps its selected level's last data, error, loading and refreshing
+values when the router moves to another key. Calling `refetch()` through an obsolete
+key or a retired segment resolves without starting a request. Passing the same router
+explicitly keeps the segment scope. `useLoader(router)` selects the deepest loading
+level and `useLoader(handle, router)` selects the handle's level. For navigation-wide
+state, read `router.match()`, `router.location()` or `router.loaders[level]` directly.
+A hook outside a routed segment or given a different router also reads that router's state.
+Bare `useSearch()` validates the live query with its segment's schema. Explicit
+`useSearch(router)` uses the admitted leaf's schema, and a route handle fixes the
+schema even across navigation. The loader snapshot guarantee uses the key bindings
+provided by `createRouter`. A custom structural router supplying only `loaders`
+continues to expose those supplied resources.
+
+Inside a layout, `useRenderedMatch()` follows the route its enclosing `Routes` is ready
+to display. A synchronous read can precede the DOM update. A layout can use it to
+retry a failed outlet once its next destination is ready. The fallback owns the
+subscription, so a successful retry disposes it.
+
+```ts
+const rendered = useRenderedMatch();
+return ErrorBoundary({
+    children: () => Outlet({ children }),
+    fallback: (_error, reset) => {
+        on([rendered], reset, { skipInitial: true });
+        return h('p', {}, 'Could not display this page.');
+    }
+});
+```
+
 ## Guards, redirects, blockers
 
 ```ts
@@ -396,6 +433,7 @@ or mismatched payload degrades to a normal client fetch, never to wrong data.
 | `notFound` | The sentinel a loader throws when the route matched but its content does not exist: 404, not 500. |
 | `unauthorized`, `forbidden` | What a guard returns to deny at 401 or 403; `router.state()` reports which. |
 | `useRoute`, `useMatch`, `useParams`, `useQuery`, `useNavigate` | Reactive slices of the location. |
+| `useRenderedMatch` | The route ready for the enclosing `Routes` instance. |
 | `useLoader`, `useSearch` | This level's loader resource; the validated, typed search params. |
 | `matchAndLoad`, `loaderHandoffScript`, `readLoaderHandoff` | The SSR data handoff, both directions. |
 | `createBrowserHistory`, `createMemoryHistory` | History adapters (browser; SSR/tests). |

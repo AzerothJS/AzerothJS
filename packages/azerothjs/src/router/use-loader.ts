@@ -6,13 +6,12 @@
  */
 
 /**
- * The live Resource holding a route level's loader output.
+ * A resource view for one route level's loader output.
  *
  * The router keeps ONE resource per matched-chain level, and all levels load in parallel.
  * This composable answers "which level do you mean" in three ways:
  *
- *   - `useLoader()` inside a route component - THIS component's level (the construction
- *     frame `<Routes>` provides), falling back to the nearest ANCESTOR level that
+ *   - `useLoader()` inside a route component - this segment's level, falling back to the nearest ANCESTOR level that
  *     declares a loader when this one doesn't - a leaf reading its layout's data.
  *   - `useLoader(handle)` - the level where that {@link RouteHandle} sits in the current
  *     match, TYPED from the handle's loader (`Resource<Data>`, with null added when Data
@@ -20,46 +19,33 @@
  *   - `useLoader(router)` / bare `useLoader()` outside a chain - the DEEPEST level with
  *     a loader (the v1 "leaf loader" semantics), tracking navigation reactively.
  *
- * Every form returns getters over the router's own per-level resources, so consumers
- * share one coordinated data/loading/error state and one refetch per level.
+ * A mounted segment keeps the last outcome for its displayed key during a cold navigation
+ * or leave transition. Consumers of the active key share one fetch per level.
  */
 
 import type { Getter, Resource } from '../reactivity/index.ts';
-import { createMemo, untrack } from '../reactivity/index.ts';
+import { createMemo, getOwner, isStringMode, runWithOwner, untrack } from '../reactivity/index.ts';
+import type { RouteMatch } from './types.ts';
 import type { Router } from './router.ts';
 import type { RouteHandle } from './define-route.ts';
 import { currentRouteFrame, resolveRouter } from './provider.ts';
 
-/** @internal A Resource view over a LEVEL THAT MOVES (reactive level index into router.loaders). */
-function levelResource(router: Router, level: Getter<number | null>): Resource<unknown>
-{
-    const at = (): Resource<unknown> | null =>
-    {
-        const index = level();
-        return index === null ? null : router.loaders[index] ?? null;
-    };
-    return {
-        data: () => at()?.data(),
-        loading: () => at()?.loading() ?? false,
-        refreshing: () => at()?.refreshing() ?? false,
-        error: () => at()?.error() ?? null,
-        refetch: (): Promise<void> => at()?.refetch() ?? Promise.resolve()
-    };
-}
+const idle: Resource<unknown> = {
+    data: () => undefined,
+    error: () => null,
+    loading: () => false,
+    refreshing: () => false,
+    refetch: () => Promise.resolve()
+};
 
 /** @internal The deepest matched level declaring a loader, or null. */
-function deepestLoaderLevel(router: Router): number | null
+function deepestLoaderLevel(m: RouteMatch | null): number | null
 {
-    const m = router.match();
-    if (m === null)
+    for (let level = (m?.matched.length ?? 0) - 1; level >= 0; level--)
     {
-        return null;
-    }
-    for (let i = m.matched.length - 1; i >= 0; i--)
-    {
-        if (m.matched[i]?.loader)
+        if (m?.matched[level]?.loader)
         {
-            return i;
+            return level;
         }
     }
     return null;
@@ -71,9 +57,9 @@ function deepestLoaderLevel(router: Router): number | null
  * Call it during component CONSTRUCTION, at the top of the body, like every composable. The
  * resource it returns stays live for reads afterwards.
  *
- * The returned getters are views over the router's shared per-level resources, so every
- * consumer of a level sees one coordinated state and one refetch. A level with no loader, or
- * no matching route, reads as idle: data undefined and loading false.
+ * A displayed segment keeps its loader fields when the router switches keys. Refetching
+ * through a retired segment or an obsolete key resolves without starting another request.
+ * A level with no matching loader reads as idle, with undefined data and loading false.
  *
  * A loader that resolves undefined reads null on a server-rendered page, on the server and
  * after hydration, since the handoff reaches the browser as JSON; a level the client loads
@@ -115,34 +101,73 @@ export function useLoader(
     first?: Router | RouteHandle<string, unknown, unknown>, second?: Router
 ): Resource<unknown>
 {
-    // A handle carries `path`; a router never does.
-    if (first !== undefined && 'path' in first)
+    const handle = first !== undefined && 'path' in first ? first : undefined;
+    const router = resolveRouter(first !== undefined && !('path' in first) ? first : second, 'useLoader');
+    const context = currentRouteFrame();
+    const frame = context?.router === router ? context : null;
+    const match = frame?.match ?? router.match;
+    const level = createMemo(() =>
     {
-        const handle = first;
-        const router = resolveRouter(second, 'useLoader');
-        const level = createMemo<number | null>(() =>
+        const m = match();
+        if (handle !== undefined)
         {
-            const m = router.match();
             const index = m?.matched.indexOf(handle) ?? -1;
-            return index === -1 ? null : index;
-        });
-        return levelResource(router, level);
-    }
-
-    // Inside a chain build: THIS level, or the nearest ancestor that loads.
-    const frame = currentRouteFrame();
-    if (first === undefined && frame !== null)
-    {
-        const chain = untrack(() => frame.router.match())?.matched;
-        let level = frame.level;
-        while (level > 0 && chain?.[level]?.loader === undefined)
-        {
-            level--;
+            return index < 0 ? null : index;
         }
-        return frame.router.loaders[level] ?? levelResource(frame.router, () => null);
+        if (m === null)
+        {
+            return null;
+        }
+        if (first === undefined && frame !== null)
+        {
+            let index = frame.level;
+            while (index > 0 && m.matched[index]?.loader === undefined)
+            {
+                index--;
+            }
+            return index;
+        }
+        return deepestLoaderLevel(m);
+    });
+    const read = (): Resource<unknown> =>
+    {
+        const index = level();
+        if (index === null)
+        {
+            return idle;
+        }
+        return (frame === null ? router.loaders[index] : frame.loader(index)) ?? idle;
+    };
+    if (isStringMode())
+    {
+        // A numbered Suspense boundary looks up the original resource in its stream session.
+        return untrack(read);
     }
-
-    // The v1 shape: the deepest loading level of whatever is matched, reactively.
-    const router = resolveRouter(first, 'useLoader');
-    return levelResource(router, createMemo(() => deepestLoaderLevel(router)));
+    // Selecting a new key can leave an individual field unchanged. Subscribe only to
+    // the fields the caller reads, and keep each memo with the hook's original owner.
+    const owner = getOwner();
+    function field<T>(sample: Getter<T>): Getter<T>
+    {
+        if (frame === null)
+        {
+            return sample;
+        }
+        let memo: Getter<T> | undefined;
+        return () =>
+        {
+            if (owner?.disposed)
+            {
+                return sample();
+            }
+            memo ??= runWithOwner(owner, () => createMemo(sample));
+            return memo();
+        };
+    }
+    return {
+        data: field(() => read().data()),
+        error: field(() => read().error()),
+        loading: field(() => read().loading()),
+        refreshing: field(() => read().refreshing()),
+        refetch: () => untrack(() => frame?.active() === false ? idle.refetch() : read().refetch())
+    };
 }

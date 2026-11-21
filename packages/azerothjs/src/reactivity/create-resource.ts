@@ -241,12 +241,21 @@ export interface ResourceSeedKey<S>
     status: Getter<'pending' | 'accepted' | 'discarded'>;
 }
 
+/** @internal Hooks for a route level exposing generation-bound views of one resource. */
+export interface ResourceKeyObserver<S, T>
+{
+    connect(resource: Resource<T>, refetch: (key: S) => Promise<void>): void;
+    move(key: S | undefined): void;
+    attach(key: S | undefined): void;
+}
+
 /** The implementation shared by the public overloads and the router's keyed handoff. @internal */
 export function buildResource<T, S>(
     sourceOrFetcher: (() => S | false | null | undefined) | StandaloneFetcher<T>,
     maybeFetcherOrOptions?: SourceFetcher<S, T> | ResourceOptions<T>,
     maybeOptions?: ResourceOptions<T, S>,
-    seedKey?: ResourceSeedKey<S>
+    seedKey?: ResourceSeedKey<S>,
+    keyObserver?: ResourceKeyObserver<S, T>
 ): Resource<T>
 {
     // Both overloads take a callable first. A non-function here is the `resource r = fetch(url)`
@@ -322,7 +331,7 @@ export function buildResource<T, S>(
     let requested = 0;
     let driven = 0;
     let hasValue = showSeed && !seedFailure && initialValue !== undefined;
-    const waiters: Array<{ request: number; resolve: () => void }> = [];
+    const waiters: Array<{ request: number; resolve: () => void; key: S | undefined }> = [];
 
     function finishRequests(through: number): void
     {
@@ -505,18 +514,21 @@ export function buildResource<T, S>(
         loading,
         refreshing,
         error,
-        refetch(): Promise<void>
-        {
-            if (disposed || stringMode)
-            {
-                return Promise.resolve();
-            }
-            const request = ++requested;
-            const settled = new Promise<void>(resolve => waiters.push({ request, resolve }));
-            setTick(request);
-            return settled;
-        }
+        refetch: () => requestRead()
     };
+
+    function requestRead(key?: S): Promise<void>
+    {
+        if (disposed || stringMode)
+        {
+            return Promise.resolve();
+        }
+        const request = ++requested;
+        const settled = new Promise<void>(resolve => waiters.push({ request, resolve, key }));
+        setTick(request);
+        return settled;
+    }
+    keyObserver?.connect(resource, requestRead);
 
     if (stringMode)
     {
@@ -656,8 +668,7 @@ export function buildResource<T, S>(
     createEffect(() =>
     {
         const request = tick();
-        const force = request !== driven;
-        driven = request;
+        let force = request !== driven;
         const key = readKey?.();
         // A source can synchronously unmount the component that asked for this read.
         if (disposed)
@@ -669,6 +680,35 @@ export function buildResource<T, S>(
             return;
         }
         const changed = key !== previousKey;
+        if (keyObserver !== undefined)
+        {
+            const value = key?.kind === 'value' ? key.value : undefined;
+            if (changed)
+            {
+                untrack(() => keyObserver.move(value));
+            }
+            if (waiters.length !== 0)
+            {
+                // A scoped request can only force its own key, including when navigation
+                // and refetch coalesce. Ordinary callers retain follow-the-winner semantics.
+                force = false;
+                let kept = 0;
+                for (const waiter of waiters)
+                {
+                    if (waiter.key !== undefined && !Object.is(waiter.key, value))
+                    {
+                        waiter.resolve();
+                    }
+                    else
+                    {
+                        waiters[kept++] = waiter;
+                        force ||= waiter.request > driven && waiter.request <= request;
+                    }
+                }
+                waiters.length = kept;
+            }
+        }
+        driven = request;
         previousKey = key;
         if (key !== undefined && key.kind !== 'value')
         {
@@ -719,6 +759,10 @@ export function buildResource<T, S>(
                 {
                     const entry = cache.entryFor(family, key === undefined ? [] : [value]);
                     driveEntry(cache, entry, force, request);
+                    if (changed)
+                    {
+                        keyObserver?.attach(value);
+                    }
                 }
                 catch (error)
                 {
@@ -734,6 +778,7 @@ export function buildResource<T, S>(
         pendingInitial = false;
         if (adopting && !force)
         {
+            keyObserver?.attach(value);
             return;
         }
         if (changed && !adopting)
@@ -743,6 +788,10 @@ export function buildResource<T, S>(
         const controller = new AbortController();
         onCleanup(() => controller.abort());
         void startFetch(controller, value, request);
+        if (changed)
+        {
+            keyObserver?.attach(value);
+        }
     }, { name: 'fetch' });
     dtExitPrimitive(frame);
 

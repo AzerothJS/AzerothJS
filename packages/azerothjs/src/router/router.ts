@@ -24,6 +24,7 @@
  * scan, so configuration order defines priority, as it does in every other router on the web.
  */
 
+import { loaderPresentation } from './loader-presentation.ts';
 import { buildResource, type ResourceSeedKey } from '../reactivity/create-resource.ts';
 import type { Getter, Resource } from '../reactivity/index.ts';
 import {
@@ -200,9 +201,8 @@ export interface Router
     /**
      * The currently matched route, or `null` if no route matches.
      *
-     * Walked by `<Outlet>` for nested layouts. A memo with structural
-     * equality, so cosmetic location changes (e.g. only the hash) don't
-     * invalidate it.
+     * Reflects guard admission, which can precede lazy component readiness.
+     * Structural equality keeps hash-only changes from invalidating this getter.
      */
     match: Getter<RouteMatch | null>;
 
@@ -249,6 +249,11 @@ export interface Router
      * route handle) over indexing this directly.
      */
     loaders: ReadonlyArray<Resource<unknown>>;
+
+    /** Loader views for the admitted selection, retained by each rendered Routes instance. @internal */
+    loaderPresentation?: Getter<readonly (Resource<unknown> | undefined)[]>;
+    /** Query admitted by the guard pipeline. @internal */
+    acceptedSearch?: Getter<string>;
 
     /**
      * Marks every loader entry of the current location stale and refetches the
@@ -1358,7 +1363,7 @@ function buildRouter(config: RouterConfig): Router
         return declaredQuery(schema, query, (errors) => reportInvalidSearch(schema, search, errors));
     }
 
-    function levelKeyFor(m: RouteMatch | null, search: string, level: number): string | null
+    function levelKeyFor(m: RouteMatch | null, search: string, level: number, query?: Query): string | null
     {
         const route = m?.matched[level];
         if (m === null || route === undefined || !route.loader)
@@ -1369,7 +1374,7 @@ function buildRouter(config: RouterConfig): Router
         // than the value describes. The schema-less search component stays the raw STRING:
         // a key FINER than the argument only costs a cache hit, which is the safe direction.
         const prefix = prefixParams(m.matched, level, m.params);
-        const searchComponent = route.search === undefined ? search : levelQuery(route, search);
+        const searchComponent = route.search === undefined ? search : query ?? levelQuery(route, search);
         return `${ positionIds.get(m.matched)?.[level] ?? -1 }#${ level }|${ stableSerialize(prefix) }|${ stableSerialize(searchComponent) }`;
     }
 
@@ -1634,25 +1639,33 @@ function buildRouter(config: RouterConfig): Router
     // the trigger; the branded fetcher reads it back, so all levels with changed keys
     // still start IN PARALLEL by construction.
     const loaders: Array<Resource<unknown>> = [];
+    const presentations: Array<() => Resource<unknown> | undefined> = [];
     for (let level = 0; level < maxDepth; level++)
     {
         const seedKey = seedKeys[level];
         const options = seedKey == null ? undefined : seedFailed(level)
             ? { initialError: seededFailure(level) } : { initialValue: seed?.data[level] };
+        const presentation = loaderPresentation(() => levelKeyFor(match(), searchString(), level));
+        presentations.push(presentation.read);
         loaders.push(buildResource<unknown, string>(
             () =>
             {
                 const m = match();
                 const search = searchString();
-                const key = levelKeyFor(m, search, level);
-                if (key !== null && m !== null)
+                const route = m?.matched[level];
+                if (m === null || route?.loader === undefined)
                 {
-                    const route = m.matched[level] as Route & { loader: NonNullable<Route['loader']> };
+                    return null;
+                }
+                const query = levelQuery(route, search);
+                const key = levelKeyFor(m, search, level, query);
+                if (key !== null)
+                {
                     stageTrigger(key, {
                         level,
                         loader: route.loader,
                         params: prefixParams(m.matched, level, m.params),
-                        query: levelQuery(route, search),
+                        query,
                         parentKey: parentKeyFor(m, search, level)
                     });
                 }
@@ -1660,7 +1673,8 @@ function buildRouter(config: RouterConfig): Router
             },
             brandedLoaderFetcher,
             options,
-            seedKey == null ? undefined : { key: seedKey, status: seedStatus }
+            seedKey == null ? undefined : { key: seedKey, status: seedStatus },
+            presentation
         ));
     }
 
@@ -1885,6 +1899,8 @@ function buildRouter(config: RouterConfig): Router
         location,
         match,
         state: routeState,
+        acceptedSearch: searchString,
+        loaderPresentation: () => presentations.map(read => read()),
         canAdoptInitialRoute(): boolean
         {
             if (!atBootLocation() || (seed !== undefined && !adopt))

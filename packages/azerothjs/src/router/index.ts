@@ -39,6 +39,7 @@ export { RouterProvider } from './provider.ts';
 export {
     useRoute,
     useMatch,
+    useRenderedMatch,
     useParams,
     useQuery,
     useNavigate,

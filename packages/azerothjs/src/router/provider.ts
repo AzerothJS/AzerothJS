@@ -13,19 +13,17 @@
  * explicit forms remain as overrides, so tests and nested routers keep working and adopting
  * the provider only ever deletes an argument.
  *
- * Beside that owner-based context sits a CONSTRUCTION-TIME level frame: Routes wraps each
- * chain level's component call in `withRouteLevel`, so a `useLoader()` in a component body
- * knows which level's resource it means without threading indexes through props. The frame is
- * synchronous by design - composables are called during construction, the rule every hook
- * system has - while the objects they return stay live afterwards.
+ * Each mounted routed segment also supplies its presentation and level. An owned effect,
+ * deferred child or placed outlet can resolve them after component construction returns.
  */
 
-import { createContext, provideContext, useContext } from '../reactivity/index.ts';
+import { componentScope, createContext, getOwner, provideContext, useContext } from '../reactivity/index.ts';
 import type { MountNode } from '../component/index.ts';
 import type { Router } from './router.ts';
+import type { RouteFrame } from './segment-owner.ts';
 
 /** @internal The owner-tree slot RouterProvider publishes on. */
-const ROUTER_CONTEXT = createContext<Router>(undefined, 'router');
+const ROUTER_CONTEXT = createContext<{ router: Router; frame: RouteFrame | null }>(undefined, 'router');
 
 /** Props for {@link RouterProvider}. */
 export interface RouterProviderProps
@@ -54,69 +52,41 @@ export interface RouterProviderProps
  */
 export function RouterProvider(props: RouterProviderProps): MountNode
 {
-    provideContext(ROUTER_CONTEXT, props.router);
-    const children = props.children;
-    return (typeof children === 'function' ? children() : children) as MountNode;
+    if (getOwner() === null)
+    {
+        throw new Error('RouterProvider() requires an ownership scope. Render inside a component or createRoot().');
+    }
+    const inherited = currentRouteFrame();
+    return componentScope(() =>
+    {
+        provideContext(ROUTER_CONTEXT, { router: props.router, frame: inherited?.router === props.router ? inherited : null });
+        const children = props.children;
+        return (typeof children === 'function' ? children() : children) as MountNode;
+    });
 }
 
-/**
- * @internal The router for a composable/component call: the explicit argument when
- * given, else the construction-time route frame's router (inside a `<Routes>` chain),
- * else the nearest `<RouterProvider>`. Throws a call-site-named error when none exists.
- */
 export function resolveRouter(explicit: Router | undefined, caller: string): Router
 {
-    if (explicit !== undefined)
+    const router = explicit ?? useContext(ROUTER_CONTEXT)?.router;
+    if (router !== undefined)
     {
-        return explicit;
-    }
-    if (levelFrame !== null)
-    {
-        return levelFrame.router;
-    }
-    const provided = useContext(ROUTER_CONTEXT);
-    if (provided !== undefined)
-    {
-        return provided;
+        return router;
     }
     throw new Error(`${ caller }() found no router: pass one explicitly (${ caller }(router)) `
         + 'or wrap the tree in <RouterProvider router={router}>.');
 }
 
-/** @internal The active construction-time frame: which router + chain level is building. */
-interface RouteFrame
+/** Provides the segment only within this build, including its delayed descendants. */
+export function withRouteFrame<T>(frame: RouteFrame, build: () => T): T
 {
-    router: Router;
-    level: number;
-}
-
-let levelFrame: RouteFrame | null = null;
-
-/**
- * @internal Runs `build` (one chain level's component construction) under a route
- * frame, so `useLoader()`/`useSearch()` calls inside the component body resolve this
- * level. Restores the previous frame on exit - nested `<Routes>` (a sub-router inside
- * a route) stack correctly.
- */
-export function withRouteLevel<T>(router: Router, level: number, build: () => T): T
-{
-    const previous = levelFrame;
-    levelFrame = { router, level };
-    try
+    return componentScope(() =>
     {
+        provideContext(ROUTER_CONTEXT, { router: frame.router, frame });
         return build();
-    }
-    finally
-    {
-        levelFrame = previous;
-    }
+    });
 }
 
-/**
- * @internal The construction-time route frame, consulted by `useLoader`/`useSearch`
- * to resolve "my level" with no arguments. Null outside a `<Routes>` chain build.
- */
 export function currentRouteFrame(): RouteFrame | null
 {
-    return levelFrame;
+    return useContext(ROUTER_CONTEXT)?.frame ?? null;
 }

@@ -12,6 +12,10 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- Routed components keep their own params, match and loader fields through lazy
+  navigation and leave transitions. An outgoing layout keeps its mounted outlet.
+  Use `useRenderedMatch()` in a retained layout to retry an outlet error boundary
+  when the next route is ready. Direct router getters continue to follow navigation.
 - `router.state()` returns `{ kind: 'pending' }` while the first client guard is
   undecided. Add a `pending` branch to exhaustive switches. Later guard waits keep
   the previous verdict and screen. Query changes now run guards with the new query
