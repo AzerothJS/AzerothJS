@@ -1,12 +1,29 @@
 # Engineering handoff
 
-## ENG-BOOTSTRAP — engineering infrastructure
+**ENG-BOOTSTRAP, 2026-11-21.** Shared configuration and native transport verification are committed on `main`. No framework task is active. Two maintainer actions remain for full portability and normal Claude use.
 
-- **Focus and status.** Bootstrap in progress on `main`. No product milestone or framework bug is assigned.
-- **Baseline.** Started at `a9eb35c` with a clean index and working tree. The existing Claude knowledge store was ignored and untracked. Its two canonical documents, design files, scoped workflows, four linked worktrees and personal permissions predate this task.
-- **Decision.** Keep the original knowledge paths. Use a single shared protocol and role specifications, with native provider adapters. Track only new engineering files. Importing pre-existing private documents would require separate authorization. Copying them into competing new documents would create divergence. This decision affects engineering configuration and has no framework API impact.
-- **Acceptance.** Verify both native adapter formats, role discovery and boundaries, a harmless local Playwright MCP interaction per provider, Git path isolation and independent review. Record each provider's actual result and any remediation.
-- **Progress and ownership.** Principal owns the protocol, entrypoints, adapters, commits and this handoff. Separate contributors own the architecture index, role specifications and MCP verification. Existing framework source, tests, manifests and product statuses are outside bootstrap scope.
-- **Checks executed before edits.** `npm run typecheck` passed. `npm test -- packages/schema/tests/standard-schema.spec.ts` passed, 4/4. Build and full framework suite were not part of this baseline.
-- **Blocker for fresh clones.** Neither `.claude/ROADMAP.md` nor `.claude/framework-bugs.md` has a Git revision. Both originals are available here and appear as untracked files under the new ignore rules. Keep them out of bootstrap commits. Restore the originals from the maintainer or arrange a separately reviewed import before relying on a fresh clone for product work.
-- **Commits and next action.** See the current task commits via `git log a9eb35c..HEAD --oneline`. Validate provider registration and interaction, review the final diffs, and record the results here.
+## Decision and delivered files
+
+Keep the existing roadmap, bug tracker and design records at their original paths. Both providers use [one engineering protocol](ENGINEERING_PROTOCOL.md), [one architecture index](ARCHITECTURE_INDEX.md) and [ten role specifications](agent-specs/). The security reviewer inspects defensive controls and uses inert fixtures. Product statuses and framework behavior were outside this bootstrap.
+
+| Local commit | Contents |
+| --- | --- |
+| `714fbe8` | Shared protocol, handoff, index, ten role specs and selective Git ignore rules. |
+| `70ced1e` | Root `AGENTS.md` and `CLAUDE.md`, ten Claude Markdown adapters and ten Codex TOML adapters. |
+| `5d43289` | Project MCP settings for both providers, Claude tool restrictions and the [reproducible browser check](PLAYWRIGHT_MCP.md). |
+
+This handoff's own revision is available with `git log -1 -- .claude/ENGINEERING_STATE.md`. Run `git diff --name-status a9eb35c..5d43289` for the exact set of added and changed paths.
+
+## Verification and limits
+
+- **Baseline.** Clean index and working tree at `a9eb35c`. The 2.1.1 monorepo had 15 workspaces, 44 tracked Markdown files, and 428 specs under the Vitest discovery pattern plus five scaffold specs. The [index](ARCHITECTURE_INDEX.md) maps public contracts, source/test boundaries, and the 70 pre-existing Claude Markdown files. Existing browser logs were local artifacts. There was no tracked Playwright Test runner or configuration.
+- **Native checks.** On Windows with Node 25.9.0 and npm 11.12.1, `npm run typecheck` passed before and after configuration. `npm test -- packages/schema/tests/standard-schema.spec.ts` passed 4/4 both times. The full framework build, lint, Vitest suite and package smoke were not executed for these documentation and agent configuration changes.
+- **Role discovery.** Claude Code 2.1.322 SDK initialization returned all ten project roles after the final YAML change. Codex CLI 0.153.4 exposed all ten names and descriptions in its native spawn-tool schema captured locally. This checked registration without model-driven runs of the ten specialists. Structural checks parsed both formats, resolved references, compared the two adapters for each role, and verified read/write scopes and MCP configuration parity.
+- **Browser.** Both native clients navigated, inspected, clicked and verified a new heading through the pinned Playwright MCP. A repeat with the documented two-page fixture returned four HTTP 200s across the two sessions, with zero console messages. Only isolated Chrome on Windows was exercised. The [evidence and commands](PLAYWRIGHT_MCP.md) distinguish direct client transport from a normal authenticated chat.
+- **Git and review.** Independent review covered the actual protocol, index, roles, adapters, permissions, browser runbook and Git isolation. The committed engineering tree contains 40 paths including `.gitignore`. The two original canonical files matched their pre-edit SHA-256 values and were excluded from all bootstrap commits. Git visibility checks leave personal permissions, legacy worktrees and browser output ignored.
+
+## Resume
+
+1. **In this checkout:** From the repository root open a new trusted `codex` or `claude` session. Ask it to read the handoff, protocol and canonical records, then give it a specific task ID. The verified Codex MCP client was the CLI app server. Confirm `/mcp` when opening a fresh desktop chat.
+2. **For Claude's normal workflow:** Run `claude auth login`, start `claude` in this checkout and approve the project server named `playwright`. Verify it in `/mcp` and repeat the documented fixture. The native explicit-config path passed. Default project approval and the expired OAuth login still require the maintainer.
+3. **For another clone:** The original `.claude/ROADMAP.md` and `.claude/framework-bugs.md` are untracked here. A Git archive of the bootstrap excludes both. Restore them from the maintainer, together with the roadmap skill and any referenced design dossiers or scoped workflows needed for the task. To make these available through Git, the maintainer must authorize a separate reviewed import of pre-existing knowledge. Keep the original names and review exact files before staging. Personal settings, browser output and nested worktrees stay private.
