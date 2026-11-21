@@ -190,6 +190,10 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- A signal read by a field's synchronous rule or initial-value getter could restart its
+  debounce or abort an in-flight async validation. Changing that signal alone now leaves
+  pending validation in place. Editing the field or submitting still runs the applicable checks.
+
 - Moving an incidental signal read by a resource fetcher could abort a request, rebuild a
   Suspense subtree and discard text typed into it. An autosave effect could send another
   write when a signal read inside the mutation changed. Resource requests now follow

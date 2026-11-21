@@ -136,8 +136,9 @@ An effect can choose what triggers an autosave with `createEffect(() => { void s
 Here the effect tracks `draft()`. A token or other signal read inside the write is sampled
 for that run, so refreshing the token alone does not send another write.
 
-Form validation has its own tracking rules. With an async field check, a synchronous
-validation rule that reads outside state can still cause the field check to run again.
+Background async form validation follows edits to its field. The synchronous rule can
+sample another signal, such as the current minimum length. Changing that signal alone
+leaves the field's current check in place. See [validation layers](form.md#validation-layers).
 
 Resources subscribed to `getCart` share their optimistic changes. A header badge and the
 cart page show the new count in the same frame. Before the first value arrives, a resource

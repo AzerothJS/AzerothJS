@@ -77,9 +77,12 @@ Three layers, each with its own job; a per-field error always wins over a cross-
   confirmation, `end >= start`, and anything else that needs the whole typed snapshot.
 - **`validateAsync`** - per-field async checks (username availability, server-side rules):
   `{ [field]: (value, signal: AbortSignal) => Promise<string | null> }`. Runs after the field's
-  sync validators pass, debounced (`asyncDebounceMs`, default 300), with an `AbortSignal` that
-  cancels superseded requests. `validating()` reports in-flight fields; every pending check is
-  awaited before submit.
+  value changes from its initial value and its sync rule passes. Changing a signal read by that
+  rule alone preserves the debounce deadline and any in-flight request. A new field edit samples
+  the current rule and initial value. Checks are debounced (`asyncDebounceMs`, default 300).
+  Each receives an `AbortSignal` that the form aborts when a newer edit supersedes the check.
+  `validating()` reports in-flight fields. On submit,
+  the form runs fresh async checks after synchronous validation passes and awaits their results.
 
 ```ts
 const signup = createForm({

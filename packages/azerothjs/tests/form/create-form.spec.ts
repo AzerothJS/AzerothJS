@@ -7,7 +7,7 @@
 // inside a createRoot so its internal validation effect has an owner, and the
 // root is disposed at the end of each test. No mocks: real signals, real effects.
 import { describe, it, expect, vi } from 'vitest';
-import { createRoot, createEffect, createForm, required, minLength, min, combine, email } from 'azerothjs';
+import { createRoot, createEffect, createForm, createSignal, required, minLength, min, combine, email, untrack } from 'azerothjs';
 import type { FormApi } from 'azerothjs';
 
 // Lets a microtask-resolving promise settle and gives the reactive system a tick.
@@ -549,6 +549,163 @@ describe('createForm - reset', () =>
 
 describe('createForm - async validation (validateAsync)', () =>
 {
+    it.each(['plain', 'explicit untrack'] as const)('only edits repeat a settled check when the sync rule reads a signal (%s)', async mode =>
+    {
+        const [minimum, setMinimum] = createSignal(1);
+        const readMinimum = mode === 'plain' ? minimum : () => untrack(minimum);
+        const checked: string[] = [];
+        const { form, dispose } = withForm(() => createForm({
+            initial: { name: '' },
+            validate: { name: value => value.length >= readMinimum() ? null : 'too short' },
+            validateAsync: { name: value =>
+            {
+                checked.push(value);
+                return Promise.resolve(null);
+            } },
+            asyncDebounceMs: 0
+        }));
+        try
+        {
+            form.setValue('name', 'first');
+            await flush();
+            setMinimum(2);
+            await flush();
+            setMinimum(3);
+            await flush();
+            expect(checked).toEqual(['first']);
+            form.setValue('name', 'second');
+            await flush();
+            expect(checked).toEqual(['first', 'second']);
+        }
+        finally
+        {
+            dispose();
+        }
+    });
+
+    it('reads a getter-backed initial value without tying the current check to the getter’s signals', async () =>
+    {
+        const [initialName, setInitialName] = createSignal('');
+        const gate = deferred<string | null>();
+        const starts: { value: string; signal: AbortSignal }[] = [];
+        const { form, dispose } = withForm(() => createForm({
+            initial: {
+                get name(): string
+                {
+                    return initialName();
+                }
+            },
+            validateAsync: { name: (value, signal) =>
+            {
+                starts.push({ value, signal });
+                return value === 'first' ? gate.promise : Promise.resolve(null);
+            } },
+            asyncDebounceMs: 0
+        }));
+        try
+        {
+            form.setValue('name', 'first');
+            await flush();
+            expect(starts).toHaveLength(1);
+            const active = starts[0]!.signal;
+            setInitialName('current default');
+            expect(active.aborted).toBe(false);
+            await flush();
+            expect(starts).toHaveLength(1);
+            form.setValue('name', 'current default');
+            expect(active.aborted).toBe(true);
+            gate.resolve('late result');
+            await flush();
+            expect(starts.map(start => start.value)).toEqual(['first']);
+            expect(form.validating().name).toBe(false);
+            form.setValue('name', 'second');
+            await flush();
+            expect(starts.map(start => start.value)).toEqual(['first', 'second']);
+            expect(form.errors().name).toBeNull();
+        }
+        finally
+        {
+            dispose();
+        }
+    });
+
+    it('allows an in-flight check to finish when the unchanged field would now fail its sync rule', async () =>
+    {
+        const [minimum, setMinimum] = createSignal(1);
+        const gate = deferred<string | null>();
+        const aborted = vi.fn();
+        const validate = vi.fn((_value: string, signal: AbortSignal) =>
+        {
+            signal.addEventListener('abort', aborted);
+            return gate.promise;
+        });
+        const { form, dispose } = withForm(() => createForm({
+            initial: { name: '' },
+            validate: { name: value => value.length >= minimum() ? null : 'too short' },
+            validateAsync: { name: validate },
+            asyncDebounceMs: 0
+        }));
+        try
+        {
+            form.setValue('name', 'Ada');
+            await flush();
+            expect(form.validating().name).toBe(true);
+            setMinimum(8);
+            expect(aborted).not.toHaveBeenCalled();
+            expect(form.validating().name).toBe(true);
+            gate.resolve('already taken');
+            await flush();
+            expect(form.errors().name).toBe('already taken');
+            expect(form.validating().name).toBe(false);
+            form.setValue('name', 'Adah');
+            await flush();
+            expect(form.errors().name).toBe('too short');
+            expect(validate).toHaveBeenCalledOnce();
+        }
+        finally
+        {
+            dispose();
+        }
+    });
+
+    it('keeps a pending debounce deadline across rule reads and restarts it on a real edit', async () =>
+    {
+        vi.useFakeTimers();
+        const [minimum, setMinimum] = createSignal(1);
+        const checked: string[] = [];
+        const { form, dispose } = withForm(() => createForm({
+            initial: { name: '' },
+            validate: { name: value => value.length >= minimum() ? null : 'too short' },
+            validateAsync: { name: value =>
+            {
+                checked.push(value);
+                return Promise.resolve(null);
+            } },
+            asyncDebounceMs: 20
+        }));
+        try
+        {
+            form.setValue('name', 'first');
+            await vi.advanceTimersByTimeAsync(15);
+            expect(checked).toEqual([]);
+            setMinimum(2);
+            await vi.advanceTimersByTimeAsync(5);
+            expect(checked).toEqual(['first']);
+            form.setValue('name', 'second');
+            await vi.advanceTimersByTimeAsync(10);
+            form.setValue('name', 'third');
+            await vi.advanceTimersByTimeAsync(10);
+            expect(checked).toEqual(['first']);
+            await vi.advanceTimersByTimeAsync(10);
+            expect(checked).toEqual(['first', 'third']);
+        }
+        finally
+        {
+            dispose();
+            vi.useRealTimers();
+        }
+    });
+
     it('runs the async validator after the sync pass and toggles validating()', async () =>
     {
         const gate = deferred<string | null>();

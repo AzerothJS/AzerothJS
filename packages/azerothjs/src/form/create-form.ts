@@ -747,8 +747,9 @@ export function createForm<T extends object>(
                 const value = fields[name].value();
 
                 const syncValidator = fieldRules[name];
-                const changed = value !== initial[name];
-                if (!changed || (syncValidator && syncValidator(value) !== null))
+                // Only the field drives this effect. Its initial getter and rule may read other signals.
+                const shouldCheck = untrack(() => value !== initial[name] && (!syncValidator || syncValidator(value) === null));
+                if (!shouldCheck)
                 {
                     // Nothing to check (unchanged, or sync already failed): clear the
                     // pending flag. The previous run's onCleanup already aborted any
