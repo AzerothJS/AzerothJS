@@ -23,9 +23,11 @@
  * reorder updates positions live without rebuilding elements.
  */
 
+import { withHydrationRoots } from './adopt-roots.ts';
+import { createHydrationEffect } from '../reactivity/create-effect.ts';
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { createEffect, createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
+import { createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
 import { DEV } from '../reactivity/dev.ts';
 import { describeArg } from '../reactivity/validate.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
@@ -283,7 +285,7 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
     // per-occurrence logging would flood the console.
     let warnedDuplicateKey = false;
 
-    createEffect(() =>
+    createHydrationEffect(hydrateFirstRun, () =>
     {
         const items = asItemArray<T>(resolveReactive(props.each));
 
@@ -303,30 +305,33 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
             const cursor = hydrationCursor as HydrationCursorType;
             const adoptedMap = new Map<string | number, KeyEntry<T>>();
 
-            for (const [i, item] of items.entries())
+            withHydrationRoots(openRoot =>
             {
-                const key = props.key(item, i);
-                const index = createRowCell(i);
-                const cell = createRowCell(item);
-
-                let el!: HTMLElement;
-                let dispose!: DisposeFn;
-                createRoot((d) =>
+                for (const [i, item] of items.entries())
                 {
-                    dispose = d;
-                    const rowDescriptor = renderItem(cell.get, index.get);
-                    // The next element in the span IS this row; capture it
-                    // before the descriptor's hydrate consumes it.
-                    el = cursor.peekElement() as HTMLElement;
-                    hydrateChild(rowDescriptor, cursor);
-                });
+                    const key = props.key(item, i);
+                    const index = createRowCell(i);
+                    const cell = createRowCell(item);
 
-                adoptedMap.set(key, { el, dispose, setIndex: index.set, setItem: cell.set });
-            }
+                    let el!: HTMLElement;
+                    let dispose!: DisposeFn;
+                    openRoot((d) =>
+                    {
+                        dispose = d;
+                        const rowDescriptor = renderItem(cell.get, index.get);
+                        // The next element in the span IS this row; capture it
+                        // before the descriptor's hydrate consumes it.
+                        el = cursor.peekElement() as HTMLElement;
+                        hydrateChild(rowDescriptor, cursor);
+                    });
 
-            // No server rows beyond the ones we adopted; a leftover means the
-            // server and client lists diverged. hydrate() recovers.
-            cursor.assertExhausted('<For> rows');
+                    adoptedMap.set(key, { el, dispose, setIndex: index.set, setItem: cell.set });
+                }
+
+                // No server rows beyond the ones we adopted; a leftover means the
+                // server and client lists diverged. hydrate() recovers.
+                cursor.assertExhausted('<For> rows');
+            });
 
             keyMap = adoptedMap;
             return;

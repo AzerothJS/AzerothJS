@@ -277,13 +277,15 @@ export interface Route
 export type GuardVerdict = boolean | NavigateTarget | Redirect | Denied | undefined;
 
 /**
- * The settled routing verdict, read from `router.state()` and dispatched on by `<Routes>`.
+ * The routing verdict read from `router.state()`. An undecided boot is pending; later
+ * navigation holds the last settled verdict until guards decide.
  *
  * `match` alone cannot carry this: an unknown URL and a guard veto both leave it null, and the
  * two states are answered with different status codes and different UI. The union is closed -
  * these are the states the route lifecycle renders.
  */
 export type RouteState =
+    | { kind: 'pending' }
     | { kind: 'match'; match: RouteMatch }
     | { kind: 'not-found' }
     | { kind: 'blocked'; status: 401 | 403 };

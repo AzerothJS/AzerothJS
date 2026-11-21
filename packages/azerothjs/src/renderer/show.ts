@@ -15,9 +15,11 @@
  * a MutationObserver can observe each removal. Portal's automatic cleanup depends on that.
  */
 
+import { withHydrationRoots } from './adopt-roots.ts';
+import { createHydrationEffect } from '../reactivity/create-effect.ts';
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { createMemo, createEffect, createRoot, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
+import { createMemo, createRoot, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '../component/index.ts';
 import { hydrateChild, materializeChild, resolveReactive } from './h.ts';
@@ -199,7 +201,7 @@ function driveShow<W>(props: ShowProps<W>, target: CoTarget, hydrateFirstRun: bo
         ? untrack(() => resolveReactive(props.children(valueAccessor)))
         : (props.fallback ? untrack(() => resolveReactive(props.fallback)) : undefined)) as Child;
 
-    createEffect(() =>
+    createHydrationEffect(hydrateFirstRun, () =>
     {
         const isTruthy = readTruthy();
 
@@ -207,18 +209,21 @@ function driveShow<W>(props: ShowProps<W>, target: CoTarget, hydrateFirstRun: bo
         {
             // Hydration first run: adopt existing server children rather than appending.
             firstRun = false;
-            if (isTruthy || props.fallback !== undefined)
+            withHydrationRoots(openRoot =>
             {
-                createRoot((d) =>
+                if (isTruthy || props.fallback !== undefined)
                 {
-                    branchDispose = d;
-                    hydrateChild(buildActive(isTruthy), hydrationCursor as HydrationCursorType);
-                });
-            }
+                    openRoot((d) =>
+                    {
+                        branchDispose = d;
+                        hydrateChild(buildActive(isTruthy), hydrationCursor as HydrationCursorType);
+                    });
+                }
 
-            // Every server node in the range must be claimed; a leftover means SSR/CSR
-            // diverged, which hydrate() recovers from.
-            hydrationCursor?.assertExhausted('<Show> content');
+                // Every server node in the range must be claimed; a leftover means SSR/CSR
+                // diverged, which hydrate() recovers from.
+                hydrationCursor?.assertExhausted('<Show> content');
+            });
             return teardownBranch;
         }
 

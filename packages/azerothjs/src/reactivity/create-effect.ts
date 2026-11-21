@@ -32,7 +32,8 @@ import {
     depsChanged
 } from './graph.ts';
 import { isBatching, queueEffect } from './batch.ts';
-import { isStringMode } from './render-mode.ts';
+import { isHydrating, isStringMode } from './render-mode.ts';
+import { HydrationMismatchError } from './hydration.ts';
 import { currentOwner, registerDisposer, setCurrentOwner, drainOwner } from './create-root.ts';
 import type { Owner } from './create-root.ts';
 import { DEV } from './dev.ts';
@@ -145,6 +146,21 @@ function isThenable(value: unknown): value is PromiseLike<unknown>
  * @see {@link untrack} to read without subscribing.
  */
 export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
+{
+    return buildEffect(fn, options, false);
+}
+
+/**
+ * A renderer that owns a server range must claim it before the hydration pass unwinds.
+ * Only its first run is synchronous; subsequent updates follow ordinary effect scheduling.
+ * @internal
+ */
+export function createHydrationEffect(hasCursor: boolean, fn: EffectFn): DisposeFn
+{
+    return buildEffect(fn, undefined, hasCursor && isHydrating());
+}
+
+function buildEffect(fn: EffectFn, options: EffectOptions | undefined, adoptNow: boolean): DisposeFn
 {
     assertFunction(fn, 'createEffect', 'Pass the effect body as a function: createEffect(() => { ... }).');
 
@@ -341,6 +357,12 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
         }
         catch (err)
         {
+            // The active adoption pass owns structural recovery. An enclosing application
+            // error scope still handles exceptions from its component and effect bodies.
+            if (isHydrating() && err instanceof HydrationMismatchError)
+            {
+                throw err;
+            }
             if (subscriber.errorHandler)
             {
                 subscriber.errorHandler(err);
@@ -386,7 +408,14 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
     // cannot live on un-disposable. Created inside a batch, schedule() queues instead.
     try
     {
-        schedule();
+        if (adoptNow)
+        {
+            runBody();
+        }
+        else
+        {
+            schedule();
+        }
     }
     catch (err)
     {

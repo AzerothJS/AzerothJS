@@ -23,13 +23,14 @@
  */
 
 import type { Resource } from '../reactivity/index.ts';
-import { createMemo, getOwner, isHydrating, isStringMode, runWithOwner, untrack } from '../reactivity/index.ts';
+import { createEffect, createMemo, createSignal, getOwner, isHydrating, isStringMode, runInMode, runWithOwner, untrack } from '../reactivity/index.ts';
 import {
     currentStreamSession, hydrationNode, popSeedScope, pushSeedScope,
     serializeChild, wrapContentsAnchored
 } from '../reactivity/internal.ts';
 import type { HydrationCursor, HydrationNode, ServerFetch } from '../reactivity/internal.ts';
 import type { MountNode } from '../component/index.ts';
+import { claimStreamBoundary } from './stream-swap.ts';
 import { Show } from './show.ts';
 
 /** Props for {@link Suspense}. */
@@ -58,10 +59,9 @@ export interface SuspenseProps
  * picked up unless Suspense is re-mounted with the new list.
  *
  * A buffered server render emits the fallback, since a synchronous render cannot await
- * anything. A streaming render emits the fallback under an id-suffixed marker and streams
+ * anything. A streaming render emits the fallback under an numbered marker and streams
  * the children as an out-of-order chunk once the watched fetches settle - or, if they had
- * already settled, renders the children inline, byte-identical to a buffered render of that
- * settled state.
+ * already settled, renders the children inline under a ready marker. An empty watch list retains the bare marker.
  *
  * For per-item skeletons, render each resource's own `loading()` instead.
  *
@@ -84,8 +84,8 @@ export function Suspense(props: SuspenseProps): MountNode
         {
             // A boundary with pending resources emits its fallback under an ID-SUFFIXED marker
             // and registers a continuation the driver streams once those fetches settle. One
-            // whose resources already settled renders its children inline under the bare marker,
-            // byte-identical to a buffered render of that state.
+            // whose resources already settled renders its children inline. An empty watch list
+            // can never suspend, so it needs no branch annotation.
             const pending: ServerFetch[] = [];
             for (const resource of props.on)
             {
@@ -100,7 +100,7 @@ export function Suspense(props: SuspenseProps): MountNode
             }
             if (pending.length === 0)
             {
-                return wrapContentsAnchored('suspense', serializeChild(props.children())) as unknown as MountNode;
+                return wrapContentsAnchored(props.on.length === 0 ? 'suspense' : 'suspense:ready', serializeChild(props.children())) as unknown as MountNode;
             }
             const id = session.allocateBoundaryId();
             const owner = getOwner();
@@ -114,81 +114,73 @@ export function Suspense(props: SuspenseProps): MountNode
         }
         // Buffered SSR: resources cannot resolve within a synchronous render, so emit the
         // fallback and let the client resolve them and swap after hydration.
-        return wrapContentsAnchored('suspense', serializeChild(props.fallback())) as unknown as MountNode;
+        return wrapContentsAnchored('suspense:fallback', serializeChild(props.fallback())) as unknown as MountNode;
     }
+
+    const resourcesReady = (): boolean => !props.on.some(resource => resource.loading());
 
     if (isHydrating())
     {
-        // A streamed boundary's marker carries its id, so pushing the matching seed scope around
-        // the children makes their resources re-derive the server's ids and adopt the seeds. The
-        // scope is LATE-BOUND from the adopted marker, peeked rather than consumed since Show's
-        // own adoption claims it, while the memo and Show build eagerly so construction ownership
-        // matches every other mode. A bare marker means no scope and unchanged behaviour.
-        let seedScope: string | null = null;
-        const children = (): MountNode =>
-        {
-            if (seedScope === null)
-            {
-                return props.children();
-            }
-            pushSeedScope(seedScope);
-            try
-            {
-                return props.children();
-            }
-            finally
-            {
-                popSeedScope();
-            }
-        };
-        const anyLoading = createMemo<boolean>(() =>
-        {
-            for (const resource of props.on)
-            {
-                if (resource.loading())
-                {
-                    return true;
-                }
-            }
-            return false;
-        });
-        const shown = Show({
-            when: () => !anyLoading(),
-            fallback: props.fallback,
-            children
-        }) as unknown as HydrationNode;
         return hydrationNode((cursor: HydrationCursor): void =>
         {
             const open = cursor.peek();
-            const match = open !== null && open.nodeType === 8
-                ? /^azc:suspense:(\d+)$/.exec((open as Comment).data)
-                : null;
-            if (match !== null)
+            const marker = open?.nodeType === 8 ? (open as Comment).data : '';
+            const id = /^azc:suspense:(\d+)$/.exec(marker)?.[1];
+            let served: boolean | undefined;
+            if (id !== undefined)
             {
-                seedScope = match[1] as string;
+                served = claimStreamBoundary(open as Comment);
             }
+            else if (marker === 'azc:suspense:fallback' || marker === 'azc:suspense:ready')
+            {
+                served = marker === 'azc:suspense:ready';
+            }
+
+            // A resource created by a cold page may still await its first scheduled drive.
+            // Claim the served branch once. The memo absorbs the handoff if the same branch
+            // is still needed. Legacy unlabelled output follows the original loading inference.
+            const [initial, setInitial] = createSignal<boolean | undefined>(served);
+            const ready = createMemo(() => initial() ?? resourcesReady());
+            let adopting = true;
+            const branch = (build: () => MountNode, fallback: boolean): MountNode =>
+            {
+                if (!adopting || id === undefined)
+                {
+                    return build();
+                }
+                pushSeedScope(fallback ? id + 'f' : id);
+                try
+                {
+                    return build();
+                }
+                finally
+                {
+                    popSeedScope();
+                }
+            };
+            const shown = Show({
+                when: ready,
+                fallback: () => branch(props.fallback, true),
+                children: () => branch(props.children, false)
+            }) as unknown as HydrationNode;
             shown.hydrate(cursor);
+            adopting = false;
+            if (served !== undefined)
+            {
+                createEffect(() => runInMode('dom', () =>
+                {
+                    setInitial(undefined);
+                }));
+            }
         }) as unknown as MountNode;
     }
 
-    // Collapse N loading getters into one boolean. Show re-evaluates `when` on signal change;
-    // the memo's equality means Show's effect re-runs only when the answer genuinely flips.
-    const anyLoading = createMemo<boolean>(() =>
-    {
-        for (const resource of props.on)
-        {
-            if (resource.loading())
-            {
-                return true;
-            }
-        }
-        return false;
-    });
+    const ready = createMemo(resourcesReady);
 
     // Delegate the swap to Show: proven, leak-tested, with per-branch createRoot ownership and
     // destroyComponent on swap.
     return Show({
-        when: () => !anyLoading(),
+        when: ready,
         fallback: props.fallback,
         children: props.children
     });

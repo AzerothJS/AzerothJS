@@ -52,9 +52,11 @@
  *     observable.
  */
 
+import { withHydrationRoots } from './adopt-roots.ts';
+import { createHydrationEffect } from '../reactivity/create-effect.ts';
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { createEffect, createMemo, createRoot, untrack, isStringMode, isHydrating } from '../reactivity/index.ts';
+import { createMemo, createRoot, untrack, isStringMode, isHydrating } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '../component/index.ts';
 import { hydrateChild, materializeChild, h } from './h.ts';
@@ -237,7 +239,7 @@ function driveDynamic(dynamicProps: DynamicProps, target: CoTarget, hydrateFirst
 
     // Track ONLY the selection; a prop change must not rebuild the tree. Components
     // subscribe to their own props internally for fine-grained updates.
-    createEffect(() =>
+    createHydrationEffect(hydrateFirstRun, () =>
     {
         // Reading selected() subscribes this effect, so a swap re-runs it; props do not.
         const Component = resolveComponent(selected());
@@ -249,13 +251,16 @@ function driveDynamic(dynamicProps: DynamicProps, target: CoTarget, hydrateFirst
             if (firstRun)
             {
                 firstRun = false;
-                createRoot((d) =>
+                withHydrationRoots(openRoot =>
                 {
-                    branchDispose = d;
-                    hydrateChild(untrack(() => Component(props)), hydrationCursor as HydrationCursorType);
+                    openRoot((d) =>
+                    {
+                        branchDispose = d;
+                        hydrateChild(untrack(() => Component(props)), hydrationCursor as HydrationCursorType);
+                    });
+                    // The adopted component must claim every server node in the range.
+                    hydrationCursor?.assertExhausted('<Dynamic> content');
                 });
-                // The adopted component must claim every server node in the range.
-                hydrationCursor?.assertExhausted('<Dynamic> content');
                 return teardownBranch;
             }
 

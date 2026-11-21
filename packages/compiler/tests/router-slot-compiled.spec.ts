@@ -18,8 +18,9 @@
 //       reveal (the broken-proof control's driveHoleRange rows, both marker-ownership directions).
 import { describe, it, expect, vi } from 'vitest';
 import { generateModule } from '../src/codegen.ts';
+import { azsRuntime } from '../../azerothjs/src/renderer/stream-swap.ts';
 import * as runtime from 'azerothjs/internal';
-import { createSignal, createEffect, h, render, renderToString, hydrate, For, Show, Switch, Match } from 'azerothjs';
+import { createSignal, createEffect, h, render, renderToStream, renderToString, hydrate, For, Show, Switch, Match, createResource, Suspense } from 'azerothjs';
 import { createRouter, createMemoryHistory, Routes } from 'azerothjs';
 import type { Route, Router } from 'azerothjs';
 
@@ -966,4 +967,331 @@ describe('a route outlet whose server markers cannot be joined', () =>
             container.remove();
         });
     }
+});
+
+describe('compiled control flow on an initial lazy route', () =>
+{
+    const url = '/gallery';
+    const gallery = (route: Route): HTMLElement => h('div', {}, Routes({
+        router: createRouter({ routes: [route], history: createMemoryHistory(url) })
+    }));
+
+    function mountGallery(compiled: () => unknown, html: string, selector: string, cold: boolean, beforeHydrate?: (host: HTMLElement) => void)
+    {
+        const page = (): HTMLElement => compiled() as HTMLElement;
+        const host = document.createElement('div');
+        host.innerHTML = html;
+        document.body.appendChild(host);
+        beforeHydrate?.(host);
+        const served = host.querySelector(selector);
+        expect(served).not.toBeNull();
+
+        let resolve!: (page: () => HTMLElement) => void;
+        const chunk = new Promise<() => HTMLElement>(r =>
+        {
+            resolve = r;
+        });
+        const route = cold ? { path: url, lazy: () => chunk } : { path: url, component: page };
+        hydrate(() => gallery(route), host);
+
+        return {
+            host, served,
+            land: (): void => resolve(page),
+            dispose: (): void =>
+            {
+                render(() => h('div', {}), host);
+                host.remove();
+            }
+        };
+    }
+
+    async function hydrateGallery(compiled: () => unknown, selector: string, cold: boolean, stream = false)
+    {
+        const server = (): HTMLElement => gallery({ path: url, component: () => compiled() as HTMLElement });
+        const html = stream ? await new Response(renderToStream(server)).text() : renderToString(server);
+        return mountGallery(compiled, html, selector, cold);
+    }
+
+    function applyResult(host: HTMLElement, html: string): void
+    {
+        // Insert the server's template and seed, then run its actual document swap.
+        const holder = document.createElement('div');
+        holder.innerHTML = html;
+        const template = holder.querySelector<HTMLTemplateElement>('template[data-azs]')!;
+        const id = Number(template.dataset.azs);
+        for (const script of holder.querySelectorAll('script:not([data-azs-seed])'))
+        {
+            script.remove();
+        }
+        host.append(...Array.from(holder.childNodes));
+        (globalThis as { __AZS?: (id: number) => void }).__AZS!(id);
+    }
+
+    function clearSwap(): void
+    {
+        const runtime = globalThis as { __AZS?: unknown; __AZS_S?: unknown };
+        delete runtime.__AZS;
+        delete runtime.__AZS_S;
+    }
+
+    it.each([
+        { kind: 'Show', cold: false, stream: false }, { kind: 'Show', cold: true, stream: false },
+        { kind: 'For', cold: false, stream: false }, { kind: 'For', cold: true, stream: false },
+        { kind: 'Show', cold: true, stream: true }, { kind: 'For', cold: true, stream: true }
+    ])('adopts a compiled $kind and keeps it live (cold=$cold, stream=$stream)', async ({ kind, cold, stream }) =>
+    {
+        const [ready, setReady] = createSignal(true);
+        const control = kind === 'Show'
+            ? '<Show when={ ready() }><p class="shown">Gallery</p></Show>'
+            : '<For each={ ready() ? [1] : [] } key={ (id) => id } let={ id }><p class="shown">{ id }</p></For>';
+        const page = compile('export default component Page()\n{\n<section>' + control + '</section>\n}', { ready });
+        const { host, served, land, dispose } = await hydrateGallery(page, '.shown', cold, stream);
+        try
+        {
+            land();
+            await flush();
+            expect(host.querySelector('.shown')).toBe(served);
+            setReady(false);
+            expect(host.querySelector('.shown')).toBeNull();
+            setReady(true);
+            expect(host.querySelectorAll('.shown')).toHaveLength(1);
+        }
+        finally
+        {
+            dispose();
+        }
+    });
+
+    it.each([false, true])('adopts a compiled Suspense fallback until its resource settles (cold=%s)', async cold =>
+    {
+        let resolve!: (value: string) => void;
+        const result = new Promise<string>(r =>
+        {
+            resolve = r;
+        });
+        const page = compile('export default component Page()\n{\nresource item = () => load();\n'
+            + '<section><Suspense on={ [item] } fallback={ <i class="loading">Loading</i> }>'
+            + '<p class="ready">{ item.data() }</p></Suspense></section>\n}', { load: () => result, createResource, Suspense });
+        const { host, served, land, dispose } = await hydrateGallery(page, '.loading', cold);
+        try
+        {
+            land();
+            await flush();
+            expect(host.querySelector('.loading')).toBe(served);
+            resolve('Ready');
+            await flush();
+            expect(host.querySelector('.loading')).toBeNull();
+            expect(host.querySelector('.ready')?.textContent).toBe('Ready');
+        }
+        finally
+        {
+            dispose();
+        }
+    });
+
+    it('adopts the inline children of a streamed compiled Suspense with a settled resource', async () =>
+    {
+        let fetches = 0;
+        const load = async (): Promise<string> =>
+        {
+            fetches++;
+            return 'new edition';
+        };
+        const [label, setLabel] = createSignal('Gallery');
+        const page = compile('export default component Page()\n{\nresource item = () => load() with { initialValue: "seed" };\n'
+            + '<section><Suspense on={ [item] } fallback={ <i>Loading</i> }>'
+            + '<p class="ready">{ label() }</p></Suspense></section>\n}', { load, label, createResource, Suspense });
+        const { host, served, land, dispose } = await hydrateGallery(page, '.ready', true, true);
+        try
+        {
+            land();
+            await flush();
+            setLabel('Next');
+            expect(host.querySelector('.ready')).toBe(served);
+            expect(served?.textContent).toBe('Next');
+            expect(host.querySelector('i')).toBeNull();
+            expect(fetches).toBe(0);
+        }
+        finally
+        {
+            dispose();
+        }
+    });
+
+    it('adopts a pending streamed shell before either side resolves and wires the client result', async () =>
+    {
+        const serverFetch = Promise.withResolvers<string>();
+        const clientFetch = Promise.withResolvers<string>();
+        const loads: string[] = [];
+        let client = false;
+        let clicks = 0;
+        const page = compile('export default component Page()\n{\nresource item = () => load();\n'
+            + '<section><Suspense on={ [item] } fallback={ <i class="loading">Loading</i> }>'
+            + '<button class="result" onClick={ select }>{ item.data() }</button></Suspense></section>\n}', {
+            createResource, Suspense,
+            load: () =>
+            {
+                loads.push(client ? 'client' : 'server');
+                return client ? clientFetch.promise : serverFetch.promise;
+            },
+            select: () =>
+            {
+                clicks++;
+            }
+        });
+        const reader = renderToStream(() => gallery({ path: url, component: () => page() as HTMLElement })).getReader();
+        const shell = await reader.read();
+        expect(shell.done).toBe(false);
+        const html = new TextDecoder().decode(shell.value);
+        expect(html).toContain('<!--azc:suspense:0-->');
+        expect(loads).toEqual(['server']);
+        client = true;
+        azsRuntime();
+        const { host, served, land, dispose } = mountGallery(page, html, '.loading', true);
+        try
+        {
+            land();
+            await flush();
+            expect(loads).toEqual(['server', 'client']);
+            expect(host.querySelector('.loading')).toBe(served);
+            clientFetch.resolve('Client edition');
+            await flush();
+            const button = host.querySelector<HTMLButtonElement>('button.result');
+            expect(button?.textContent).toBe('Client edition');
+            expect(host.querySelector('.loading')).toBeNull();
+            button!.click();
+            expect(clicks).toBe(1);
+            serverFetch.resolve('Server edition');
+            const chunk = new TextDecoder().decode((await reader.read()).value);
+            expect(chunk).toContain('Server edition');
+            applyResult(host, chunk);
+            expect(host.querySelector('button.result')).toBe(button);
+            expect(button!.textContent).toBe('Client edition');
+            button!.click();
+            expect(clicks).toBe(2);
+        }
+        finally
+        {
+            serverFetch.resolve('Server edition');
+            await reader.cancel();
+            dispose();
+            clearSwap();
+        }
+    });
+
+    it('adopts the numbered boundary already swapped before a cold page hydrates', async () =>
+    {
+        let fetches = 0;
+        const load = async (): Promise<string> =>
+        {
+            fetches++;
+            return 'server edition';
+        };
+        const page = compile('export default component Page()\n{\nresource item = () => load();\n'
+            + '<section><Suspense on={ [item] } fallback={ <i>Loading</i> }>'
+            + '<p class="result">{ item.data() }</p></Suspense></section>\n}', { load, createResource, Suspense });
+        const reader = renderToStream(() => gallery({ path: url, component: () => page() as HTMLElement })).getReader();
+        const decoder = new TextDecoder();
+        const shell = decoder.decode((await reader.read()).value);
+        const chunk = decoder.decode((await reader.read()).value);
+        expect(shell).toContain('<!--azc:suspense:0-->');
+        expect(chunk).toContain('server edition');
+        azsRuntime();
+        const { host, served, land, dispose } = mountGallery(page, shell, '.result', true, dom => applyResult(dom, chunk));
+        try
+        {
+            land();
+            await flush();
+            expect(host.querySelector('.result')).toBe(served);
+            expect(served?.textContent).toBe('server edition');
+            expect(fetches).toBe(1);
+        }
+        finally
+        {
+            await reader.cancel();
+            dispose();
+            clearSwap();
+        }
+    });
+
+    it('adopts a resolved nested resource in the fallback scope of a still-pending stream boundary', async () =>
+    {
+        const outerServer = Promise.withResolvers<string>();
+        const outerClient = Promise.withResolvers<string>();
+        const innerServer = Promise.withResolvers<string>();
+        let client = false;
+        let innerCalls = 0;
+        const note = compile('export default component Note()\n{\nresource item = () => load();\n'
+            + '<aside><Suspense on={ [item] } fallback={ <i>Waiting for note</i> }>'
+            + '<p class="note">{ item.data() }</p></Suspense></aside>\n}', {
+            createResource, Suspense,
+            load: () =>
+            {
+                innerCalls++;
+                return client ? Promise.resolve('client note') : innerServer.promise;
+            }
+        });
+        const page = compile('export default component Page()\n{\nresource item = () => load();\n'
+            + '<section><Suspense on={ [item] } fallback={ <Note/> }>'
+            + '<p class="outer-result">{ item.data() }</p></Suspense></section>\n}', {
+            createResource, Suspense, Note: note, load: () => client ? outerClient.promise : outerServer.promise
+        });
+        const reader = renderToStream(() => gallery({ path: url, component: () => page() as HTMLElement })).getReader();
+        const decoder = new TextDecoder();
+        const shell = decoder.decode((await reader.read()).value);
+        expect(shell).toContain('Waiting for note');
+        innerServer.resolve('server note');
+        const innerChunk = decoder.decode((await reader.read()).value);
+        expect(innerChunk).toContain('server note');
+        azsRuntime();
+        client = true;
+        const { host, served, land, dispose } = mountGallery(page, shell, '.note', true, dom => applyResult(dom, innerChunk));
+        try
+        {
+            land();
+            await flush();
+            expect(host.querySelector('.note')).toBe(served);
+            expect(served?.textContent).toBe('server note');
+            expect(innerCalls).toBe(1);
+            outerClient.resolve('client edition');
+            await flush();
+            expect(host.querySelector('.note')).toBeNull();
+            expect(host.querySelector('.outer-result')?.textContent).toBe('client edition');
+        }
+        finally
+        {
+            outerServer.resolve('server edition');
+            await reader.cancel();
+            dispose();
+            clearSwap();
+        }
+    });
+
+    it('keeps the buffered page while a ready client seed replaces the served fallback', async () =>
+    {
+        let fetches = 0;
+        const load = async (): Promise<string> =>
+        {
+            fetches++;
+            return 'fetched';
+        };
+        const page = compile('export default component Page()\n{\nresource item = () => load() with { initialValue: "seed" };\n'
+            + '<section><Suspense on={ [item] } fallback={ <i class="loading">Loading</i> }>'
+            + '<p class="result">{ item.data() }</p></Suspense></section>\n}', { load, createResource, Suspense });
+        const { host, served, land, dispose } = await hydrateGallery(page, '.loading', true);
+        const frame = served!.parentElement;
+        try
+        {
+            land();
+            await flush();
+            expect(host.querySelector('section')).toBe(frame);
+            expect(host.querySelector('.loading')).toBeNull();
+            expect(host.querySelector('.result')?.textContent).toBe('seed');
+            expect(fetches).toBe(0);
+        }
+        finally
+        {
+            dispose();
+        }
+    });
 });

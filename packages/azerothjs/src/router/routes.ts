@@ -20,7 +20,8 @@
  *
  * The rendering source is one Routes-level signal, `committed`: the guarded match, HELD at
  * its previous value while the chain awaits a lazy chunk, with a PENDING state for a cold
- * start (renders NOTHING - never the fallback). `committed` alone reads `chainReady()`;
+ * start (renders NOTHING - never the fallback). After first fill only `committed` reads
+ * `chainReady()`;
  * slot identity memos derive from it and nothing else.
  *
  * Hydration adopts the whole chain in one synchronous top-down walk under the pass: slots
@@ -32,14 +33,14 @@
 
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { createEffect, createMemo, createRoot, createSignal, isStringMode, isHydrating, onRootDispose, runInMode, untrack } from '../reactivity/index.ts';
-import { serializeChild, wrapContentsAnchored, hydrationNode, deferHydration, runInPass } from '../reactivity/internal.ts';
-import type { HydrationPass } from '../reactivity/internal.ts';
+import { createEffect, createMemo, createRoot, createSignal, getOwner, isStringMode, isHydrating, onRootDispose, runInMode, untrack } from '../reactivity/index.ts';
+import { serializeChild, wrapContentsAnchored, hydrationNode, deferHydration, runInPass, HydrationMismatchError } from '../reactivity/internal.ts';
 import { createSlotHandle, claimSlotPlacement, releaseSlotPlacement, type SlotHandle } from '../reactivity/slot-handle.ts';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange, resolveMountNode, destroyComponent } from '../component/index.ts';
 import { playTransitionClasses } from '../renderer/transition-classes.ts';
 import { adoptStyleSheet } from '../renderer/adopt-style.ts';
 import { hydrateChild } from '../renderer/h.ts';
+import { withHydrationRoots } from '../renderer/adopt-roots.ts';
 import type { Params, RouteMatch } from './types.ts';
 import type { NavigationKind, Router } from './router.ts';
 import { componentOf } from './router.ts';
@@ -161,7 +162,7 @@ interface RoutesShared
     committed: () => Committed;
 
     /** Per-instance adoption freeze. */
-    adopting: () => boolean;
+    adopting: () => RouteMatch | null;
 
     /** The previous/current committed chain, for the transition context's from/to. */
     previousMatch: RouteMatch | null;
@@ -231,7 +232,7 @@ export function Routes(props: RoutesProps): MountNode
  */
 function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
 {
-    // --- committed: the one tracked reader of chainReady() -----------------------------
+    // --- committed: the rendering source for the route tree ---------------------------
     // A closure-latched compute (the memo `equals` option cannot implement the hold: the
     // first value bypasses equals, and an equals-time chainReady read runs outside the
     // memo's tracking frame). A deliberate, framework-internal exception to compute purity.
@@ -243,6 +244,10 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         const ready = router.chainReady();
         if (m === null)
         {
+            if (router.state().kind === 'pending')
+            {
+                return everReady ? latched : PENDING;
+            }
             everReady = true;
             latched = null;
             return null;
@@ -256,7 +261,7 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         return everReady ? latched : PENDING;
     });
 
-    // The kind DISCRIMINATOR: the driver's only tracked read. chain -> chain navigations
+    // The kind DISCRIMINATOR: the driver's only tracked read after first fill. chain -> chain navigations
     // keep the value 'chain', so the driver's effect never re-runs for them. A denial carries
     // its STATUS in the value, because both non-match states leave `committed` null: without
     // it, /nope -> /admin (or 401 -> 403) would keep showing the UI it was already showing.
@@ -275,7 +280,7 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         return state.kind === 'blocked' ? `blocked:${ state.status }` : 'null';
     });
 
-    const [adopting, setAdopting] = createSignal(false);
+    const [adopting, setAdopting] = createSignal<RouteMatch | null>(null);
 
     const shared: RoutesShared = {
         router,
@@ -299,10 +304,16 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         }
     });
 
-    // Deferred-hydration ticket, one per instance: taken when the first run cannot
-    // adopt yet (an unresolved lazy chunk), released the moment adoption completes.
-    let deferred: { pass: HydrationPass; release: () => void } | null = null;
+    const owner = getOwner();
+    // Parsing can place a row and its markers in an implied tbody while the logical
+    // hydration cursor still addresses the table. Remember the actual anchor positions.
+    const startParent = target.start.parentNode;
+    const endParent = target.end.parentNode;
+    const ownsRange = (): boolean => !owner?.disposed && startParent !== null && endParent !== null
+        && target.start.parentNode === startParent && target.end.parentNode === endParent;
+    let deferred: ReturnType<typeof deferHydration> = null;
     let firstRun = hydrateFirstRun;
+    let initialWindow = hydrateFirstRun;
 
     // The chain (level 0) placement currently driven by this instance.
     let chainDispose: DisposeFn | null = null;
@@ -357,6 +368,7 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         });
     };
 
+    onRootDispose(teardown);
     createEffect(() =>
     {
         const k = kind();
@@ -370,79 +382,98 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
 
         if (firstRun)
         {
-            // Hydration first run: adopt the chain in place. The chainReady hold applies
-            // here too: while the chain awaits a chunk, keep the pass open and wait.
-            if (k === 'pending' || (k === 'chain' && !untrack(() => router.chainReady())))
+            if (k === 'pending' || (k === 'chain' && !router.chainReady()))
             {
-                if (deferred === null)
-                {
-                    deferred = deferHydration();
-                }
                 return;
             }
             firstRun = false;
             lastKind = k;
             shared.mounted = true;
-
+            const ticket = deferred;
+            const cursor = hydrationCursor;
+            if (!ownsRange() || cursor === undefined || (!initialWindow && !ticket?.pass.open))
+            {
+                ticket?.release();
+                deferred = null;
+                return;
+            }
             const adopt = (): void =>
             {
-                if (k === 'chain')
+                try
                 {
-                    setAdopting(true);
-                    try
+                    if (k === 'chain')
                     {
-                        const adoptedMatch = untrack(committed) as RouteMatch;
-                        let adoptedDispose: DisposeFn | null = null;
-                        createRoot((dispose) =>
+                        const match = untrack(committed) as RouteMatch;
+                        setAdopting(match);
+                        try
                         {
-                            adoptedDispose = dispose;
-                            const value = buildSegmentValue(router, adoptedMatch, 0, shared);
-                            hydrateChild(value as never, hydrationCursor as HydrationCursorType);
-                        });
-                        // Level 0's slot machinery, in adopted mode: without it there is
-                        // no identity effect at the chain root, and the first
-                        // post-adoption navigation would have nothing to re-run.
-                        createRoot((dispose) =>
+                            createRoot((dispose) =>
+                            {
+                                chainDispose = dispose;
+                                adoptSegmentSlot(shared, match, 0, target, null, cursor);
+                            });
+                        }
+                        finally
                         {
-                            chainDispose = dispose;
-                            driveSegmentSlot(shared, 0, target, null, adoptedMatch, adoptedDispose);
-                        });
+                            setAdopting(null);
+                        }
                     }
-                    finally
+                    else
                     {
-                        setAdopting(false);
-                    }
-                }
-                else
-                {
-                    const settled = fallbackFor(props, router);
-                    if (settled !== null)
-                    {
-                        createRoot((dispose) =>
+                        withHydrationRoots(openRoot =>
                         {
-                            fallbackDispose = dispose;
-                            hydrateChild(untrack(settled), hydrationCursor as HydrationCursorType);
+                            const settled = fallbackFor(props, router);
+                            if (settled !== null)
+                            {
+                                openRoot((dispose) =>
+                                {
+                                    fallbackDispose = dispose;
+                                    hydrateChild(untrack(settled), cursor);
+                                });
+                            }
+                            cursor.assertExhausted('<Routes> content');
                         });
                     }
                 }
-                hydrationCursor?.assertExhausted('<Routes> content');
+                catch (error)
+                {
+                    // A component may synchronously replace the entire mount while building.
+                    // Its abandoned cursor must never recover over the replacement.
+                    if (ownsRange() || !(error instanceof HydrationMismatchError))
+                    {
+                        throw error;
+                    }
+                }
             };
-
-            const resume = deferred;
             try
             {
-                if (resume !== null)
+                if (!untrack(() => router.canAdoptInitialRoute?.() === true))
                 {
-                    runInPass(resume.pass, adopt);
+                    runInMode('dom', () =>
+                    {
+                        clearCo(target);
+                        if (k === 'chain')
+                        {
+                            mountChain();
+                        }
+                        else
+                        {
+                            mountFallback();
+                        }
+                    });
                 }
-                else
+                else if (initialWindow)
                 {
                     adopt();
+                }
+                else if (ticket !== null)
+                {
+                    runInPass(ticket.pass, adopt);
                 }
             }
             finally
             {
-                resume?.release();
+                ticket?.release();
                 deferred = null;
             }
             return;
@@ -472,8 +503,13 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         });
         shared.mounted = true;
     });
-
-    onRootDispose(teardown);
+    initialWindow = false;
+    // Reserve the ticket before the original cursor frame returns, even if an enclosing
+    // batch queued the entire driver. Synchronously completed siblings owe no ticket.
+    if (firstRun && ownsRange())
+    {
+        deferred = deferHydration();
+    }
 }
 
 /**
@@ -558,22 +594,40 @@ function createChildHandle(router: Router, buildMatch: RouteMatch, level: number
             // walk cannot ride effects. The nested segment constructs and hydrates here,
             // recursively; the slot effect is then created with its first run consumed.
             const { target: slotTarget, contentCursor } = adoptCoRange(cursor, 'outlet');
-            let adoptedDispose: DisposeFn | null = null;
-            const adoptedMatch = untrack(shared.committed);
-            if (adoptedMatch !== PENDING && adoptedMatch !== null && adoptedMatch.matched[level] !== undefined)
-            {
-                createRoot((dispose) =>
-                {
-                    adoptedDispose = dispose;
-                    const value = buildSegmentValue(router, adoptedMatch, level, shared);
-                    hydrateChild(value as never, contentCursor);
-                });
-            }
-            contentCursor.assertExhausted(`route slot (level ${ level })`);
-            driveSegmentSlot(shared, level, slotTarget, handle, adoptedMatch === PENDING ? null : adoptedMatch, adoptedDispose);
+            const match = untrack(shared.adopting) ?? untrack(shared.committed);
+            adoptSegmentSlot(shared, match === PENDING ? null : match, level, slotTarget, handle, contentCursor);
         }
     });
     return handle;
+}
+
+/**
+ * Adopts the segment and transfers its root to the live slot only after its entire range
+ * matches. A rejected subtree must release subscriptions before the pass rebuilds the DOM.
+ */
+function adoptSegmentSlot(shared: RoutesShared, match: RouteMatch | null, level: number, target: CoTarget,
+    handle: SlotHandle | null, cursor: HydrationCursorType): void
+{
+    const owner = getOwner();
+    withHydrationRoots(openRoot =>
+    {
+        const adopted = match === null || match.matched[level] === undefined ? null : openRoot((dispose) =>
+        {
+            const value = buildSegmentValue(shared.router, match, level, shared);
+            if (!owner?.disposed)
+            {
+                hydrateChild(value as never, cursor);
+            }
+            return dispose;
+        });
+        if (owner?.disposed)
+        {
+            adopted?.();
+            return;
+        }
+        cursor.assertExhausted(handle === null ? '<Routes> content' : `route slot (level ${ level })`);
+        driveSegmentSlot(shared, level, target, handle, match, adopted);
+    });
 }
 
 /** Mounts level `level` directly into `target` (the Routes-level chain mount). */
@@ -584,7 +638,7 @@ function mountSegmentSlot(shared: RoutesShared, level: number, target: CoTarget,
 
 /**
  * The per-segment slot machinery: one identity memo, one effect with the consumed-first-
- * run and in-body value guards, per-slot leaving set, enter-cancel storage, and the
+ * run value guard, per-slot leaving set, enter-cancel storage, and the
  * bottom-up teardown hand-off. `handle` is null for the Routes-level chain mount (level 0
  * has no handle - the driver owns it).
  *
@@ -667,7 +721,6 @@ function driveSegmentSlot(shared: RoutesShared, level: number, target: CoTarget,
 
     // --- swap state -------------------------------------------------------------------
     let lastRendered: SegmentIdentity | null | typeof NEVER = NEVER;
-    let consumeFirstRun = false;
     let branchDispose: DisposeFn | null = adoptedDispose;
     let currentEl: HTMLElement | null = null;
     let enterCancel: (() => void) | null = null;
@@ -675,9 +728,8 @@ function driveSegmentSlot(shared: RoutesShared, level: number, target: CoTarget,
 
     if (adoptedMatch !== null || adoptedDispose !== null)
     {
-        // Adopted placement: the consumed first run records the adopted identity so the
-        // value guard alone is correct on every later path.
-        consumeFirstRun = true;
+        // Preload the exact rendered identity. A navigation during adoption can change
+        // the accepted match before the slot effect ever gets its first scheduled run.
         lastRendered = frozenIdentity;
         // Record the adopted content's root when the range holds EXACTLY one node and it
         // is an element - buildInto's currentEl for the adoption path. Without this the
@@ -772,13 +824,6 @@ function driveSegmentSlot(shared: RoutesShared, level: number, target: CoTarget,
     {
         const id = identity();
 
-        // Consumption check FIRST, then the value guard.
-        if (consumeFirstRun)
-        {
-            consumeFirstRun = false;
-            lastRendered = id;
-            return;
-        }
         if (lastRendered !== NEVER && identityEquals(lastRendered, id))
         {
             return;

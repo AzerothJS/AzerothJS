@@ -231,6 +231,24 @@ export function createResource<T, S>(
     maybeOptions?: ResourceOptions<T, S>
 ): Resource<T>
 {
+    return buildResource(sourceOrFetcher, maybeFetcherOrOptions, maybeOptions);
+}
+
+/** A loader handoff belongs to one key once its initial route has been admitted. @internal */
+export interface ResourceSeedKey<S>
+{
+    key: S;
+    status: Getter<'pending' | 'accepted' | 'discarded'>;
+}
+
+/** The implementation shared by the public overloads and the router's keyed handoff. @internal */
+export function buildResource<T, S>(
+    sourceOrFetcher: (() => S | false | null | undefined) | StandaloneFetcher<T>,
+    maybeFetcherOrOptions?: SourceFetcher<S, T> | ResourceOptions<T>,
+    maybeOptions?: ResourceOptions<T, S>,
+    seedKey?: ResourceSeedKey<S>
+): Resource<T>
+{
     // Both overloads take a callable first. A non-function here is the `resource r = fetch(url)`
     // shape: the keyword's value is a verbatim expression the compiler never inspects, so a
     // forgotten thunk arrives as a PROMISE. That used to settle asynchronously to "fetcher is not
@@ -273,7 +291,9 @@ export function createResource<T, S>(
     let seedValue: T | undefined = initialValue;
     // The hydration seed, consumed or discarded at the effect's first run. See ResourceOptions.
     // An explicit refetch in the construction batch still demands a fresh read.
-    let pendingInitial = seedFailure || initialValue !== undefined;
+    const initialStatus = seedKey === undefined ? 'accepted' : untrack(seedKey.status);
+    let pendingInitial = initialStatus !== 'discarded' && (seedFailure || initialValue !== undefined);
+    const showSeed = initialStatus === 'accepted';
     // A failure seed belongs to this instance until an explicit retry or shared outcome.
     let seededFailureHeld = false;
 
@@ -283,10 +303,10 @@ export function createResource<T, S>(
     const settleErrorHandler = currentErrorHandler;
 
     const frame = dtEnterPrimitive('resource', options?.name);
-    const [data, setData] = createSignal<T | undefined>(initialValue, { name: 'data' });
+    const [data, setData] = createSignal<T | undefined>(showSeed ? initialValue : undefined, { name: 'data' });
     const [loading, setLoading] = createSignal<boolean>(false, { name: 'loading' });
     const [refreshing, setRefreshing] = createSignal<boolean>(false, { name: 'refreshing' });
-    const [error, setError] = createSignal<unknown>(seedFailure ? initialError : null, { name: 'error' });
+    const [error, setError] = createSignal<unknown>(showSeed && seedFailure ? initialError : null, { name: 'error' });
 
     // refetch() bumps `tick` to force the effect to re-run on the same source value.
     const [tick, setTick] = createSignal(0, { name: 'tick' });
@@ -301,7 +321,7 @@ export function createResource<T, S>(
     const stringMode = isStringMode();
     let requested = 0;
     let driven = 0;
-    let hasValue = !seedFailure && initialValue !== undefined;
+    let hasValue = showSeed && !seedFailure && initialValue !== undefined;
     const waiters: Array<{ request: number; resolve: () => void }> = [];
 
     function finishRequests(through: number): void
@@ -613,7 +633,7 @@ export function createResource<T, S>(
             seededFailureHeld = false;
             cache.restart(entry);
         }
-        else if (!adopting)
+        else if (!adopting || (seedKey !== undefined && entry.stale))
         {
             cache.read(entry, { subscribing: entering, fromZero });
         }
@@ -625,7 +645,9 @@ export function createResource<T, S>(
             stopObserving?.();
             stopObserving = cache.observeFetch(entry, () => finishRequests(request));
         }
-        if (!adopting || !seedFailure || force)
+        // A prefetch may have settled while a loader's admission was pending. Mirror its
+        // newer outcome. mirrorEntry keeps a private failure seed if the entry has none.
+        if (seedKey !== undefined || !adopting || !seedFailure || force)
         {
             mirrorEntry(entry);
         }
@@ -652,7 +674,8 @@ export function createResource<T, S>(
         {
             leaveEntry();
             hasValue = false;
-            pendingInitial = false;
+            pendingInitial = pendingInitial && key.kind === 'skip' && seedKey !== undefined
+                && untrack(seedKey.status) === 'pending';
             seededFailureHeld = false;
             try
             {
@@ -676,6 +699,17 @@ export function createResource<T, S>(
         }
 
         const value = key?.value;
+        if (pendingInitial && seedKey !== undefined)
+        {
+            pendingInitial = Object.is(value, seedKey.key) && untrack(seedKey.status) === 'accepted';
+            hasValue = pendingInitial && !seedFailure;
+            if (pendingInitial)
+            {
+                // A skipped source hides the seed until the guard admits the owning key.
+                setData(() => seedValue);
+                setError(() => seedFailure ? initialError : null);
+            }
+        }
         if (family !== null)
         {
             const cache = getDataCache();

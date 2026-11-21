@@ -176,6 +176,20 @@ loader: async ({ params, query, signal, parent }) =>
   Async guards hold the navigation; first veto wins.
 - A synchronous client guard can track reactive state. In the example above, changing
   `auth.signedIn()` causes the guard to evaluate access again.
+- On the first client load, `router.state().kind` is `'pending'` while a guard decides.
+  A fresh client render leaves the route range empty. Hydration leaves the served
+  page visible and inert until it can adopt the same URL and presentation. If the
+  client settles on another page, it renders that page fresh inside the route range.
+  An unknown URL reports `'not-found'` immediately. A server-provided blocked
+  verdict is available on the first client read.
+- During a later guard wait, `router.state()` and the route content keep the previous
+  settled result. Read `router.pending()` for a navigation indicator. Exhaustive
+  switches over `RouteState` must handle `pending`, `match`, `blocked`, and
+  `not-found`. Count a 404 only in the `not-found` case.
+- Guards receive the destination's query. Editing the query runs the guards again.
+  Its loader starts after admission. Fragment-only changes keep the current guard
+  and loader. A guard can normalize its own URL by redirecting to a different query
+  and then admitting that canonical URL.
 - A denied navigation settles AT the target URL in the blocked state - it does not rewind.
   `<Routes blocked={...}>` renders it, SSR answers 401 or 403 with that same UI, and the
   route itself never renders in either mode, so a deep link and an in-app click agree.

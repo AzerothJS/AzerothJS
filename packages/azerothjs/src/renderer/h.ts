@@ -19,6 +19,7 @@
  * as properties rather than set as attributes. See DOM_PROPERTIES.
  */
 
+import { createHydrationEffect } from '../reactivity/create-effect.ts';
 import type { Props, Child } from './types.ts';
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationNode, HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
@@ -1235,7 +1236,7 @@ function driveHoleRange(parent: Node, openAnchor: ChildNode | null, closeAnchor:
         placedSlot = null;
     });
 
-    createEffect(() =>
+    createHydrationEffect(firstRun, () =>
     {
         let localDispose: DisposeFn | undefined;
         try

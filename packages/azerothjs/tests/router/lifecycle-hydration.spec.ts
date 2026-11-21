@@ -3,7 +3,7 @@
 // The hydration matrix for the per-segment route tree.
 // (a) per-segment round trips preserve SERVER NODE identity per level, including a cold
 //     LEAF chunk under a warm layout - in an elements-and-holes fixture that must adopt
-//     cleanly AND a control-flow-bearing fixture that pins the lazy-resume debt's CURRENT outcome;
+//     cleanly as well as a nested control-flow fixture that must retain its served child;
 // (b) divergence: a leftover trailing node inside a nested outlet range falls back
 //     (broken-proofed), and the flipped-condition hole (server serialized [ ], client
 //     resolves the slot handle) is a MISMATCH, not a silent repair;
@@ -15,8 +15,8 @@
 // (g) a client-only <Routes> mounting while a sibling instance's ticket holds the pass
 //     open builds FRESH (broken-proofed).
 import { describe, it, expect, vi } from 'vitest';
-import { createSignal, createEffect, h, hydrate, renderToString, Show, ErrorBoundary, For } from 'azerothjs';
-import { createRouter, createMemoryHistory, Routes, Outlet, RouterProvider, Link, useParams } from 'azerothjs';
+import { createSignal, createEffect, h, hydrate, render, renderToString, Show, ErrorBoundary, For } from 'azerothjs';
+import { createRouter, createMemoryHistory, Routes, Outlet, RouterProvider, Link, useParams, LOADER_HANDOFF_VERSION } from 'azerothjs';
 import { componentScope } from 'azerothjs/internal';
 import type { Route, RouteComponent, Router, MountNode } from 'azerothjs';
 
@@ -54,6 +54,131 @@ const mount = (router: Router, container: HTMLElement): void =>
 
 describe('per-segment round trip', () =>
 {
+    it('adopts the initial gallery through an asynchronous guard and chunk without replacing a typed draft', async () =>
+    {
+        const url = '/gallery';
+        const Gallery = (): HTMLElement => h('main', {}, h('input', { id: 'draft' }), h('p', {}, 'Gallery'));
+        const shell = (router: Router): HTMLElement => h('div', {},
+            h('button', { id: 'shell-control' }, 'Menu'),
+            Routes({ router, fallback: () => h('p', { id: 'missing' }, 'Missing') }));
+        const host = document.createElement('div');
+        host.innerHTML = renderToString(() => shell(createRouter({
+            routes: [{ path: url, component: Gallery }],
+            history: createMemoryHistory(url)
+        })));
+        document.body.appendChild(host);
+        const draft = host.querySelector<HTMLInputElement>('#draft')!;
+        const menu = host.querySelector<HTMLButtonElement>('#shell-control')!;
+        draft.value = 'my draft';
+        menu.focus();
+        let releaseGuard!: (admit: boolean) => void;
+        const guard = new Promise<boolean>(resolve =>
+        {
+            releaseGuard = resolve;
+        });
+        let releaseChunk!: (chunk: RouteComponent) => void;
+        const chunk = new Promise<RouteComponent>(resolve =>
+        {
+            releaseChunk = resolve;
+        });
+        const hydrateGallery = (): HTMLElement => shell(createRouter({
+            routes: [{ path: url, guard: () => guard, lazy: () => chunk }],
+            history: createMemoryHistory(url)
+        }));
+        try
+        {
+            hydrate(hydrateGallery, host);
+            expect(host.querySelector('#draft')).toBe(draft);
+            expect(host.querySelector('#missing')).toBeNull();
+            releaseGuard(true);
+            await flush();
+            expect(host.querySelector('#draft')).toBe(draft);
+            releaseChunk(Gallery);
+            await flush();
+            expect(host.querySelector('#draft')).toBe(draft);
+            expect(draft.value).toBe('my draft');
+            expect(host.querySelector('#shell-control')).toBe(menu);
+            expect(document.activeElement).toBe(menu);
+        }
+        finally
+        {
+            render(() => h('div', {}), host);
+            host.remove();
+        }
+    });
+
+    it('a fragment changed during deferred adoption keeps the same gallery document and its draft', async () =>
+    {
+        const Gallery = (): HTMLElement => h('main', {}, h('input', { id: 'draft' }));
+        const host = ssrPage([{ path: '/gallery', component: Gallery }], '/gallery');
+        const draft = host.querySelector<HTMLInputElement>('#draft')!;
+        draft.value = 'in progress';
+        let resolve!: (page: RouteComponent) => void;
+        const chunk = new Promise<RouteComponent>(r =>
+        {
+            resolve = r;
+        });
+        const router = clientRouter([{ path: '/gallery', lazy: () => chunk }], '/gallery');
+        try
+        {
+            mount(router, host);
+            router.navigate('/gallery#notes');
+            resolve(Gallery);
+            await flush();
+            expect(router.location().fullPath).toBe('/gallery#notes');
+            expect(host.querySelector('#draft')).toBe(draft);
+            expect(draft.value).toBe('in progress');
+        }
+        finally
+        {
+            render(() => h('div', {}), host);
+            host.remove();
+        }
+    });
+
+    it('keeps the served blocked branch and its node while the client confirms its seeded status', async () =>
+    {
+        const url = '/gallery';
+        const seed = { version: LOADER_HANDOFF_VERSION, path: url, data: [], denied: 403 as const };
+        let resolve!: (allowed: boolean) => void;
+        const verdict = new Promise<boolean>(r =>
+        {
+            resolve = r;
+        });
+        const view = (): HTMLElement =>
+        {
+            const router = createRouter({
+                routes: [{ path: url, guard: () => verdict, component: () => h('p', {}, 'Gallery') }],
+                history: createMemoryHistory(url),
+                initialLoaderData: seed
+            });
+            return h('div', {}, Routes({
+                router,
+                blocked: ({ status }) => h('p', { id: 'notice' }, String(status)),
+                fallback: () => h('p', { id: 'missing' }, 'Missing')
+            }));
+        };
+        const host = document.createElement('div');
+        host.innerHTML = renderToString(view);
+        document.body.appendChild(host);
+        const notice = host.querySelector('#notice');
+        expect(notice?.textContent).toBe('403');
+        try
+        {
+            hydrate(view, host);
+            expect(host.querySelector('#notice')).toBe(notice);
+            expect(host.querySelector('#missing')).toBeNull();
+            resolve(false);
+            await flush();
+            expect(host.querySelector('#notice')).toBe(notice);
+        }
+        finally
+        {
+            render(() => h('div', {}), host);
+            host.remove();
+        }
+    });
+
     it('a warm nested chain adopts with SERVER NODE identity preserved per level, and is live', async () =>
     {
         const routes: Route[] =
@@ -111,25 +236,15 @@ describe('per-segment round trip', () =>
         container.remove();
     });
 
-    it('a control-flow-bearing cold leaf: the lazy-resume debt pinned at its CURRENT outcome', async () =>
+    it.each([false, true])('adopts its Show and keeps controls inside an ErrorBoundary live (cold=%s)', async cold =>
     {
-        // A PRE-EXISTING debt, deliberately not fixed by the route-tree work:
-        // control-flow content inside a LAZILY-RESUMED segment adopts via effect
-        // first-runs that queue past the pass and land after it settled. Observed
-        // outcomes today, both pinned here at their CURRENT state:
-        //   - a BARE <Show> leaf dies with an escaped HydrationMismatchError
-        //     (unhandled rejection - unassertable in-suite, recorded in the ledger);
-        //   - the boundary-wrapped fixture below CONVERGES VISUALLY (one #cf, no
-        //     fallback, no boundary trip) but the control-flow content was REBUILT in
-        //     dom mode, not adopted (server node identity lost), and the build ran
-        //     OUTSIDE any owner - the 'createEffect() called with no owner' DEV
-        //     warnings are the debt's signature. Paying the debt flips BOTH: #cf
-        //     becomes the adopted server node and the warnings disappear.
+        const [visible, setVisible] = createSignal(true);
         const CfLeaf = (): HTMLElement =>
             h('section', { id: 'leaf' },
+                Show({ when: visible, children: () => h('p', { id: 'retained' }, 'visible') }),
                 ErrorBoundary({
-                    fallback: (error) => h('div', { id: 'debt-caught' }, String(error instanceof Error ? error.message : error)),
-                    children: () => Show({ when: () => true, children: () => h('p', { id: 'cf' }, 'cf') })
+                    fallback: (error) => h('div', { id: 'adoption-error' }, String(error instanceof Error ? error.message : error)),
+                    children: () => Show({ when: visible, children: () => h('p', { id: 'cf' }, 'cf') })
                 }));
         const serverRoutes: Route[] =
         [{
@@ -142,8 +257,8 @@ describe('per-segment round trip', () =>
         {
             const container = ssrPage(serverRoutes, '/p/x');
             const serverLayout = container.querySelector('#layout');
-            const serverCf = container.querySelector('#cf');
-            expect(serverCf).not.toBeNull();
+            const serverShow = container.querySelector('#retained');
+            expect(serverShow).not.toBeNull();
 
             let release!: (chunk: { default: RouteComponent }) => void;
             const chunk = new Promise<{ default: RouteComponent }>((resolve) =>
@@ -156,23 +271,23 @@ describe('per-segment round trip', () =>
                 component: NestedLayout,
                 children: [{ path: 'x', lazy: () => chunk }]
             }];
-            mount(clientRouter(clientRoutes, '/p/x'), container);
+            mount(clientRouter(cold ? clientRoutes : serverRoutes, '/p/x'), container);
             release({ default: CfLeaf });
             await flush();
             await flush();
 
-            // Converged VISUALLY: the layout keeps its server node; the control-flow
-            // content is present exactly once but is a FRESH node (the debt - a paid
-            // paying the debt turns the not.toBe into toBe).
             expect(container.querySelector('#layout')).toBe(serverLayout);
-            expect(container.querySelector('#cf')).not.toBe(serverCf);
-            expect(container.querySelectorAll('#cf').length).toBe(1);
-            expect(container.querySelector('#debt-caught')).toBeNull();
+            expect(container.querySelector('#retained')).toBe(serverShow);
+            expect(container.querySelectorAll('#cf')).toHaveLength(1);
+            setVisible(false);
+            expect(container.querySelector('#retained')).toBeNull();
+            expect(container.querySelector('#cf')).toBeNull();
+            setVisible(true);
+            expect(container.querySelectorAll('#retained')).toHaveLength(1);
+            expect(container.querySelectorAll('#cf')).toHaveLength(1);
+            expect(container.querySelector('#adoption-error')).toBeNull();
             const messages = warn.mock.calls.map((c) => String(c[0] ?? ''));
             expect(messages.some((m) => /falling back to full client render/.test(m))).toBe(false);
-            // The deferred adoption's effects land under the router's OWN root now (an
-            // unowned createRouter self-roots), so the run is warning-free; the remaining
-            // debt is the fresh #cf node above, not an ownership leak.
             expect(messages.some((m) => /createEffect\(\) called with no owner/.test(m))).toBe(false);
             container.remove();
         }
@@ -270,6 +385,53 @@ describe('divergence', () =>
 
 describe('navigating during adoption', () =>
 {
+    it('mounts the destination inside the Routes range and preserves the shell during a lazy wait', async () =>
+    {
+        let clicks = 0;
+        const button = (click: () => void): HTMLElement => h('button', { class: 'action', onClick: click }, 'Select');
+        const start = (): HTMLElement => button(() => undefined);
+        const destination = (): HTMLElement => button(() =>
+        {
+            clicks++;
+        });
+        const view = (router: Router): HTMLElement => h('main', {}, h('input', { id: 'shell-draft' }), Routes({ router }));
+        const host = document.createElement('div');
+        host.innerHTML = renderToString(() => view(createRouter({
+            routes: [{ path: '/start', component: start }], history: createMemoryHistory('/start')
+        })));
+        document.body.appendChild(host);
+        const shell = host.querySelector<HTMLInputElement>('#shell-draft')!;
+        const initialButton = host.querySelector('button.action');
+        expect(initialButton).not.toBeNull();
+        shell.value = 'draft';
+        const chunk = Promise.withResolvers<RouteComponent>();
+        const router = clientRouter([
+            { path: '/start', lazy: () => chunk.promise },
+            { path: '/next', component: destination }
+        ], '/start');
+        try
+        {
+            hydrate(() => view(router), host);
+            router.navigate('/next');
+            await flush();
+            const current = host.querySelector<HTMLButtonElement>('button.action')!;
+            expect(current).not.toBeNull();
+            expect(current).not.toBe(initialButton);
+            expect(host.querySelector('#shell-draft')).toBe(shell);
+            expect(shell.value).toBe('draft');
+            current.click();
+            expect(clicks).toBe(1);
+            chunk.resolve(start);
+            await flush();
+            expect(host.querySelector('button.action')).toBe(current);
+        }
+        finally
+        {
+            render(() => h('div', {}), host);
+            host.remove();
+        }
+    });
+
     it('(i) a navigation during the LAZY WAIT lands the newer match cleanly', async () =>
     {
         const serverRoutes: Route[] =
@@ -309,8 +471,7 @@ describe('navigating during adoption', () =>
             release({ default: CounterLeaf });
             await flush();
 
-            // Clean adopt of the newer match or fallback - both acceptable; the page
-            // must END at the second target with no stray server content.
+            // This navigation has its own route range and must remain current when the old chunk lands.
             expect(container.querySelector('#other')).not.toBeNull();
             expect(container.querySelector('#leaf')).toBeNull();
             expect(container.querySelector('#layout')).toBeNull();

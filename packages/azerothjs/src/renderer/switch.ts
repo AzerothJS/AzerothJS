@@ -14,9 +14,11 @@
  * while no higher case wins.
  */
 
+import { withHydrationRoots } from './adopt-roots.ts';
+import { createHydrationEffect } from '../reactivity/create-effect.ts';
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { createEffect, createMemo, createRoot, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
+import { createMemo, createRoot, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '../component/index.ts';
 import { hydrateChild, materializeChild, resolveReactive } from './h.ts';
@@ -203,7 +205,7 @@ function driveSwitch(props: SwitchProps, cases: MatchCase[], target: CoTarget, h
     let branchDispose: DisposeFn | null = null;
     let firstRun = hydrateFirstRun;
 
-    createEffect(() =>
+    createHydrationEffect(hydrateFirstRun, () =>
     {
         // First matching case wins; stopping at the first match means a lower case's
         // condition is tracked (and can trigger a re-render) only when no higher case wins.
@@ -225,19 +227,22 @@ function driveSwitch(props: SwitchProps, cases: MatchCase[], target: CoTarget, h
         if (firstRun)
         {
             firstRun = false;
-            if (factory)
+            withHydrationRoots(openRoot =>
             {
-                const build = factory;
-                createRoot((d) =>
+                if (factory)
                 {
-                    branchDispose = d;
-                    hydrateChild(untrack(build), hydrationCursor as HydrationCursorType);
-                });
-            }
+                    const build = factory;
+                    openRoot((d) =>
+                    {
+                        branchDispose = d;
+                        hydrateChild(untrack(build), hydrationCursor as HydrationCursorType);
+                    });
+                }
 
-            // Every server node in the range must be claimed; a leftover means SSR/CSR
-            // diverged, which hydrate() recovers from.
-            hydrationCursor?.assertExhausted('<Switch> content');
+                // Every server node in the range must be claimed; a leftover means SSR/CSR
+                // diverged, which hydrate() recovers from.
+                hydrationCursor?.assertExhausted('<Switch> content');
+            });
             return teardownBranch;
         }
 

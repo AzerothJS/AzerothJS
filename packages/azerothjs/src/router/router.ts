@@ -24,12 +24,13 @@
  * scan, so configuration order defines priority, as it does in every other router on the web.
  */
 
+import { buildResource, type ResourceSeedKey } from '../reactivity/create-resource.ts';
 import type { Getter, Resource } from '../reactivity/index.ts';
 import {
+    batch,
     createSignal,
     createMemo,
     createEffect,
-    createResource,
     createRoot,
     getOwner,
     isStringMode,
@@ -228,9 +229,9 @@ export interface Router
     setActionResult: (result: unknown) => void;
 
     /**
-     * The settled routing verdict: `match`, `not-found`, or `blocked` with the 401/403 a
-     * guard vetoed with. `match()` answers null for both non-match states, which is why
-     * an unknown URL and a denied one used to render the same UI; this tells them apart.
+     * The current routing verdict. An undecided boot reports `pending`. A settled URL is
+     * `match`, `not-found`, or `blocked` with its 401/403 status. Later guards hold the
+     * previous verdict until their decision. Use `pending()` for ongoing navigation work.
      *
      * `<Routes>` dispatches on it, so most applications read it only for a header badge,
      * an analytics event, or a sign-in prompt outside the routed region.
@@ -273,7 +274,7 @@ export interface Router
 
     /**
      * Reactive: true while ANY of the current navigation's work is in flight -
-     * a level loader still loading or a lazy route chunk still downloading.
+     * an undecided guard, a level loader still loading or a lazy route chunk still downloading.
      * The pending-indicator signal (top bars, spinners).
      */
     pending: Getter<boolean>;
@@ -285,6 +286,9 @@ export interface Router
      * @internal Consumed by `<Routes>`; user code wants {@link Router.pending}.
      */
     chainReady: Getter<boolean>;
+
+    /** Whether the current URL and presentation match the server's initial route. @internal */
+    canAdoptInitialRoute?: () => boolean;
 
     /** Whether route-change focus management is on (config `focus`, default true). @internal Consumed by `<Routes>`. */
     focusManagement: boolean;
@@ -786,8 +790,14 @@ function buildRouter(config: RouterConfig): Router
     }
 
     // Initial state, read straight from the live URL.
-    const [state, setState] = createSignal<InternalState>(
-        buildState(history.current(), 'push', 0, currentKey));
+    const initialState = buildState(history.current(), 'push', 0, currentKey);
+    const [state, setState] = createSignal<InternalState>(initialState);
+    const seed = config.initialLoaderData;
+    const adopt = seed !== undefined
+        && seed.version === LOADER_HANDOFF_VERSION
+        && Array.isArray(seed.data)
+        && seed.path === initialState.pathname + initialState.search;
+    const initialDenial = currentRenderDenial() ?? (adopt ? seededDenial(seed) : null);
 
     // What CAUSED the latest location change. performNavigate stamps a pending
     // kind just before the adapter call (whose subscribers run synchronously);
@@ -911,8 +921,11 @@ function buildRouter(config: RouterConfig): Router
         return shallowEqualRecord(a.params, b.params);
     };
 
-    /** The URL's raw match, BEFORE guards - internal; everything renders off `match`. */
-    const rawMatch = createMemo<RouteMatch | null>(() => state().matched, { equals: matchEquals });
+    // The guard receives pathname, parameters and query. The hash and history stamp are
+    // cosmetic. Preserve the structural equality of the public match independently below.
+    const guardLocation = createMemo(state, {
+        equals: (a, b) => a.pathname === b.pathname && a.search === b.search && matchEquals(a.matched, b.matched)
+    });
 
     // Navigation machinery the guard effect below can reach on its FIRST synchronous run
     // (a guard that vetoes or redirects the boot URL calls performNavigate immediately).
@@ -935,21 +948,33 @@ function buildRouter(config: RouterConfig): Router
     let navScrollOverride: boolean | undefined = undefined;
     const blockers = new Set<(context: { from: RouteLocation; to: NavigateTarget | null; kind: NavigationKind }) => boolean | Promise<boolean>>();
 
-    // The GUARDED match - the public reactive view. <Routes> and every level's loader
-    // resource key off this signal, so a navigation that a guard vetoes or redirects
-    // never renders and never loads. Guardless chains accept SYNCHRONOUSLY in the same
-    // flush (no timing change for the common case).
-    const [match, setMatch] = createSignal<RouteMatch | null>(null, { equals: matchEquals });
+    // An unresolved boot has no verdict. Later guards keep the last settled presentation.
+    // A known server denial is already a presentation and can be adopted synchronously.
+    const [routeState, setRouteState] = createSignal<RouteState>(
+        initialDenial !== null ? { kind: 'blocked', status: initialDenial }
+            : initialState.matched === null ? { kind: 'not-found' } : { kind: 'pending' },
+        {
+            equals(a, b)
+            {
+                if (a.kind === 'match')
+                {
+                    return b.kind === 'match' && matchEquals(a.match, b.match);
+                }
+                if (a.kind === 'blocked')
+                {
+                    return b.kind === 'blocked' && a.status === b.status;
+                }
+                return a.kind === b.kind;
+            }
+        }
+    );
+    const match = createMemo<RouteMatch | null>(() =>
+    {
+        const verdict = routeState();
+        return verdict.kind === 'match' ? verdict.match : null;
+    });
     const [guarding, setGuarding] = createSignal(false);
-
-    // The DENIAL a guard settled this location into, cleared by the next accepted navigation.
-    // Held beside `match` rather than folded into it because the two answer different
-    // questions: `match` is what renders (null for both states), `denied` is WHY nothing does.
-    // Seeded before any effect runs so a hydrating client agrees with the server's markup on
-    // its first pass - re-deriving it from a guard that has not run yet would adopt the
-    // not-found UI over a blocked document and fail the whole hydration.
-    const [denied, setDenied] = createSignal<401 | 403 | null>(
-        currentRenderDenial() ?? seededDenial(config.initialLoaderData));
+    const [searchString, setSearchString] = createSignal(initialState.search);
 
     // Seeded like the denial and for the same reason: the server rendered the refusal, so the
     // client has to start holding it rather than discover it.
@@ -963,23 +988,6 @@ function buildRouter(config: RouterConfig): Router
     let refusalPath: string | null = config.initialLoaderData?.action !== undefined
         ? config.initialLoaderData.path
         : null;
-
-    /**
-     * The settled routing verdict: what the tree resolved to, not merely whether a route
-     * matched. Every terminal non-match used to collapse into `match === null`, so a guard
-     * veto and an unknown URL rendered the same UI while the server answered 403 for one and
-     * 404 for the other.
-     */
-    const routeState = createMemo<RouteState>(() =>
-    {
-        const status = denied();
-        if (status !== null)
-        {
-            return { kind: 'blocked', status };
-        }
-        const current = match();
-        return current === null ? { kind: 'not-found' } : { kind: 'match', match: current };
-    });
 
     // A user-facing snapshot. Re-derives only when state changes. `params` come from the
     // GUARDED match (declared below; the memo body runs lazily, after it exists): params
@@ -1002,14 +1010,22 @@ function buildRouter(config: RouterConfig): Router
             key: s.key
         };
     });
+    let bootSeedOpen = adopt && initialDenial === null;
     let guardRun = 0;
+    onRootDispose(() =>
+    {
+        guardRun++;
+    });
     let lastAcceptedLocation: RouteLocation | null = null;
 
     createEffect(() =>
     {
-        const m = rawMatch();
-        const run = ++guardRun;
+        const input = guardLocation();
+        // A guard re-run due to a tracked signal still snapshots the latest history
+        // stamp and fragment, even though those alone do not trigger a run.
         const s = untrack(state);
+        const m = input.matched;
+        const run = ++guardRun;
 
         const finish = (): void =>
         {
@@ -1018,9 +1034,13 @@ function buildRouter(config: RouterConfig): Router
                 setGuarding(false);
             }
         };
-        const settle = (value: RouteMatch | null): void =>
+        const settle = (verdict: RouteState): void =>
         {
             finish();
+            if (verdict.kind !== 'match' || s.pathname !== initialState.pathname || s.search !== initialState.search)
+            {
+                bootSeedOpen = false;
+            }
             // Composed from the ACCEPTED match directly rather than read from location():
             // location's params now derive from the guarded match, which at this point
             // still holds the PREVIOUS navigation - reading it here would pair the
@@ -1031,21 +1051,18 @@ function buildRouter(config: RouterConfig): Router
                 pathname: s.pathname,
                 search: s.search,
                 hash: s.hash,
-                params: value?.params ?? {},
+                params: verdict.kind === 'match' ? verdict.match.params : {},
                 query: parseQuery(s.search),
                 fullPath: s.fullPath,
                 navigationKind: s.kind,
                 delta: s.delta,
                 key: s.key
             };
-            setMatch(value);
+            setSearchString(s.search);
+            setRouteState(verdict);
         };
         const accept = (value: RouteMatch | null): void =>
         {
-            // Cleared on ACCEPT rather than at the top of the run: on a hydrating boot the
-            // seeded denial has to survive until the guard that re-derives it settles, or the
-            // blocked markup is torn down and remounted as the not-found UI in between.
-            setDenied(null);
             // A refusal belongs to the submit that produced it. Navigating away accepts a new
             // location, and carrying it over would put those field errors on the next form.
             if (refusalPath !== null && s.pathname + s.search !== refusalPath)
@@ -1053,7 +1070,7 @@ function buildRouter(config: RouterConfig): Router
                 refusalPath = null;
                 setActionResult(() => undefined);
             }
-            settle(value);
+            settle(value === null ? { kind: 'not-found' } : { kind: 'match', match: value });
         };
         const veto = (status: 401 | 403): void =>
         {
@@ -1061,8 +1078,7 @@ function buildRouter(config: RouterConfig): Router
             // the URL a deep link answers 401/403 for is the URL an in-app click lands on, so
             // both reach the same blocked UI. The route itself still never renders - `match`
             // goes null, and only `denied` says why.
-            settle(null);
-            setDenied(status);
+            settle({ kind: 'blocked', status });
         };
         // True = pass; false = this navigation is settled (veto or redirect performed).
         const applyVerdict = (verdict: unknown): boolean =>
@@ -1093,8 +1109,51 @@ function buildRouter(config: RouterConfig): Router
                 veto(403);
                 return false;
             }
-            finish();
-            untrack(() => performNavigate(accepted.to, { replace: target.replace }));
+            // A new URL's guard owns the next verdict. A leave blocker may decline or
+            // delay this automatic navigation, just as it can a user-initiated one.
+            const redirected = (committed: boolean): void =>
+            {
+                if (run !== guardRun)
+                {
+                    return;
+                }
+                if (committed)
+                {
+                    if (untrack(guardLocation) === input)
+                    {
+                        // Identical guard input (including a fragment-only redirect).
+                        // The current guard did not admit this page.
+                        veto(403);
+                    }
+                }
+                else if (untrack(routeState).kind === 'pending')
+                {
+                    veto(403);
+                }
+                else
+                {
+                    finish();
+                }
+            };
+            const result = untrack(() => performNavigate(accepted.to, { replace: target.replace }, run));
+            if (typeof result === 'boolean')
+            {
+                redirected(result);
+            }
+            else
+            {
+                setGuarding(true);
+                void result.then(
+                    committed => batch(() => redirected(committed)),
+                    (error: unknown) => batch(() =>
+                    {
+                        if (run === guardRun)
+                        {
+                            settleThrow(error);
+                        }
+                    })
+                );
+            }
             return false;
         };
         const settleThrow = (error: unknown): void =>
@@ -1152,20 +1211,20 @@ function buildRouter(config: RouterConfig): Router
                     // a newer navigation supersedes this run entirely.
                     setGuarding(true);
                     void Promise.resolve(verdict as PromiseLike<unknown>).then(
-                        (resolved) =>
+                        resolved => batch(() =>
                         {
                             if (run === guardRun && applyVerdict(resolved))
                             {
                                 proceed(i + 1);
                             }
-                        },
-                        (error: unknown) =>
+                        }),
+                        (error: unknown) => batch(() =>
                         {
                             if (run === guardRun)
                             {
                                 settleThrow(error);
                             }
-                        }
+                        })
                     );
                     return;
                 }
@@ -1190,9 +1249,10 @@ function buildRouter(config: RouterConfig): Router
     // A pinned denial is the ONE case where that decision was "do not render this": accepting
     // the raw match here would serialize the component the guard declined, at the 403 the
     // server is about to send. `match` stays null and only `state()` says why.
-    if (isStringMode())
+    if (isStringMode() && initialDenial === null)
     {
-        setMatch(untrack(denied) === null ? untrack(rawMatch) : null);
+        const current = initialState.matched;
+        setRouteState(current === null ? { kind: 'not-found' } : { kind: 'match', match: current });
     }
 
     // Hydration/SSR handoff: server-loaded data is adopted for the INITIAL location only -
@@ -1201,13 +1261,6 @@ function buildRouter(config: RouterConfig): Router
     // shape all fall back to a normal fetch instead of serving the wrong data. Adoption
     // seeds each LEVEL's resource as already settled: data is synchronously readable during
     // an SSR render and the hydrating client never refetches what the server just loaded.
-    const seed = config.initialLoaderData;
-    const initialState = untrack(state);
-    const adopt = seed !== undefined
-        && seed.version === LOADER_HANDOFF_VERSION
-        && Array.isArray(seed.data)
-        && seed.path === initialState.pathname + initialState.search;
-
     /**
      * Whether the server could not load this level. Its resource is seeded ERRORED rather
      * than left to fetch: the server rendered that level's own failure UI, and a client
@@ -1230,14 +1283,6 @@ function buildRouter(config: RouterConfig): Router
         (adopt && Array.isArray(seed.missing) && seed.missing.includes(level)
             ? notFound()
             : new Error('This route\'s data could not be loaded on the server.'));
-
-    // The raw search string, isolated so loaders can depend on it WITHOUT depending on the
-    // whole location. `match` is deliberately query-blind (a structural memo over the matched
-    // chain), so a source that read only match never re-evaluated for `?q=a` -> `?q=b` and the
-    // loader never re-ran - even though `query` is part of its documented arguments. Reading
-    // state() directly instead would re-run loaders on hash-only changes too; a memo over the
-    // string collapses those, because equal strings do not propagate.
-    const searchString = createMemo(() => state().search);
 
     // --- loader identity ----------------------------------------------------------------
     // Every POSITION in the tree gets an id - the chain PREFIX, not the config object, and not
@@ -1496,10 +1541,15 @@ function buildRouter(config: RouterConfig): Router
      * for five, which is a lifetime for a screen the user is about to read.
      */
     const PREFETCH_WARM_MS = 30_000;
+    const bootMatch = initialState.matched;
+    const seedKeys = adopt && bootMatch !== null
+        ? bootMatch.matched.map((_route, level) => seed.data[level] !== undefined || seedFailed(level)
+            ? levelKeyFor(bootMatch, initialState.search, level) : null)
+        : [];
     if (adopt)
     {
         const cache = getDataCache();
-        const m0 = untrack(rawMatch);
+        const m0 = initialState.matched;
         if (cache !== null && m0 !== null)
         {
             for (let level = 0; level < seed.data.length; level++)
@@ -1510,8 +1560,8 @@ function buildRouter(config: RouterConfig): Router
                 {
                     continue;
                 }
-                const key = levelKeyFor(m0, initialState.search, level);
-                if (key === null)
+                const key = seedKeys[level];
+                if (key == null)
                 {
                     continue;
                 }
@@ -1563,7 +1613,20 @@ function buildRouter(config: RouterConfig): Router
 
     // Only a level whose route has a loader takes a value seed: a handoff that crossed as JSON
     // carries null for a level with no loader, which is no result.
-    const seedChain = adopt ? untrack(rawMatch)?.matched : undefined;
+    const atBootLocation = (): boolean =>
+    {
+        const current = state();
+        return current.pathname === initialState.pathname && current.search === initialState.search
+            && matchEquals(current.matched, bootMatch);
+    };
+    const seedStatus: ResourceSeedKey<string>['status'] = () =>
+    {
+        if (!bootSeedOpen || !atBootLocation())
+        {
+            return 'discarded';
+        }
+        return routeState().kind === 'pending' ? 'pending' : 'accepted';
+    };
 
     // One resource per level, keyed by the level's KEY STRING with string equality: a
     // navigation that leaves a level's key unchanged (a leaf param change, an undeclared
@@ -1573,7 +1636,10 @@ function buildRouter(config: RouterConfig): Router
     const loaders: Array<Resource<unknown>> = [];
     for (let level = 0; level < maxDepth; level++)
     {
-        loaders.push(createResource<unknown, string>(
+        const seedKey = seedKeys[level];
+        const options = seedKey == null ? undefined : seedFailed(level)
+            ? { initialError: seededFailure(level) } : { initialValue: seed?.data[level] };
+        loaders.push(buildResource<unknown, string>(
             () =>
             {
                 const m = match();
@@ -1593,11 +1659,8 @@ function buildRouter(config: RouterConfig): Router
                 return key;
             },
             brandedLoaderFetcher,
-            seedFailed(level)
-                ? { initialError: seededFailure(level) }
-                : adopt && (seed.data)[level] !== undefined && seedChain?.[level]?.loader
-                    ? { initialValue: (seed.data)[level] }
-                    : undefined
+            options,
+            seedKey == null ? undefined : { key: seedKey, status: seedStatus }
         ));
     }
 
@@ -1649,7 +1712,7 @@ function buildRouter(config: RouterConfig): Router
                     console.error(`[azerothjs/router] ${ externalRedirectMessage(accepted.target) }`);
                     return;
                 }
-                untrack(() => performNavigate(accepted.to, { replace: error.replace }));
+                void untrack(() => performNavigate(accepted.to, { replace: error.replace }));
                 return;
             }
         }
@@ -1668,7 +1731,7 @@ function buildRouter(config: RouterConfig): Router
     });
 
     const pending = createMemo<boolean>(() =>
-        !chainReady() || guarding() || loaders.some((resource) => resource.loading()));
+        routeState().kind === 'pending' || !chainReady() || guarding() || loaders.some((resource) => resource.loading()));
 
     // MANAGED SCROLLING (browser only; config scroll !== false). Positions are
     // recorded per entry KEY the moment we leave an entry - commitNavigate and the
@@ -1754,7 +1817,7 @@ function buildRouter(config: RouterConfig): Router
     // `blockers` (the router.block() leave-guards set) is declared above the guard effect;
     // performNavigate reads it on a boot-time guard redirect.
 
-    function performNavigate(target: NavigateTarget, options: NavigateOptions): void
+    function performNavigate(target: NavigateTarget, options: NavigateOptions, redirectRun?: number): boolean | Promise<boolean>
     {
         if (blockers.size > 0)
         {
@@ -1766,23 +1829,25 @@ function buildRouter(config: RouterConfig): Router
             const verdicts = [...blockers].map((blocker) => blocker(context));
             if (verdicts.some((verdict) => verdict === false))
             {
-                return;
+                return false;
             }
             const holds = verdicts.filter((verdict): verdict is Promise<boolean> => typeof verdict === 'object');
             if (holds.length > 0)
             {
                 // Async blockers HOLD the navigation; it commits only if every one allows.
-                void Promise.all(holds).then((resolved) =>
+                return Promise.all(holds).then((resolved) =>
                 {
-                    if (resolved.every((allowed) => allowed))
+                    if ((redirectRun === undefined || redirectRun === guardRun) && resolved.every((allowed) => allowed))
                     {
                         commitNavigate(target, options);
+                        return true;
                     }
+                    return false;
                 });
-                return;
             }
         }
         commitNavigate(target, options);
+        return true;
     }
 
     function commitNavigate(target: NavigateTarget, options: NavigateOptions): void
@@ -1820,6 +1885,21 @@ function buildRouter(config: RouterConfig): Router
         location,
         match,
         state: routeState,
+        canAdoptInitialRoute(): boolean
+        {
+            if (!atBootLocation() || (seed !== undefined && !adopt))
+            {
+                return false;
+            }
+            const verdict = routeState();
+            if (initialDenial !== null)
+            {
+                return verdict.kind === 'blocked' && verdict.status === initialDenial;
+            }
+            return bootMatch === null
+                ? verdict.kind === 'not-found'
+                : verdict.kind === 'match' && matchEquals(verdict.match, bootMatch);
+        },
         actionResult,
         csrfToken: () => csrfSeed,
         setActionResult(result): void
@@ -1924,11 +2004,11 @@ function buildRouter(config: RouterConfig): Router
             // untrack so navigate can be called from inside an effect without
             // that effect subscribing to whatever signals the user might
             // evaluate while building `to`.
-            untrack(() => performNavigate(to, options));
+            void untrack(() => performNavigate(to, options));
         },
         replace(to, options = {}): void
         {
-            untrack(() => performNavigate(to, { ...options, replace: true }));
+            void untrack(() => performNavigate(to, { ...options, replace: true }));
         },
         back(): void
         {

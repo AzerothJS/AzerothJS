@@ -26,7 +26,21 @@ import { escapeAttr } from '../reactivity/ssr.ts';
 interface AzsWindow
 {
     __AZS_S?: Record<string, unknown>;
-    __AZS?: (id: number) => void;
+    __AZS?: ((id: number) => void) & { swapped?: WeakSet<Comment> };
+}
+
+/** The hydration client takes DOM ownership after claiming a numbered boundary. */
+interface StreamAnchor extends Comment
+{
+    __azsClaimed?: boolean;
+}
+
+/** @internal A legacy swap runtime leaves its already delivered boundary indistinguishable. */
+export function claimStreamBoundary(open: StreamAnchor): boolean | undefined
+{
+    open.__azsClaimed = true;
+    const swap = (globalThis as AzsWindow).__AZS;
+    return swap === undefined ? false : swap.swapped?.has(open);
 }
 
 /** @internal Installs the seed store and the swap entry point. Self-contained by contract. */
@@ -35,6 +49,7 @@ export function azsRuntime(): void
     const host = globalThis as AzsWindow;
     const store: Record<string, unknown> = host.__AZS_S ?? {};
     host.__AZS_S = store;
+    const swapped = host.__AZS?.swapped ?? new WeakSet<Comment>();
     host.__AZS = function (id: number): void
     {
         const doc = document;
@@ -57,7 +72,7 @@ export function azsRuntime(): void
         }
         const template = doc.querySelector<HTMLTemplateElement>(`template[data-azs="${ id }"]`);
         const target = `azc:suspense:${ id }`;
-        let open: Comment | null = null;
+        let open: StreamAnchor | null = null;
         const stack: Node[] = [doc.body];
         while (stack.length > 0 && open === null)
         {
@@ -76,10 +91,9 @@ export function azsRuntime(): void
                 child = child.nextSibling;
             }
         }
-        if (open === null)
+        if (open === null || open.__azsClaimed)
         {
-            // The boundary's markers are gone (a discarded nested fallback): seeds are
-            // stored, the swap is a no-op.
+            // A client-owned or removed boundary has no server DOM work left.
             if (template !== null)
             {
                 template.remove();
@@ -127,9 +141,11 @@ export function azsRuntime(): void
         if (template !== null)
         {
             (node.parentNode as ParentNode).insertBefore(template.content, node);
+            swapped.add(open);
             template.remove();
         }
     };
+    host.__AZS.swapped = swapped;
 }
 
 /**

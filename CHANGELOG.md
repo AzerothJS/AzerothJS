@@ -12,6 +12,16 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- `router.state()` returns `{ kind: 'pending' }` while the first client guard is
+  undecided. Add a `pending` branch to exhaustive switches. Later guard waits keep
+  the previous verdict and screen. Query changes now run guards with the new query
+  before that query's loaders start. Fragment-only navigation keeps the current guard.
+- On a guarded or lazy first load, `<Routes>` keeps the served page in place until
+  it can hydrate the matching route. A different destination gets its own DOM. Cold
+  lazy pages can hydrate control flow and keep text entered before startup.
+- A cold page with a pending resource now keeps its server-rendered `<Suspense>`
+  fallback until the resource settles. A streamed chunk arriving after client
+  hydration preserves the live controls in that boundary.
 - Sourced resources and streams now compare keys with `Object.is` by default. Use
   `equals(previous, next)` for structural keys. An equal key keeps the current request.
   Call `refetch()` to retry a failed request or reload after mutating a key object in place.

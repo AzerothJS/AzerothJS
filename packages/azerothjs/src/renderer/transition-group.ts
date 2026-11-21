@@ -24,9 +24,11 @@
  * animated; minimal-move math buys nothing visible here.
  */
 
+import { withHydrationRoots } from './adopt-roots.ts';
+import { createHydrationEffect } from '../reactivity/create-effect.ts';
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { createEffect, createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
+import { createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { destroyComponent, type CoTarget, type MountNode, createCoMarkers, adoptCoRange } from '../component/index.ts';
 import { hydrateChild, resolveReactive } from './h.ts';
@@ -259,22 +261,25 @@ function driveGroup<T>(props: TransitionGroupProps<T>, target: CoTarget, hydrate
             firstRun = false;
             const cursor = hydrationCursor as HydrationCursorType;
             const adopted = new Map<string | number, GroupEntry>();
-            for (const [i, item] of items.entries())
+            withHydrationRoots(openRoot =>
             {
-                const key = props.key(item, i);
-                const index = createRowIndex(i);
-                let el!: HTMLElement;
-                let dispose!: DisposeFn;
-                createRoot((d) =>
+                for (const [i, item] of items.entries())
                 {
-                    dispose = d;
-                    const descriptor = props.children(item, index.get);
-                    el = cursor.peekElement() as HTMLElement;
-                    hydrateChild(descriptor, cursor);
-                });
-                adopted.set(key, { el, dispose, setIndex: index.set });
-            }
-            cursor.assertExhausted('<TransitionGroup> rows');
+                    const key = props.key(item, i);
+                    const index = createRowIndex(i);
+                    let el!: HTMLElement;
+                    let dispose!: DisposeFn;
+                    openRoot((d) =>
+                    {
+                        dispose = d;
+                        const descriptor = props.children(item, index.get);
+                        el = cursor.peekElement() as HTMLElement;
+                        hydrateChild(descriptor, cursor);
+                    });
+                    adopted.set(key, { el, dispose, setIndex: index.set });
+                }
+                cursor.assertExhausted('<TransitionGroup> rows');
+            });
             keyMap = adopted;
             return;
         }
@@ -346,7 +351,7 @@ function driveGroup<T>(props: TransitionGroupProps<T>, target: CoTarget, hydrate
         }
     }
 
-    createEffect(() =>
+    createHydrationEffect(hydrateFirstRun, () =>
     {
         const items = resolveReactive(props.each) as T[];
         untrack(() => reconcile(items));

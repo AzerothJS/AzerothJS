@@ -30,9 +30,11 @@
  * not take another click.
  */
 
+import { withHydrationRoots } from './adopt-roots.ts';
+import { createHydrationEffect } from '../reactivity/create-effect.ts';
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { createEffect, createRoot, onRootDispose, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
+import { createRoot, onRootDispose, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
 import { refuseSlotHandle } from '../reactivity/slot-handle.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { destroyComponent, type CoTarget, type MountNode, createCoMarkers, appendToCo, adoptCoRange } from '../component/index.ts';
@@ -242,21 +244,24 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
     {
         let el!: HTMLElement;
         let dispose!: DisposeFn;
-        createRoot((d) =>
+        withHydrationRoots(openRoot =>
         {
-            dispose = d;
-            const cursor = hydrationCursor as HydrationCursorType;
-            const adopted = cursor.peekElement();
-            const child = props.children();
-            // Refused BEFORE hydrateChild: its bare-branded branch would otherwise
-            // ADOPT the slot into a host whose machine cannot manage it.
-            if (refuseSlotHandle(child, 'Transition', TRANSITION_SLOT_HINT))
+            openRoot((d) =>
             {
-                el = undefined as unknown as HTMLElement;
-                return;
-            }
-            hydrateChild(child, cursor);
-            el = adopted as HTMLElement;
+                dispose = d;
+                const cursor = hydrationCursor as HydrationCursorType;
+                const adopted = cursor.peekElement();
+                const child = props.children();
+                // Refused BEFORE hydrateChild: its bare-branded branch would otherwise
+                // ADOPT the slot into a host whose machine cannot manage it.
+                if (refuseSlotHandle(child, 'Transition', TRANSITION_SLOT_HINT))
+                {
+                    el = undefined as unknown as HTMLElement;
+                    return;
+                }
+                hydrateChild(child, cursor);
+                el = adopted as HTMLElement;
+            });
         });
         currentEl = el;
         currentDispose = dispose;
@@ -495,7 +500,7 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
     // Vue's `appear: false` default. Subsequent runs: animate the
     // transition (or queue if one is in flight).
     let isFirstRun = true;
-    createEffect(() =>
+    createHydrationEffect(hydrateFirstRun, () =>
     {
         const shouldShow = resolveReactive(props.when) as boolean;
 
