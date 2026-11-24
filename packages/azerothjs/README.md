@@ -196,6 +196,10 @@ its `on` list load, and `Portal` renders its children into a target elsewhere in
 (default `document.body`).
 
 Inside a `Show` or `Match`, read the value through the `let=` name, as `{ user.name }` does above.
+Compiled `Show` preserves its subtree while the condition stays truthy or stays falsy.
+`Switch` preserves its subtree while the same case or fallback wins. Bind changing text
+and attributes in markup. A component setup value or an explicit child factory runs once
+per showing. A manual zero-argument `Show` child retains its condition-driven refresh.
 While the branch is mounted, the name follows its truthy value. Cleanup and saved event handlers
 can still read the last truthy value observed for that showing, even after the branch reopens.
 A read through the signal directly, such as

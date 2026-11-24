@@ -524,7 +524,7 @@ it('a lower-priority Match stays lazy, takes the same number of samples on SSR a
     const root = document.createElement('div');
     root.innerHTML = renderToString(app);
     const serverSamples = sample.mock.calls.length;
-    expect(serverSamples).toBe(3);
+    expect(serverSamples).toBe(1);
     const served = root.querySelector('b');
     readers.length = 0;
     sample.mockClear();

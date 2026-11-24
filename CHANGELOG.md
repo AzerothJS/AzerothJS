@@ -58,14 +58,17 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   persist in a loader after rollback. Use a subscribed resource to display pending guesses.
   Aborting a direct call rejects that reader with its signal's reason.
 
-- **The runtime contract moves to v5.** Compiled output changes shape for a sole `{ expr }` in a
+- **The runtime contract moves to v6.** Compiled Show tags use the new internal `renderShow`
+  helper. Rebuild precompiled components with the matching compiler and runtime.
+  The preceding v5 change also changed the compiled output for a sole `{ expr }` in a
   `<Show>` or `<Match>` branch and for a `fallback` on `<Show>` or `<Switch>` that is not an arrow
   or a bare markup literal, and for a hole inside a `<textarea>` or `<title>`, which calls the new
   runtime helper `bindText`, and the new output needs the new runtime, so
-  `EMITTED_CONTRACT_VERSION` and `RUNTIME_CONTRACT_VERSION` both move 4 -> 5. What this affects is
+  `EMITTED_CONTRACT_VERSION` and `RUNTIME_CONTRACT_VERSION` move together. What this affects is
   PREBUILT compiled output: a library shipped as `.js` compiled by an earlier compiler
-  fails at load against this runtime with a message naming both versions, and output from this
-  compiler fails the same way on an older runtime. Rebuild against a matched set: `azerothjs` and
+  fails at load against this runtime with a message naming both versions. On an older runtime,
+  a module compiled with v6 can fail at import time because `renderShow` is missing.
+  Rebuild against a matched set: `azerothjs` and
   `@azerothjs/compiler` from one version.
 
 - **An ISR page renders in the async context its pages were mounted in.** ISR's first render and
@@ -224,6 +227,14 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   without a router, now does the same in an app with one.
 
 ### Fixed
+
+- Refreshing a record in a compiled `Show`, a winning `Match`, or a selected fallback
+  now preserves the mounted editor, focus, caret and draft. A genuine branch change
+  replaces it. Code that relied on accidental remounts to refresh a setup snapshot or
+  an explicit child factory should use a reactive markup expression for the changing
+  content. A manual zero-argument `Show` child still refreshes on condition changes.
+- A throwing branch cleanup now removes the outgoing Show, Switch or Dynamic content
+  before the error reaches its caller. Reopening mounts one copy.
 
 - Closing a `Show` and then reading its `let=` value in the same event now returns
   the last selected record, even if the branch never displayed it. A saved `Show`
@@ -443,7 +454,7 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   `moveBefore`, the moved rows keep their focus and scroll position, and an iframe in them does not
   reload. A hole that returns the element it already shows leaves it in place, so an `<input>` keeps
   its focus, apart from an element the component built while the page was hydrating. Server markup
-  is unchanged and the runtime contract stays at v5.
+  is unchanged by that hydration fix.
 
 - **An ISR page whose loader calls the app's own api answered 500 on every production request.** A
   loader that called the typed client with a relative baseUrl threw in ISR's first render and in

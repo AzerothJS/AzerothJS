@@ -14,15 +14,15 @@
  * while no higher case wins.
  */
 
+import { createBranchMount, createSelectionMemo, FailedSelection, ownBranchWork } from './branch-selection.ts';
 import { renderBranchValue } from './branch-value.ts';
-import { withHydrationRoots as withBranchRoots } from './adopt-roots.ts';
 import { createHydrationEffect } from '../reactivity/create-effect.ts';
-import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
+import { createMemo, isStringMode, isHydrating, onRootDispose, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
-import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '../component/index.ts';
-import { hydrateChild, materializeChild, resolveReactive } from './h.ts';
+import { type CoTarget, type MountNode, createCoMarkers, adoptCoRange } from '../component/index.ts';
+import type { Child } from './types.ts';
+import { resolveReactive } from './h.ts';
 
 /**
  * A single normalized case inside a {@link Switch}, produced by {@link Match}: a reactive
@@ -35,6 +35,54 @@ export interface MatchCase
 
     /** Render function building this case's element (or several - siblings render in order). */
     render: () => MountNode | MountNode[];
+}
+
+type BranchNodes = MountNode | MountNode[];
+
+/** Immutable information about a value Match. A reused descriptor never holds a mounted binding. */
+interface ValueCase
+{
+    sample: () => unknown;
+    children: (read: () => unknown) => BranchNodes;
+}
+
+const valueCases = new WeakMap<MatchCase['when'] | MatchCase['render'], ValueCase>();
+
+interface CaseKey
+{
+    index: number;
+    render: MatchCase['render'];
+}
+
+interface Winner extends CaseKey
+{
+    match: MatchCase;
+    binding: ValueCase | undefined;
+    value: unknown;
+}
+
+function sameCase(a: CaseKey, b: CaseKey): boolean
+{
+    return a.index === b.index && a.render === b.render;
+}
+
+function firstMatch(cases: MatchCase[]): Winner | undefined
+{
+    for (const [index, match] of cases.entries())
+    {
+        const predicate = match.when;
+        const condition = valueCases.get(predicate);
+        const value = condition ? condition.sample() : predicate.call(match);
+        if (value)
+        {
+            // Only read a render method once its predicate wins. Structural cases may
+            // replace or reuse either public method independently.
+            const render = match.render;
+            const binding = valueCases.get(render);
+            return { index, match, render, binding, value: binding && binding !== condition ? binding.sample() : value };
+        }
+    }
+    return undefined;
 }
 
 /** Props for {@link Match}. */
@@ -70,17 +118,20 @@ export interface MatchProps<W = boolean>
  */
 export function Match<W = boolean>(props: MatchProps<W>): MatchCase
 {
-    // Allocate the binding when the case renders. One descriptor may serve several Switch roots.
-    const render = props.children.length >= 1
-        ? () => renderBranchValue(() => resolveReactive(props.when) as W, read => props.children(read))
-        // A zero-arity children never reads an accessor, so none is manufactured for it.
-        : (props.children as unknown as () => MountNode | MountNode[]);
+    const sample = (): W => resolveReactive(props.when) as W;
+    const when = (): boolean => Boolean(sample());
+    if (props.children.length === 0)
+    {
+        return { when, render: props.children as () => BranchNodes };
+    }
 
-    return {
-        // Re-read lazily, so the case stays reactive when Switch calls it.
-        when: () => Boolean(resolveReactive(props.when)),
-        render
-    };
+    // Direct Match.render() keeps its own scoped reader. Switch supplies the winning
+    // sample to the same children without constructing a second condition value.
+    const render = (): BranchNodes => renderBranchValue(sample, read => props.children(read));
+    const binding: ValueCase = { sample, children: read => props.children(read as () => NonNullable<W>) };
+    valueCases.set(when, binding);
+    valueCases.set(render, binding);
+    return { when, render };
 }
 
 /**
@@ -137,12 +188,13 @@ export function Switch(props: SwitchProps): MountNode
     // SSR: emit the first case whose `when` is true (read once), else the fallback.
     if (isStringMode())
     {
-        for (const matchCase of cases)
+        const winner = untrack(() => firstMatch(cases));
+        if (winner)
         {
-            if (untrack(() => matchCase.when()))
-            {
-                return wrapContentsAnchored('switch', serializeChild(matchCase.render())) as unknown as MountNode;
-            }
+            const content = winner.binding
+                ? winner.binding.children(() => winner.value)
+                : winner.render.call(winner.match);
+            return wrapContentsAnchored('switch', serializeChild(content)) as unknown as MountNode;
         }
 
         const fallbackInner = props.fallback ? serializeChild(props.fallback()) : '';
@@ -156,7 +208,7 @@ export function Switch(props: SwitchProps): MountNode
         return hydrationNode((cursor: HydrationCursorType): void =>
         {
             const { target, contentCursor } = adoptCoRange(cursor);
-            driveSwitch(props, cases, target, true, contentCursor);
+            ownBranchWork(() => driveSwitch(props, cases, target, true, contentCursor));
         }) as unknown as MountNode;
     }
 
@@ -164,7 +216,7 @@ export function Switch(props: SwitchProps): MountNode
     // so it is a DIRECT child of the real parent (legal inside <table>/<select>/<ul>).
     const { fragment, target } = createCoMarkers('switch');
 
-    driveSwitch(props, cases, target, false);
+    ownBranchWork(() => driveSwitch(props, cases, target, false));
 
     return fragment;
 }
@@ -182,68 +234,61 @@ export function Switch(props: SwitchProps): MountNode
  */
 function driveSwitch(props: SwitchProps, cases: MatchCase[], target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
 {
-    let branchDispose: DisposeFn | null = null;
-    let firstRun = hydrateFirstRun;
+    const branch = createBranchMount(target, hydrationCursor, '<Switch> content');
 
-    createHydrationEffect(hydrateFirstRun, () =>
+    let active: { key: CaseKey; remember: (value: unknown) => void } | undefined;
+    const selected = createSelectionMemo(() => firstMatch(cases), branch.mounted);
+    const selectionKey = createMemo(() =>
     {
-        // First matching case wins; stopping at the first match means a lower case's
-        // condition is tracked (and can trigger a re-render) only when no higher case wins.
-        let factory: (() => MountNode | MountNode[] | null | undefined) | null = null;
-        for (const matchCase of cases)
+        const winner = selected();
+        if (active && winner && !(winner instanceof FailedSelection) && sameCase(active.key, winner))
         {
-            if (matchCase.when())
-            {
-                factory = matchCase.render;
-                break;
-            }
+            active.remember(winner.value);
         }
-
-        if (!factory && props.fallback)
-        {
-            factory = props.fallback;
-        }
-
-        const adopting = firstRun;
-        firstRun = false;
-        withBranchRoots(openRoot =>
-        {
-            if (factory)
-            {
-                const build = factory;
-                openRoot(dispose =>
-                {
-                    branchDispose = dispose;
-                    if (adopting)
-                    {
-                        hydrateChild(untrack(build), hydrationCursor as HydrationCursorType);
-                    }
-                    else
-                    {
-                        // Reads in the case body must never subscribe the selection effect.
-                        appendToCo(target, materializeChild(untrack(() => resolveReactive(build))));
-                    }
-                });
-            }
-            if (adopting)
-            {
-                hydrationCursor?.assertExhausted('<Switch> content');
-            }
-        });
-
-        // Single teardown path - runs before every re-render AND on dispose, disposing the
-        // losing branch's effects before its DOM is discarded.
-        return teardownBranch;
+        return winner && !(winner instanceof FailedSelection) ? { index: winner.index, render: winner.render } : winner;
+    }, {
+        equals: (a, b) => branch.mounted() && (a === b || (a !== undefined && b !== undefined
+            && !(a instanceof FailedSelection) && !(b instanceof FailedSelection) && sameCase(a, b)))
     });
 
-    function teardownBranch(): void
+    createHydrationEffect(hydrateFirstRun, () => branch.mount(() =>
     {
-        if (branchDispose)
+        // The key is the only dependency of replacement. Individual bindings pull
+        // the winning record directly, including inside a batch before the next swap.
+        selectionKey();
+        const winner = untrack(selected);
+        if (winner instanceof FailedSelection)
         {
-            branchDispose();
-            branchDispose = null;
+            return winner;
         }
+        const factory = winner ? buildWinner(winner) : untrack(() => props.fallback);
+        return factory ? adopting => untrack(() => adopting ? factory() : resolveReactive(factory)) as Child : undefined;
+    }));
 
-        clearCo(target);
+    function buildWinner(winner: Winner): MatchCase['render']
+    {
+        const { index, render, binding } = winner;
+        if (!binding)
+        {
+            return winner.render;
+        }
+        const key = { index, render };
+        const readWinner = (): unknown =>
+        {
+            const current = selected();
+            return current && !(current instanceof FailedSelection) && sameCase(current, key) ? current.value : undefined;
+        };
+        return () => renderBranchValue(readWinner, (read, remember) =>
+        {
+            active = { key, remember };
+            onRootDispose(() =>
+            {
+                if (active?.remember === remember)
+                {
+                    active = undefined;
+                }
+            });
+            return binding.children(read);
+        });
     }
 }

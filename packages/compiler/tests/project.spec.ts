@@ -17,6 +17,18 @@ function code(src: string): string
     return generateVirtualCode(src).code;
 }
 
+it.each([
+    ["import Show from './pane';", false],
+    ["import { Pane as Show } from './pane';", false],
+    ["import { Show } from 'azerothjs';", false],
+    ['component Show { <i/> }', false],
+    ["import { Show as Pane } from './pane';", true]
+])('projects the Show binding supplied by %s', (declaration, needsFrameworkType) =>
+{
+    const projected = code(`${ declaration }\ncomponent Ticket { <Show when={true}><i/></Show> }`);
+    expect(projected.includes("declare const Show: typeof import('azerothjs').Show")).toBe(needsFrameworkType);
+});
+
 describe('generateVirtualCode - component signature', () =>
 {
     it('projects a component to a function with a DEFAULTED props parameter', () =>

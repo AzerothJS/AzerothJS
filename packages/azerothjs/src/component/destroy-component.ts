@@ -15,6 +15,8 @@
  */
 
 import { getDestroyHooks, setDestroyHooks, hasAnyDestroyHooks } from './destroy-hooks.ts';
+import { currentErrorHandler } from '../reactivity/catch-error.ts';
+import { routeAsyncError } from '../reactivity/create-effect.ts';
 
 /**
  * Runs and drains every teardown hook attached to `element` and its descendants.
@@ -25,9 +27,8 @@ import { getDestroyHooks, setDestroyHooks, hasAnyDestroyHooks } from './destroy-
  *
  * Hooks run in attachment order and are drained afterwards, so a second call on the same
  * subtree is a no-op rather than an error. Mutating the subtree from inside a hook is
- * supported: each element's children are snapshotted before the walk recurses, because a hook
- * that tears down a portal would otherwise shift a live collection mid-iteration and skip
- * siblings.
+ * supported. The walk identifies the elements with hooks before calling any of them, so a hook
+ * that detaches a descendant cannot skip its teardown.
  *
  * The built-in removers already call it; reach for it directly only when removing a subtree
  * outside those paths.
@@ -37,45 +38,80 @@ import { getDestroyHooks, setDestroyHooks, hasAnyDestroyHooks } from './destroy-
  */
 export function destroyComponent(element: HTMLElement): void
 {
-    // No element anywhere holds an undrained hook: the walk cannot find
-    // anything, so skip it entirely. This turns the common teardown path
-    // (removing hook-free rows/branches) into a constant-time no-op.
-    if (!hasAnyDestroyHooks())
+    const targets = snapshotDestroyTargets(element);
+    if (targets.length === 0)
     {
         return;
     }
+    const errors: unknown[] = [];
+    drainDestroyHooks(targets, errors);
+    reportTeardownErrors(errors);
+}
 
-    runOwnDestroyHooks(element);
+const NO_DESTROY_TARGETS: readonly HTMLElement[] = [];
 
-    // Snapshot the child list before recursing: a teardown hook may mutate the DOM (e.g. tear
-    // down a portal), which would shift a live HTMLCollection mid-iteration and skip siblings. A
-    // copy is stable, and re-destroying an already-handled node is a no-op (hooks are drained).
-    const children = Array.from(element.children);
-    for (const child of children)
+/** Identify the original hook-bearing subtree before any user cleanup can move its nodes. @internal */
+export function snapshotDestroyTargets(root: ChildNode): readonly HTMLElement[]
+{
+    if (!hasAnyDestroyHooks() || !(root instanceof HTMLElement))
     {
-        if (child instanceof HTMLElement)
+        return NO_DESTROY_TARGETS;
+    }
+    const targets: HTMLElement[] = [];
+    collect(root);
+    return targets;
+
+    function collect(element: HTMLElement): void
+    {
+        if (getDestroyHooks(element)?.length)
         {
-            destroyComponent(child);
+            targets.push(element);
+        }
+        for (const child of element.children)
+        {
+            if (child instanceof HTMLElement)
+            {
+                collect(child);
+            }
         }
     }
 }
 
-/**
- * Runs and drains the teardown hooks attached directly to one element. Drains in place (read
- * once, overwrite with []) so a second call is a no-op.
- *
- * @internal
- * @param element - The element whose own hooks to run.
- */
-function runOwnDestroyHooks(element: HTMLElement): void
+/** A nested destroy may already have drained some targets. Read their hook storage at dispatch. @internal */
+export function drainDestroyHooks(targets: readonly HTMLElement[], errors: unknown[]): void
 {
-    const hooks = getDestroyHooks(element);
-    if (hooks && hooks.length > 0)
+    for (const element of targets)
     {
+        const hooks = getDestroyHooks(element);
+        if (!hooks?.length)
+        {
+            continue;
+        }
         setDestroyHooks(element, []);
         for (const hook of hooks)
         {
-            hook();
+            try
+            {
+                hook();
+            }
+            catch (error)
+            {
+                errors.push(error);
+            }
         }
+    }
+}
+
+/** Propagate the first failure to the caller and report independent failures asynchronously. @internal */
+export function reportTeardownErrors(errors: unknown[]): void
+{
+    if (errors.length > 0)
+    {
+        const handler = currentErrorHandler;
+        for (const error of errors.slice(1))
+        {
+            queueMicrotask(() => routeAsyncError(error, handler, undefined));
+        }
+        throw errors[0];
     }
 }

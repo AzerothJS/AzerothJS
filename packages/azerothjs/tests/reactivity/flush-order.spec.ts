@@ -1415,7 +1415,7 @@ describe('orders and branches the flush leaves alone', () =>
         expect(seen).toEqual([
             'open0 > open1 > closed | kid 0,kid 1,kid 1,kid 0',
             'open0 > closed > closed | kid 0',
-            'm0 > m1 | kid 0,kid 1,kid 1',
+            'm0 > m1 | kid 0,kid 1',
             'a0 > a1b1z1 | for,row a0,row a1,for,row a1,row b1,row z1'
         ]);
     });

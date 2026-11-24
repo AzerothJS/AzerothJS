@@ -274,7 +274,8 @@ export const KEYWORD_DOCS: Record<string, string> =
         '**`mount`** - connected hook\n\n' +
         'Runs its body once, after the component is CONNECTED to the document - the place for work that needs the ' +
         'rendered DOM or the browser (measuring, focusing, subscriptions, data fetches). It never runs during ' +
-        'server rendering. Pair with `cleanup` for teardown.\n\n' +
+        'server rendering. Pair with `cleanup` for teardown. A branch can replace a referenced element. ' +
+        'Attach its listeners in markup, in the ref, or in a component mounted with the element.\n\n' +
         '```azeroth\nmount\n{\n    input.focus();\n}\n```',
     batch:
         '**`batch`** - batched writes\n\n' +

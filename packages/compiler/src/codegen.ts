@@ -39,7 +39,7 @@ import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isLiteral
 import { buildLineStarts, locationFor, encodeMappings, type SourceMapV3, type RawSegment } from './sourcemap.ts';
 import type { MarkupElement, MarkupFragment, Span } from './types.ts';
 import { parseModule } from './parser.ts';
-import { diagnoseModule, shadowedBuiltins } from './diagnostics.ts';
+import { diagnoseModule, moduleBindScope } from './diagnostics.ts';
 import { analyzeComponent } from './analyze.ts';
 import { lowerComponent, lowerMarkup } from './lower.ts';
 import { styleScopeOf } from './style-section.ts';
@@ -64,7 +64,7 @@ const RUNTIME_MODULE = 'azerothjs/internal';
  * RUNTIME_CONTRACT_VERSION (azerothjs/internal) must move with it in lockstep, and a drift
  * spec fails the build if the two disagree.
  */
-export const EMITTED_CONTRACT_VERSION = 5;
+export const EMITTED_CONTRACT_VERSION = 6;
 
 /** Empty reactive-source set, for compiling markup in module scope (no component state in scope). */
 const NO_SOURCES: ReactiveSources = { names: new Set(), hasProps: false };
@@ -122,6 +122,8 @@ export interface GenerateOptions
 interface Emit
 {
     used: Set<string>;
+    showHelper: string;
+    importsShow: boolean;
     templates: Map<string, string>;
 
     /** Client-only build: skip the SSR/hydration branch in every component body. */
@@ -240,7 +242,20 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
 
     const module = parseModule(source);
     const style = styleScopeOf(source, module);
-    const emit: Emit = { used: new Set(), templates: new Map(), clientOnly: options.ssr === false, dev: options.dev === true, raw: false, holeDepth: 0, regionStart: 0, classes: style?.classes ?? null, shadowed: shadowedBuiltins(source, module.items) };
+    // The internal Show dispatcher can occur inside authored callbacks and module helpers.
+    // Give it an unoccupied import name, including when an inner scope binds "renderShow".
+    // TypeScript accepts ASCII identifier characters written as Unicode escapes. Scanning
+    // the decoded spelling also covers opaque module code and scopes inside embedded markup.
+    const names = source.replace(/\\u(?:\{0*([0-7]?[0-9a-f])\}|00([0-7][0-9a-f]))/gi,
+        (_match: string, braced: string | undefined, fixed: string) => String.fromCharCode(parseInt(braced ?? fixed, 16)));
+    const usedNames = new Set(names.match(/renderShow(?:\$[0-9]+)?/g));
+    let showHelper = 'renderShow';
+    for (let i = 1; usedNames.has(showHelper); i++)
+    {
+        showHelper = `renderShow$${ i }`;
+    }
+    const bindings = moduleBindScope(source, module.items);
+    const emit: Emit = { used: new Set(), showHelper, importsShow: bindings.imports.has('Show'), templates: new Map(), clientOnly: options.ssr === false, dev: options.dev === true, raw: false, holeDepth: 0, regionStart: 0, classes: style?.classes ?? null, shadowed: bindings.shadowed };
 
     interface Piece { outStart: number; sourceStart: number; verbatim: boolean; }
     const pieces: Piece[] = [];
@@ -935,7 +950,8 @@ function emitUnifiedBody(source: string, plan: RenderPlan, sources: ReactiveSour
  */
 function emitComponentCall(source: string, binding: ComponentBinding, sources: ReactiveSources, emit: Emit): string
 {
-    if (binding.builtin)
+    const frameworkShow = binding.tag === 'Show' && !emit.shadowed.has(binding.tag);
+    if (binding.builtin && (binding.tag !== 'Show' || frameworkShow))
     {
         emit.used.add(binding.tag);
     }
@@ -1039,6 +1055,13 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
         parts.push(`get children() { return (${ wrapped }); }`);
     }
 
+    if (frameworkShow)
+    {
+        emit.used.add('renderShow');
+        // A callback parameter may shadow the module's Show. Resolve the actual function
+        // in the dispatcher before opting the framework builtin into stable branch selection.
+        return parts.length === 0 ? `${ emit.showHelper }(Show)` : `${ emit.showHelper }(Show, { ${ parts.join(', ') } })`;
+    }
     return parts.length === 0 ? `${ binding.tag }()` : `${ binding.tag }({ ${ parts.join(', ') } })`;
 }
 
@@ -1738,7 +1761,8 @@ function buildImport(source: string, emit: Emit): string
     }
     const withAssert = new Set(emit.used);
     withAssert.add('assertRuntimeContract');
-    const names = [...withAssert].filter(name => !alreadyImports(source, name));
+    const names = [...withAssert].filter(name => name === 'Show' ? !emit.importsShow : name === 'renderShow' || !alreadyImports(source, name))
+        .map(name => name === 'renderShow' && emit.showHelper !== name ? `${ name } as ${ emit.showHelper }` : name);
     const importLine = names.length > 0 ? `import { ${ names.join(', ') } } from '${ RUNTIME_MODULE }';\n` : '';
     // Deliberately NOT `import.meta.url`, though it would name the offending module in the
     // failure: `import.meta` is only legal inside an ES module, and emitting it would make

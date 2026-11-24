@@ -714,7 +714,7 @@ describe('generateModule - control flow and components (slots)', () =>
     {
         const code = gen('component C { state on = true; <div><Show when={on}><p>yes</p></Show></div> }');
         expect(code).toContain('Show');
-        expect(code).toMatch(/bindSlot\(_n\d+, Show\(\{/);
+        expect(code).toMatch(/bindSlot\(_n\d+, renderShow\(Show, \{/);
         // The when prop is a reactive getter.
         expect(code).toContain('get when() { return (on()); }');
     });

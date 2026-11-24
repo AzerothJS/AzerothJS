@@ -154,7 +154,7 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
     // Imports and module-scope variables, resolved once: a bind target that names one is a
     // silent half-dead binding (or a TypeError on the first keystroke, for an import).
     const moduleScope = moduleBindScope(source, items);
-    const shadowed = shadowedBuiltins(source, items);
+    const shadowed = moduleScope.shadowed;
     diagnoseStyleSections(source, items, diagnostics);
     for (const item of items)
     {
@@ -2193,59 +2193,22 @@ interface ModuleBindScope
 {
     imports: ReadonlySet<string>;
     vars: ReadonlySet<string>;
+    shadowed: ReadonlySet<string>;
 }
 
-/**
- * Builtin names the module value-imports from anywhere but 'azerothjs': the tag is the user's own.
- * Outlet and Transition/Portal rules skip them; a user For is judged and lowered as written.
- */
-export function shadowedBuiltins(source: string, items: readonly { kind: string; start: number; end: number }[]): ReadonlySet<string>
-{
-    const names = new Set<string>();
-    for (const item of items)
-    {
-        if (item.kind === 'component' || item.kind === 'style')
-        {
-            continue;
-        }
-        const { sourceFile } = parseStatementsSlice(blankMarkupRegions(source, item.start, item.end), item.start);
-        for (const statement of sourceFile.statements)
-        {
-            if (!ts.isImportDeclaration(statement) || statement.importClause === undefined
-                || statement.importClause.phaseModifier === ts.SyntaxKind.TypeKeyword
-                || !ts.isStringLiteral(statement.moduleSpecifier)
-                || statement.moduleSpecifier.text === 'azerothjs')
-            {
-                continue;
-            }
-            const clause = statement.importClause;
-            if (clause.name !== undefined && BUILTIN_SET.has(clause.name.text))
-            {
-                names.add(clause.name.text);
-            }
-            if (clause.namedBindings !== undefined && !ts.isNamespaceImport(clause.namedBindings))
-            {
-                for (const el of clause.namedBindings.elements)
-                {
-                    if (!el.isTypeOnly && BUILTIN_SET.has(el.name.text))
-                    {
-                        names.add(el.name.text);
-                    }
-                }
-            }
-        }
-    }
-    return names;
-}
-
-/** Collects imported names and module-scope variable names from the opaque module regions. */
-function moduleBindScope(source: string, items: readonly { kind: string; start: number; end: number }[]): ModuleBindScope
+/** Collects value bindings once so diagnostics and builtin calls agree on their origin. */
+export function moduleBindScope(source: string, items: readonly ModuleItem[]): ModuleBindScope
 {
     const imports = new Set<string>();
     const vars = new Set<string>();
+    const shadowed = new Set<string>();
     for (const item of items)
     {
-        if (item.kind === 'component' || item.kind === 'style')
+        if (item.kind === 'component' && item.name === 'Show')
+        {
+            shadowed.add(item.name);
+        }
+        if (item.kind !== 'opaque')
         {
             continue;
         }
@@ -2256,9 +2219,18 @@ function moduleBindScope(source: string, items: readonly { kind: string; start: 
                 && statement.importClause.phaseModifier !== ts.SyntaxKind.TypeKeyword)
             {
                 const clause = statement.importClause;
+                const addImport = (name: string): void =>
+                {
+                    imports.add(name);
+                    if (BUILTIN_SET.has(name) && ts.isStringLiteral(statement.moduleSpecifier)
+                        && statement.moduleSpecifier.text !== 'azerothjs')
+                    {
+                        shadowed.add(name);
+                    }
+                };
                 if (clause.name !== undefined)
                 {
-                    imports.add(clause.name.text);
+                    addImport(clause.name.text);
                 }
                 if (clause.namedBindings !== undefined)
                 {
@@ -2272,7 +2244,7 @@ function moduleBindScope(source: string, items: readonly { kind: string; start: 
                         {
                             if (!element.isTypeOnly)
                             {
-                                imports.add(element.name.text);
+                                addImport(element.name.text);
                             }
                         }
                     }
@@ -2292,7 +2264,11 @@ function moduleBindScope(source: string, items: readonly { kind: string; start: 
             }
         }
     }
-    return { imports, vars };
+    if (vars.has('Show'))
+    {
+        shadowed.add('Show');
+    }
+    return { imports, vars, shadowed };
 }
 
 /**

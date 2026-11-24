@@ -15,16 +15,15 @@
  * a MutationObserver can observe each removal. Portal's automatic cleanup depends on that.
  */
 
+import { createBranchMount, createSelectionMemo, FailedSelection, ownBranchWork } from './branch-selection.ts';
 import { renderBranchValue } from './branch-value.ts';
-import { withHydrationRoots as withBranchRoots } from './adopt-roots.ts';
 import { createHydrationEffect } from '../reactivity/create-effect.ts';
 import { createSetupMemo } from '../reactivity/create-memo.ts';
-import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
 import { createMemo, onRootDispose, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
-import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '../component/index.ts';
-import { hydrateChild, materializeChild, resolveReactive } from './h.ts';
+import { type CoTarget, type MountNode, createCoMarkers, adoptCoRange } from '../component/index.ts';
+import { resolveReactive } from './h.ts';
 import type { Child } from './types.ts';
 
 /**
@@ -38,8 +37,8 @@ export interface ShowProps<W = boolean>
 {
     /**
      * The condition: a value, or a getter for reactivity. The branch is shown while this is
-     * TRUTHY, and only a truthy-to-falsy flip rebuilds - a change that stays truthy leaves the
-     * mounted branch alone, preserving its focus, scroll and uncontrolled input state.
+     * truthy. Compiled markup and manual value callbacks preserve the branch while truthiness
+     * stays the same. A manual zero-argument child rebuilds on tracked condition changes.
      */
     when: W | (() => W);
 
@@ -97,6 +96,17 @@ export interface ShowProps<W = boolean>
  */
 export function Show<W>(props: ShowProps<W>): MountNode
 {
+    return renderConditional(props, false);
+}
+
+/** @internal Compiled markup may resolve a locally shadowed Show. Forward its exact arguments. */
+export function renderShow<Args extends unknown[], Result>(factory: (...args: Args) => Result, ...args: Args): Result
+{
+    return Object.is(factory, Show) ? renderConditional(args[0] as ShowProps<unknown>, true) as Result : factory(...args);
+}
+
+function renderConditional<W>(props: ShowProps<W>, compiled: boolean): MountNode
+{
     // SSR: evaluate `when` ONCE (no live effect), emit the active branch inside a
     // contents anchor the client hydrator can adopt. The children callback gets a
     // constant accessor to that one evaluated value.
@@ -116,7 +126,7 @@ export function Show<W>(props: ShowProps<W>): MountNode
         return hydrationNode((cursor: HydrationCursorType): void =>
         {
             const { target, contentCursor } = adoptCoRange(cursor);
-            driveShow(props, target, true, contentCursor);
+            connect(target, true, contentCursor);
         }) as unknown as MountNode;
     }
 
@@ -124,9 +134,21 @@ export function Show<W>(props: ShowProps<W>): MountNode
     // so it is a DIRECT child of the real parent (legal inside <table>/<select>/<ul>).
     const { fragment, target } = createCoMarkers('show');
 
-    driveShow(props, target, false);
+    connect(target, false);
 
     return fragment;
+
+    function connect(range: CoTarget, adopting: boolean, cursor?: HydrationCursorType): void
+    {
+        if (compiled)
+        {
+            ownBranchWork(() => driveShow(props, range, adopting, cursor, true));
+        }
+        else
+        {
+            driveShow(props, range, adopting, cursor);
+        }
+    }
 }
 
 /**
@@ -140,19 +162,15 @@ export function Show<W>(props: ShowProps<W>): MountNode
  *                          server children instead of appending new ones.
  * @param hydrationCursor - The cursor over the server range (hydration path only).
  */
-export function driveShow<W>(props: ShowProps<W>, target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
+export function driveShow<W>(props: ShowProps<W>, target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType, compiled = false): void
 {
-    let branchDispose: DisposeFn | null = null;
-    let firstRun = hydrateFirstRun;
-
-    // Two children shapes share one prop. A THUNK `() => node` (arity 0) keeps the original contract: the
-    // swap effect reads `when` directly, so the branch rebuilds on ANY tracked `when` change (the thunk has
-    // no accessor, so a rebuild is how its content refreshes). A value CALLBACK `(value) => node` (arity 1)
-    // opts into the narrowed-accessor model below.
+    const branch = createBranchMount(target, hydrationCursor, '<Show> content');
+    // Value children share one sample; compiled plain children select by truthiness.
+    // Manual thunks and the Suspense driver refresh on their tracked condition changes.
     const usesValue = props.children.length >= 1;
 
     let buildShown: () => MountNode | MountNode[];
-    let readTruthy: () => boolean;
+    let readTruthy: () => boolean | FailedSelection;
 
     if (usesValue)
     {
@@ -182,57 +200,23 @@ export function driveShow<W>(props: ShowProps<W>, target: CoTarget, hydrateFirst
     {
         const when = (): NonNullable<W> => resolveReactive(props.when) as NonNullable<W>;
         buildShown = () => props.children(when);
-        readTruthy = () => Boolean(when());
+        const truthy = (): boolean => Boolean(when());
+        readTruthy = compiled ? createSelectionMemo(truthy, branch.mounted) : truthy;
     }
 
-    const buildActive = (isTruthy: boolean): Child => untrack(() =>
-        resolveReactive(isTruthy ? buildShown() : props.fallback)) as Child;
-
-    createHydrationEffect(hydrateFirstRun, () =>
+    createHydrationEffect(hydrateFirstRun, () => branch.mount(() =>
     {
         const isTruthy = readTruthy();
 
-        const adopting = firstRun;
-        firstRun = false;
-        withBranchRoots(openRoot =>
+        if (isTruthy instanceof FailedSelection)
         {
-            if (isTruthy || props.fallback !== undefined)
-            {
-                openRoot(dispose =>
-                {
-                    branchDispose = dispose;
-                    const child = buildActive(isTruthy);
-                    if (adopting)
-                    {
-                        hydrateChild(child, hydrationCursor as HydrationCursorType);
-                    }
-                    else
-                    {
-                        appendToCo(target, materializeChild(child));
-                    }
-                });
-            }
-            if (adopting)
-            {
-                hydrationCursor?.assertExhausted('<Show> content');
-            }
-        });
-
-        // teardownBranch is the SINGLE teardown path: run before every re-render AND on
-        // dispose, so no toggle leaks the rendered subtree's effects.
-        return teardownBranch;
-    });
-
-    function teardownBranch(): void
-    {
-        if (branchDispose)
-        {
-            branchDispose();
-            branchDispose = null;
+            return isTruthy;
         }
-
-        // Remove branch nodes one-by-one (so a MutationObserver fires - Portal cleanup
-        // relies on it) and run component destroy hooks; clearCo never touches the markers.
-        clearCo(target);
-    }
+        if (isTruthy)
+        {
+            return () => untrack(() => resolveReactive(buildShown())) as Child;
+        }
+        const fallback = compiled || usesValue ? untrack(() => props.fallback) : props.fallback;
+        return fallback ? () => untrack(() => resolveReactive(fallback)) as Child : undefined;
+    }));
 }

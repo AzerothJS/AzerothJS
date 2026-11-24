@@ -285,12 +285,8 @@ function driveDynamic(dynamicProps: DynamicProps, target: CoTarget, hydrateFirst
 
     function teardownBranch(): void
     {
-        if (branchDispose)
-        {
-            branchDispose();
-            branchDispose = null;
-        }
-
-        clearCo(target);
+        const dispose = branchDispose;
+        branchDispose = null;
+        clearCo(target, dispose);
     }
 }

@@ -642,16 +642,16 @@ describe('a hole whose value holds another hole hydrates in place', () =>
 
 describe('the runtime contract of the branch emit', () =>
 {
-    it('refuses a module compiled at v4 and names it the stale side', () =>
+    it.each([4, 5])('refuses a module compiled at v%i and names it the stale side', previous =>
     {
-        expect(() => runtime.assertRuntimeContract(4))
-            .toThrow(/compiled for azerothjs runtime contract v4, but the installed azerothjs speaks v5\..*This module is the stale side: rebuild it/s);
+        expect(() => runtime.assertRuntimeContract(previous))
+            .toThrow(`compiled for azerothjs runtime contract v${ previous }, but the installed azerothjs speaks v6. Compiled output and runtime must come from the same release train. This module is the stale side: rebuild it`);
     });
 
-    it('stamps the branch emit with v5, which loads on this runtime', () =>
+    it('stamps the branch emit with v6, which loads on this runtime', () =>
     {
-        expect(emit('soleTernary')).toContain('assertRuntimeContract(5);');
-        expect(EMITTED_CONTRACT_VERSION).toBe(5);
+        expect(emit('soleTernary')).toContain('assertRuntimeContract(6);');
+        expect(EMITTED_CONTRACT_VERSION).toBe(6);
         expect(() => compile('soleTernary')).not.toThrow();
     });
 });

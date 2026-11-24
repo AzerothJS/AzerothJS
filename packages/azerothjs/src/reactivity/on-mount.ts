@@ -29,7 +29,8 @@ import { assertFunction } from './validate.ts';
  * the next frame. Chain a requestAnimationFrame inside for after-paint work.
  *
  * It fires once per registration, not once per update, so it is not a "component rendered"
- * notification. Several onMount calls run in registration order.
+ * notification. Several onMount calls run in registration order. When a branch replaces
+ * a ref'd element, attach its listeners in markup, in the ref, or in a component mounted with it.
  *
  * If the owner is disposed before the microtask - a branch that swapped away in the same
  * run - `fn` never runs at all. A cleanup returned by `fn` is registered with that owner

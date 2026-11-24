@@ -25,7 +25,8 @@
  */
 
 import { HydrationCursor, HydrationMismatchError, resolveThunks } from '../reactivity/internal.ts';
-import { destroyComponent } from './destroy-component.ts';
+import { drainDestroyHooks, reportTeardownErrors, snapshotDestroyTargets } from './destroy-component.ts';
+import type { DisposeFn } from '../reactivity/types.ts';
 import { isSlotHandle, slotDriverOf } from '../reactivity/slot-handle.ts';
 
 /**
@@ -164,20 +165,44 @@ export function appendToCo(target: CoTarget, node: Node | null | undefined): voi
  * auto-cleanup relies on this); the markers themselves are never touched.
  *
  * @param target - The co-range to clear (markers preserved).
+ * @param dispose - Optional outgoing branch scope. Its failure still allows DOM cleanup to finish.
  */
-export function clearCo(target: CoTarget): void
+export function clearCo(target: CoTarget, dispose?: DisposeFn | null): void
 {
-    const parent = target.parent();
-    let node: ChildNode | null = target.start.nextSibling;
-
-    while (node !== null && node !== target.end)
+    // Scope and DOM cleanup may detach descendants or move the end marker. Capture only
+    // the original range. A pair already split across parents cannot identify content.
+    const parent = target.start.parentNode;
+    const outgoing: Array<{ node: ChildNode; hooks: readonly HTMLElement[] }> = [];
+    if (parent !== null && target.end.parentNode === parent)
     {
-        const next: ChildNode | null = node.nextSibling;
-        parent.removeChild(node);
-        if (node instanceof HTMLElement)
+        let node = target.start.nextSibling;
+        while (node !== null && node !== target.end)
         {
-            destroyComponent(node);
+            outgoing.push({ node, hooks: snapshotDestroyTargets(node) });
+            node = node.nextSibling;
         }
-        node = next;
+        if (node !== target.end)
+        {
+            outgoing.length = 0;
+        }
     }
+
+    const errors: unknown[] = [];
+    try
+    {
+        dispose?.();
+    }
+    catch (error)
+    {
+        errors.push(error);
+    }
+    for (const { node, hooks } of outgoing)
+    {
+        if (parent !== null && node.parentNode === parent)
+        {
+            parent.removeChild(node);
+        }
+        drainDestroyHooks(hooks, errors);
+    }
+    reportTeardownErrors(errors);
 }

@@ -1140,7 +1140,7 @@ describe('a read the drop does not reach still throws', () =>
         {
             setShown(user() !== null);
         }));
-        expect(attempt(() => setUser(null)) + ' | ' + host.textContent).toBe(' THREW Cannot read properties of null (reading \'name\') | ann');
+        expect(attempt(() => setUser(null)) + ' | ' + host.textContent).toBe(' THREW Cannot read properties of null (reading \'name\') | ');
     });
 
     it('a route page the navigation keeps open while a lazy page loads or an async guard runs', async () =>

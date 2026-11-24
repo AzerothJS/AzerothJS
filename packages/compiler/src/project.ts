@@ -46,6 +46,7 @@ import {
 } from './markup-util.ts';
 import { hostEventType, isBindingAttr, isFactoryProp, bindWriteBack, BUILTIN_SET } from 'azerothjs/semantics';
 import { parseModule } from './parser.ts';
+import { moduleBindScope } from './diagnostics.ts';
 import { findConstructs, splitTopLevelCommaSpans } from './lower-reactive.ts';
 import { parseDeclarationSlice, factoryPlan, parseComponentParam } from './ts-slice.ts';
 import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY } from './keyword-spec.ts';
@@ -1181,6 +1182,16 @@ export function generateVirtualCode(source: string): VirtualCode
         throw error;
     }
 
+    if (usedRuntime.has('Show'))
+    {
+        // A module binding already gives TypeScript the tag's type. Redeclaring it as
+        // the framework Show would hide a local factory or conflict with a default import.
+        const scope = moduleBindScope(source, module.items);
+        if (scope.imports.has('Show') || scope.shadowed.has('Show'))
+        {
+            usedRuntime.delete('Show');
+        }
+    }
     return finalize(builder, source, usedRuntime, usedHandler, usedRef, usedChildren, usedRender, usedRow, usedNarrow, usedForNames);
 }
 
@@ -1230,7 +1241,7 @@ function finalize(builder: Builder, source: string, usedRuntime: Set<string>, us
     }
     for (const name of usedRuntime)
     {
-        if (!alreadyImports(source, name))
+        if (name === 'Show' || !alreadyImports(source, name))
         {
             parts.push(`declare const ${ name }: typeof import('${ RUNTIME_MODULE }').${ name };`);
         }

@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { ModuleKind, ScriptTarget, transpileModule } from 'typescript';
 import { generateModule, EMITTED_CONTRACT_VERSION } from '../src/codegen.ts';
 import * as contract from 'azerothjs/internal';
 
@@ -66,6 +67,53 @@ function emittedRuntimeImports(code: string): { specifier: string; names: string
 
 describe('the compiled-output runtime contract', () =>
 {
+    it.each([
+        ['default import', "import Show from './custom';", 'Show'],
+        ['named import', "import { Factory as Show } from './custom';", 'Show'],
+        ['module declaration', 'function Show(...args) { return args.length; }', 'Show'],
+        ['component declaration', 'component Show { <i>own component</i> }', 'Show'],
+        ['lexical binding', "import { Factory } from './custom';", 'Factory']
+    ])('keeps the authored Show factory and argument list for a %s', (kind, declaration, factory) =>
+    {
+        // CommonJS lets the test load both a real internal runtime and an authored import.
+        // An ordinary local named like the compiler helper must also remain callable.
+        const calls = kind === 'lexical binding'
+            ? 'const draw = (Show, renderShow) => [<Show/>, <Show title="label"/>, renderShow()];'
+            : 'const draw = (factory, renderShow) => [<Show/>, <Show title="label"/>, renderShow()];';
+        const source = `${ declaration }\n${ calls }\nexport const run = () => draw(${ factory }, () => 'local');`;
+        const { code } = generateModule(source);
+        const { outputText } = transpileModule(code, { compilerOptions: { module: ModuleKind.CommonJS, target: ScriptTarget.ESNext } });
+        const exported = {} as { run: () => unknown[] };
+        const custom = (...args: unknown[]) => args.length;
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval -- execute the compiler's emitted module against its registered runtime
+        const load = new Function('require', 'exports', outputText) as (resolve: (name: string) => unknown, exports: object) => void;
+        load((name: string) => name === 'azerothjs/internal' ? contract : { __esModule: true, default: custom, Factory: custom }, exported);
+        const result = exported.run();
+        if (kind === 'component declaration')
+        {
+            expect(result.map(value => value instanceof HTMLElement ? value.textContent : value))
+                .toEqual(['own component', 'own component', 'local']);
+        }
+        else
+        {
+            expect(result).toEqual([0, 1, 'local']);
+        }
+    });
+
+    it('keeps the compiler dispatcher distinct from Unicode-escaped module and parameter names', () =>
+    {
+        const source = String.raw`const render\u0053how = () => 'outer';
+export const run = (render\u{0053}how$1) => [<Show when={true}><i>branch</i></Show>, render\u0053how(), render\u{0053}how$1()];`;
+        const { code } = generateModule(source);
+        const { outputText } = transpileModule(code, { compilerOptions: { module: ModuleKind.CommonJS, target: ScriptTarget.ESNext } });
+        const exported = {} as { run: (next: () => string) => [DocumentFragment, string, string] };
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval -- execute the compiler's emitted module
+        const load = new Function('require', 'exports', outputText) as (resolve: () => typeof contract, exports: object) => void;
+        load(() => contract, exported);
+        const [branch, outer, inner] = exported.run(() => 'inner');
+        expect([branch.textContent, outer, inner]).toEqual(['branch', 'outer', 'inner']);
+    });
+
     it('emitted code imports from azerothjs/internal - never the public entry', () =>
     {
         const { code } = generateModule(SINK, 'Sink.azeroth');
