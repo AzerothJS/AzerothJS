@@ -62,10 +62,41 @@ describe('host ref typing - element from tag and namespace', () =>
             .toEqual([]);
     });
 
+    it.each(['desc', 'title', 'foreignObject'])('projects HTML anchors inside SVG %s in direct and conditional children', name =>
+    {
+        const anchor = '<a ref={(e: HTMLAnchorElement) => e}>route</a>';
+        const source = `component C { <svg><${ name }>${ anchor }{true ? ${ anchor } : null}</${ name }></svg> }`;
+        expect(typeCheckModuleTS(source)).toEqual([]);
+        expect(diagnoseModule(source).filter(d => d.severity === 'error')).toEqual([]);
+    });
+
     it('foreignObject children return to the HTML namespace', () =>
     {
         expect(typeCheckModuleTS('component C { <svg><foreignObject><div ref={(e: HTMLDivElement) => e}>t</div></foreignObject></svg> }'))
             .toEqual([]);
+    });
+
+    it('projects a mixed-case SVG local name through its canonical DOM type', () =>
+    {
+        const source = 'component C { <svg><lineargradient ref={(e: SVGLinearGradientElement) => e} /></svg> }';
+        expect(typeCheckModuleTS(source)).toEqual([]);
+    });
+
+    it('preserves MathML integration exceptions across conditional children and callbacks', () =>
+    {
+        const math = '<mglyph ref={(e: MathMLElement) => e}/>';
+        const html = '<a ref={(e: HTMLAnchorElement) => e}>label</a>';
+        const svg = '<svg ref={(e: SVGSVGElement) => e}/>';
+        const source = `component C { <math><mi>{true ? ${ math } : ${ html }}<Show when={true} fallback={${ math }}/></mi><annotation-xml>{() => ${ svg }}</annotation-xml></math> }`;
+        expect(typeCheckModuleTS(source)).toEqual([]);
+        expect(code(source).match(/satisfies AzerothRef<'mglyph', 'math'>/g)).toHaveLength(2);
+        expect(code(source)).toContain("satisfies AzerothRef<'svg', 'svg'>");
+    });
+
+    it('treats an anchor constructed inside an SVG host callback as a detached HTML value', () =>
+    {
+        const source = 'component C { <svg><g onClick={() => <a ref={(e: HTMLAnchorElement) => e}>label</a>}/></svg> }';
+        expect(typeCheckModuleTS(source)).toEqual([]);
     });
 
     it('a MathML-subtree element types through the MathML map - the parser\'s other foreign branch', () =>

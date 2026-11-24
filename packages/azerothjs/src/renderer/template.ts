@@ -17,6 +17,7 @@
  */
 
 import { isStringMode, isHydrating } from '../reactivity/index.ts';
+import type { HostNamespace } from '../semantics.ts';
 import { parseContainerFor } from './namespace.ts';
 
 /** @internal The template root's tag name, or '' when the html does not start with one. */
@@ -43,7 +44,7 @@ function rootTagOf(html: string): string
  *
  * @internal Compiler-emitted runtime; not part of the application API.
  */
-export function tmpl(html: string): () => HTMLElement
+export function tmpl(html: string, namespace?: HostNamespace): () => HTMLElement
 {
     let template: HTMLTemplateElement | null = null;
 
@@ -66,7 +67,7 @@ export function tmpl(html: string): () => HTMLElement
             // HTML element and never paint, while the same markup built through h() lands
             // in the SVG namespace. Parsing inside the container and unwrapping keeps the
             // two paths identical.
-            const container = parseContainerFor(rootTagOf(html));
+            const container = parseContainerFor(rootTagOf(html), namespace);
             template.innerHTML = container === null ? html : `<${ container }>${ html }</${ container }>`;
             if (container !== null)
             {

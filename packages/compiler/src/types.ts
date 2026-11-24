@@ -19,6 +19,9 @@
  * @see {@link MarkupChild}
  */
 
+import type { HostNamespace, MarkupContext } from 'azerothjs/semantics';
+export type { MarkupContext } from 'azerothjs/semantics';
+
 /** Offsets into the original source string. */
 export interface Span
 {
@@ -41,6 +44,10 @@ export interface MarkupElement extends Span
     tag: string;
     /** True for components (capitalised / dotted tag). */
     isComponent: boolean;
+    /** A host's namespace, or the incoming render context for a component's children. */
+    namespace?: HostNamespace;
+    /** MathML integration context inherited by renderable component props and callbacks. */
+    context?: MarkupContext;
     attributes: MarkupAttribute[];
     children: MarkupChild[];
 }
@@ -69,6 +76,8 @@ export interface MarkupText extends Span
 export interface MarkupExpression extends Span
 {
     kind: 'expression';
+    /** Context for markup nested inside this child expression. */
+    namespace?: MarkupContext;
     /** Raw JS source inside the braces, with nested markup left in place. */
     code: string;
 }

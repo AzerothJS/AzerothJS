@@ -39,6 +39,7 @@ export default component Sink
     dispose { console.log('gone'); }
     <main class="a" class:active={n > 0} style:color={'red'}>
         <input bind:value={txt} onInput={(e) => e} />
+        <svg><style>.note { fill: green }</style></svg>
         <Show when={n > 0} fallback={<p>none</p>}><span>{ double }</span></Show>
         <For each={[1,2]} key={(i) => i} let={ i }><li>{i}</li></For>
         <Switch value={n}><Match when={1}><b>one</b></Match></Switch>
@@ -126,6 +127,7 @@ export const run = (render\u{0053}how$1) => [<Show when={true}><i>branch</i></Sh
         const { code } = generateModule(SINK, 'Sink.azeroth');
         const { names } = emittedRuntimeImports(code);
         expect(names.length).toBeGreaterThan(20); // the sink genuinely exercises the vocabulary
+        expect(names).toContain('hNS');
         const exported = new Set(Object.keys(contract));
         for (const name of names)
         {

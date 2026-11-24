@@ -27,7 +27,7 @@
 
 import * as ts from 'typescript';
 
-import type { Span, MarkupElement, MarkupFragment, MarkupChild } from './types.ts';
+import type { MarkupContext, Span, MarkupElement, MarkupFragment, MarkupChild } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
 import type { RenderPlan } from './ir.ts';
 import { renderSources, type Dep, type ReactiveSources } from './dep.ts';
@@ -35,7 +35,7 @@ import { renderSources, type Dep, type ReactiveSources } from './dep.ts';
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import { lowerMarkup, renderClone, componentChildren } from './lower.ts';
-import { markupBindingName } from './markup-util.ts';
+import { attributeMarkupContext, markupBindingName } from './markup-util.ts';
 import { parseDeclarationSlice, parseStatementsSlice, parseExpressionSlice, parseComponentParam, formFieldKeys } from './ts-slice.ts';
 import { collectReads } from './resolve.ts';
 import { componentPropAliases } from './prop-aliases.ts';
@@ -508,9 +508,9 @@ function parsedExpression(code: string): ts.Expression | undefined
 }
 
 /** Analyzes one expression's source (projecting any nested markup first). */
-function analyzeExpression(code: string, reactive: ReactiveSources, anchor = 0): { deps: Dep[]; pure: boolean }
+function analyzeExpression(code: string, reactive: ReactiveSources, anchor = 0, namespace?: MarkupContext): { deps: Dep[]; pure: boolean }
 {
-    const { sourceFile } = parseExpressionSlice(projectMarkup(code, 0, anchor), 0);
+    const { sourceFile } = parseExpressionSlice(projectMarkup(code, 0, anchor, namespace), 0);
     return { deps: collectReads(sourceFile, reactive), pure: isPure(sourceFile) };
 }
 
@@ -526,7 +526,7 @@ function collectMarkupBindings(source: string, node: MarkupElement | MarkupFragm
         }
         if (child.kind === 'expression')
         {
-            const { deps, pure } = analyzeExpression(child.code, current, child.start);
+            const { deps, pure } = analyzeExpression(child.code, current, child.start, child.namespace);
             scopes.push({ origin: 'text', span: { start: child.start, end: child.end }, deps, pure });
             return;
         }
@@ -548,7 +548,7 @@ function collectMarkupBindings(source: string, node: MarkupElement | MarkupFragm
                         (childLocals ??= new Set(current.locals)).add(declared);
                         continue;
                     }
-                    const { deps, pure } = analyzeExpression(attr.value.code, current, attr.start);
+                    const { deps, pure } = analyzeExpression(attr.value.code, current, attr.start, attributeMarkupContext(n, attr));
                     scopes.push({ origin: 'attribute', span: { start: attr.start, end: attr.end }, deps, pure });
                 }
             }
@@ -560,7 +560,7 @@ function collectMarkupBindings(source: string, node: MarkupElement | MarkupFragm
             const arrow = children.length === 1 ? children[0] : undefined;
             if (arrow?.kind === 'expression')
             {
-                const clone = renderClone(source, { start: arrow.start + 1, end: arrow.end - 1 });
+                const clone = renderClone(source, { start: arrow.start + 1, end: arrow.end - 1 }, arrow.namespace);
                 if (clone !== null)
                 {
                     if (depth >= MAX_MARKUP_DEPTH)
@@ -597,7 +597,7 @@ function collectMarkupBindings(source: string, node: MarkupElement | MarkupFragm
  *
  * @internal
  */
-const projectMarkup = (code: string, holeDepth = 0, anchor = 0): string =>
+const projectMarkup = (code: string, holeDepth = 0, anchor = 0, namespace?: MarkupContext): string =>
 {
     let out = '';
     let j = 0;
@@ -617,7 +617,7 @@ const projectMarkup = (code: string, holeDepth = 0, anchor = 0): string =>
         }
         try
         {
-            const { node, end } = parseMarkup(code, start);
+            const { node, end } = parseMarkup(code, start, namespace);
             out += `[${ collectExprs(code, lowerMarkup(code, node), holeDepth + 1, anchor).join(', ') }]`;
             j = end;
         }
@@ -643,9 +643,9 @@ const projectMarkup = (code: string, holeDepth = 0, anchor = 0): string =>
 function collectExprs(code: string, plan: RenderPlan, holeDepth = 0, anchor = 0): string[]
 {
     const out: string[] = [];
-    const add = (span: Span): void =>
+    const add = (span: Span, namespace?: MarkupContext): void =>
     {
-        out.push(projectMarkup(code.slice(span.start, span.end), holeDepth, anchor));
+        out.push(projectMarkup(code.slice(span.start, span.end), holeDepth, anchor, namespace));
     };
     for (const binding of plan.bindings)
     {
@@ -657,7 +657,7 @@ function collectExprs(code: string, plan: RenderPlan, holeDepth = 0, anchor = 0)
             case 'text':
             case 'attribute':
             case 'spread':
-                add(binding.expr.span);
+                add(binding.expr.span, binding.expr.namespace);
                 break;
             case 'event':
                 add(binding.handler);
@@ -699,7 +699,7 @@ function collectExprs(code: string, plan: RenderPlan, holeDepth = 0, anchor = 0)
                     {
                         case 'prop':
                         case 'spread':
-                            add(prop.expr.span);
+                            add(prop.expr.span, prop.expr.namespace);
                             break;
                         case 'event':
                             add(prop.handler);
@@ -723,7 +723,7 @@ function collectExprs(code: string, plan: RenderPlan, holeDepth = 0, anchor = 0)
                 }
                 else if (children.kind === 'dynamic')
                 {
-                    add(children.expr.span);
+                    add(children.expr.span, children.expr.namespace);
                 }
                 else if ('template' in children.body)
                 {
@@ -731,7 +731,7 @@ function collectExprs(code: string, plan: RenderPlan, holeDepth = 0, anchor = 0)
                 }
                 else
                 {
-                    add(children.body.span);
+                    add(children.body.span, children.body.namespace);
                 }
                 break;
             }

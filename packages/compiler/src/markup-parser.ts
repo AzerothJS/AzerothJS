@@ -23,42 +23,20 @@ import type {
     MarkupText
 } from './types.ts';
 import {
+    attributeParsingContext,
+    decodeEntities,
     findMarkupStart,
+    rawTextEnd,
     isIdentStart,
     isIdentPart,
     isWhitespace,
     skipBalanced,
     skipString
 } from './scanner.ts';
-import { VOID_ELEMENTS, contentModel, isComponentTag, voidChildrenMessage } from 'azerothjs/semantics';
-
-/**
- * The named HTML character references decoded in text content. Numeric references (`&#38;`,
- * `&#x26;`) are handled generically; this table covers the common named set (an unknown name is
- * left verbatim). The five XML built-ins plus the entities real markup routinely carries -
- * spaces, dashes, quotes, symbols, arrows, and common accents.
- */
-const NAMED_ENTITIES: Readonly<Record<string, string>> = {
-    amp: '&', lt: '<', gt: '>', quot: '"', apos: '\'', nbsp: ' ',
-    copy: '©', reg: '®', trade: '™', hellip: '…',
-    mdash: '—', ndash: '–', lsquo: '‘', rsquo: '’',
-    ldquo: '“', rdquo: '”', laquo: '«', raquo: '»',
-    times: '×', divide: '÷', plusmn: '±', deg: '°',
-    micro: 'µ', para: '¶', sect: '§', middot: '·',
-    bull: '•', dagger: '†', Dagger: '‡', permil: '‰',
-    prime: '′', Prime: '″', euro: '€', pound: '£',
-    cent: '¢', yen: '¥', curren: '¤', frac12: '½',
-    frac14: '¼', frac34: '¾', larr: '←', uarr: '↑',
-    rarr: '→', darr: '↓', harr: '↔', hearts: '♥',
-    spades: '♠', clubs: '♣', diams: '♦', check: '✓',
-    cross: '✗', star: '★', ensp: ' ', emsp: ' ',
-    thinsp: ' ', zwnj: '‌', zwj: '‍', shy: '­',
-    iexcl: '¡', iquest: '¿', ordf: 'ª', ordm: 'º',
-    aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó',
-    uacute: 'ú', ntilde: 'ñ', uuml: 'ü', ouml: 'ö',
-    auml: 'ä', szlig: 'ß', ccedil: 'ç', agrave: 'à',
-    egrave: 'è'
-};
+import {
+    VOID_ELEMENTS, contentModel, elementNamespace, hostChildContext, hostNamespaceForTag,
+    isComponentTag, resolveMarkupContext, voidChildrenMessage, type MarkupContext
+} from 'azerothjs/semantics';
 
 /**
  * Thrown when the markup is malformed. Carries the source offset.
@@ -130,6 +108,12 @@ export function markupDepthError(offset: number): CompileError
     return error;
 }
 
+/** Last attribute that can set the encoding, in prop application order. */
+export function annotationEncoding(node: MarkupElement): MarkupAttribute | undefined
+{
+    return node.attributes.findLast(attr => attr.spread || attr.name?.toLowerCase() === 'encoding' || attr.name?.toLowerCase() === 'bind:encoding');
+}
+
 class MarkupParser
 {
     /**
@@ -158,9 +142,9 @@ class MarkupParser
     }
 
     /** Entry point; `pos` must be at the opening `<`. */
-    public parse(): MarkupElement | MarkupFragment
+    public parse(parentNamespace?: MarkupContext): MarkupElement | MarkupFragment
     {
-        return this.#parseElement();
+        return this.#parseElement(parentNamespace);
     }
 
     #peek(offset = 0): string
@@ -189,7 +173,7 @@ class MarkupParser
     }
 
     /** `pos` at `<`. Parses an element or `<>...</>` fragment. */
-    #parseElement(): MarkupElement | MarkupFragment
+    #parseElement(parent?: MarkupContext): MarkupElement | MarkupFragment
     {
         const start = this.pos;
         this.#expect('<');
@@ -202,7 +186,7 @@ class MarkupParser
                 this.committed = true;
             }
             this.pos++; // past '>'
-            const children = this.#parseChildren();
+            const children = this.#parseChildren(parent);
             this.#expectClosingTag(''); // </>
             return { kind: 'fragment', children, start, end: this.pos };
         }
@@ -231,7 +215,19 @@ class MarkupParser
         }
 
         const tag = this.#readTagName();
-        const attributes = this.#parseAttributes();
+        const context = parent === undefined ? undefined : resolveMarkupContext(parent, tag);
+        const isComponent = isComponentTag(tag);
+        const namespace = isComponent ? context : elementNamespace(tag, context ?? hostNamespaceForTag(tag));
+        const attributes = this.#parseAttributes(isComponent, parent);
+        const node: MarkupElement = { kind: 'element', tag, isComponent, attributes, children: [], start, end: this.pos };
+        if (namespace !== undefined)
+        {
+            node.namespace = namespace;
+        }
+        if (isComponent && parent !== undefined && parent !== namespace)
+        {
+            node.context = parent;
+        }
         this.#skipWs();
 
         // Self-closing: `<tag ... />` (the `/>` is unambiguously markup).
@@ -243,15 +239,8 @@ class MarkupParser
             }
             this.pos++;
             this.#expect('>');
-            return {
-                kind: 'element',
-                tag,
-                isComponent: isComponentTag(tag),
-                attributes,
-                children: [],
-                start,
-                end: this.pos
-            };
+            node.end = this.pos;
+            return node;
         }
 
         this.#expect('>');
@@ -273,41 +262,28 @@ class MarkupParser
         // Authored children ARE a located error, not leftovers: without the lookahead below, a root
         // `<input>text</input>` ends the markup region at the void tag and `text</input>` leaks into
         // the surrounding code as garbage the author is then blamed for.
-        if (VOID_ELEMENTS.has(tag))
+        if (namespace === 'html' && VOID_ELEMENTS.has(tag))
         {
             this.#rejectVoidChildren(tag);
-            return {
-                kind: 'element',
-                tag,
-                isComponent: false,
-                attributes,
-                children: [],
-                start,
-                end: this.pos
-            };
+            node.end = this.pos;
+            return node;
         }
 
-        // `<script>`/`<style>` in any case is raw text, read verbatim to its close tag and never
-        // parsed for holes or tags, which would corrupt CSS/JS/JSON-LD. `<Style>` is untouched.
-        if (!isComponentTag(tag) && contentModel(tag) === 'raw-text')
+        // Both text models keep CSS and JSON-LD free of hole parsing. Only foreign text has CDATA sections.
+        const model = isComponent ? null : contentModel(tag, namespace);
+        if (model === 'raw-text' || model === 'foreign-text')
         {
-            const raw = this.#parseRawText(tag);
-            this.#expectClosingTag(tag);
-            return { kind: 'element', tag, isComponent: false, attributes, children: raw, start, end: this.pos };
+            node.children = this.#parseRawText(tag, model === 'foreign-text');
         }
-
-        const children = this.#parseChildren();
+        else
+        {
+            const encoding = tag.toLowerCase() === 'annotation-xml' ? annotationEncoding(node)?.value : undefined;
+            const childContext = isComponent ? parent : hostChildContext(tag, namespace ?? 'html', encoding?.kind === 'static' ? encoding.value : undefined);
+            node.children = this.#parseChildren(childContext);
+        }
         this.#expectClosingTag(tag);
-
-        return {
-            kind: 'element',
-            tag,
-            isComponent: isComponentTag(tag),
-            attributes,
-            children,
-            start,
-            end: this.pos
-        };
+        node.end = this.pos;
+        return node;
     }
 
     /**
@@ -318,27 +294,32 @@ class MarkupParser
      * `<div>`). Returns a single text child (or none, for an empty element); `pos` is left at the `<`
      * of the close tag for {@link #expectClosingTag}.
      */
-    #parseRawText(tag: string): MarkupChild[]
+    #parseRawText(tag: string, foreign: boolean): MarkupChild[]
     {
         const start = this.pos;
-        while (this.pos < this.#src.length)
+        this.pos = rawTextEnd(this.#src, start, tag);
+        let value = this.#src.slice(start, this.pos);
+        if (foreign && value.includes('<![CDATA['))
         {
-            if (this.#peek() === '<' && this.#peek(1) === '/'
-                && this.#src.slice(this.pos + 2, this.pos + 2 + tag.length) === tag)
+            const pieces: string[] = [];
+            let cursor = 0;
+            let section = value.indexOf('<![CDATA[');
+            while (section !== -1)
             {
-                const after = this.#src[this.pos + 2 + tag.length];
-                if (after === undefined || after === '>' || after === '/' || isWhitespace(after))
+                const content = section + '<![CDATA['.length;
+                const close = value.indexOf(']]>', content);
+                if (close === -1)
                 {
-                    break;
+                    throw new CompileError(`Unclosed CDATA section in <${ tag }>; end the section with ]]>`, start + section);
                 }
+                pieces.push(value.slice(cursor, section), value.slice(content, close));
+                cursor = close + ']]>'.length;
+                section = value.indexOf('<![CDATA[', cursor);
             }
-            this.pos++;
+            pieces.push(value.slice(cursor));
+            value = pieces.join('');
         }
-        if (this.pos === start)
-        {
-            return [];
-        }
-        return [{ kind: 'text', value: this.#src.slice(start, this.pos), start, end: this.pos }];
+        return value === '' ? [] : [{ kind: 'text', value, start, end: this.pos }];
     }
 
     /** Reads a tag name: identifiers plus `.` (`Foo.Bar`) and `-` (custom elements). */
@@ -365,7 +346,7 @@ class MarkupParser
         return this.#src.slice(start, this.pos);
     }
 
-    #parseAttributes(): MarkupAttribute[]
+    #parseAttributes(isComponent: boolean, context?: MarkupContext): MarkupAttribute[]
     {
         const attrs: MarkupAttribute[] = [];
 
@@ -389,7 +370,7 @@ class MarkupParser
                 {
                     this.committed = true;
                 }
-                const end = skipBalanced(this.#src, this.pos);
+                const end = skipBalanced(this.#src, this.pos, attributeParsingContext(isComponent, null, context));
                 const inner = this.#src.slice(this.pos + 1, end - 1).trim();
                 this.pos = end;
                 const code = inner.startsWith('...') ? inner.slice(3).trim() : inner;
@@ -434,7 +415,7 @@ class MarkupParser
 
             if (valueChar === '{')
             {
-                const end = skipBalanced(this.#src, this.pos);
+                const end = skipBalanced(this.#src, this.pos, attributeParsingContext(isComponent, name, context));
                 const code = this.#src.slice(this.pos + 1, end - 1).trim();
                 this.pos = end;
                 attrs.push({
@@ -453,7 +434,7 @@ class MarkupParser
                 // `title="Tom &amp; Jerry"` carries the `&` the author meant instead of reaching the
                 // emitter as literal entity text and being escaped a second time. NOT normalised:
                 // whitespace collapse is text-node-specific, an attribute value keeps its spacing.
-                const value = MarkupParser.#decodeEntities(this.#src.slice(this.pos + 1, end - 1));
+                const value = decodeEntities(this.#src.slice(this.pos + 1, end - 1));
                 this.pos = end;
                 attrs.push({
                     kind: 'attribute',
@@ -499,7 +480,7 @@ class MarkupParser
         return this.#src.slice(start, this.pos);
     }
 
-    #parseChildren(): MarkupChild[]
+    #parseChildren(parent?: MarkupContext): MarkupChild[]
     {
         const children: MarkupChild[] = [];
 
@@ -521,7 +502,7 @@ class MarkupParser
                 {
                     throw markupDepthError(this.pos);
                 }
-                children.push(this.#parseElement());
+                children.push(this.#parseElement(parent));
                 this.#depth--;
                 continue;
             }
@@ -529,13 +510,13 @@ class MarkupParser
             if (this.#peek() === '{')
             {
                 const start = this.pos;
-                const end = skipBalanced(this.#src, this.pos);
+                const end = skipBalanced(this.#src, this.pos, parent);
                 const code = this.#src.slice(this.pos + 1, end - 1);
                 this.pos = end;
                 // Drop comment-only / empty holes (e.g. `{/* note */}`).
                 if (!MarkupParser.#isEmptyExpression(code))
                 {
-                    children.push({ kind: 'expression', code, start, end });
+                    children.push({ kind: 'expression', code, start, end, ...(parent !== undefined && { namespace: parent }) });
                 }
                 continue;
             }
@@ -604,34 +585,7 @@ class MarkupParser
         // whole run at every start offset and hands it back one character at a time. Measured at
         // 160000 spaces: 4.6s for the pattern form, 0.2ms for this one. It matters because lintSource
         // and generateVirtualCode re-normalise the region on every keystroke.
-        return MarkupParser.#decodeEntities(raw.replace(/\s+/g, run => run.includes('\n') ? ' ' : run));
-    }
-
-    /**
-     * Decodes HTML character references in text content, so authored `&amp;`/`&lt;`/`&nbsp;`/
-     * `&copy;`/`&#38;` become the characters they name (matching HTML/JSX/Vue/Svelte), instead of
-     * rendering as the literal entity text. Only text nodes are decoded - `<script>`/`<style>` CDATA
-     * is read separately and never reaches here. Numeric references are fully supported; named
-     * references cover the common set, and an unknown name is left verbatim (safe degradation).
-     */
-    static #decodeEntities(text: string): string
-    {
-        if (!text.includes('&'))
-        {
-            return text;
-        }
-        return text.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]*);/g, (whole, body: string) =>
-        {
-            if (body.charCodeAt(0) === 35) // '#'
-            {
-                const code = body[1] === 'x' || body[1] === 'X'
-                    ? parseInt(body.slice(2), 16)
-                    : parseInt(body.slice(1), 10);
-                return Number.isFinite(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : whole;
-            }
-            const named = NAMED_ENTITIES[body];
-            return named !== undefined ? named : whole;
-        });
+        return decodeEntities(raw.replace(/\s+/g, run => run.includes('\n') ? ' ' : run));
     }
 
     /** True when a `{ ... }` hole has no actual expression (only comments/space). */
@@ -724,6 +678,7 @@ class MarkupParser
  *
  * @param src - The module source.
  * @param start - MUST be the offset of the opening `<`. Anywhere else throws or mis-parses.
+ * @param parentNamespace - The insertion context for embedded markup. A standalone root uses its tag.
  * @returns The parsed node, and the offset just past the region.
  * @throws {CompileError} On malformed markup - a mismatched or unclosed tag - carrying the
  *                        offending offset. A caller scanning a whole module should catch it,
@@ -736,12 +691,12 @@ class MarkupParser
  *
  * @see {@link findMarkupStart}, which supplies `start`.
  */
-export function parseMarkup(src: string, start: number): { node: MarkupElement | MarkupFragment; end: number }
+export function parseMarkup(src: string, start: number, parentNamespace?: MarkupContext): { node: MarkupElement | MarkupFragment; end: number }
 {
     const parser = new MarkupParser(src, start);
     try
     {
-        const node = parser.parse();
+        const node = parser.parse(parentNamespace);
         return { node, end: parser.pos };
     }
     catch (err)

@@ -12,6 +12,13 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- HTML script and style now use the same text encoding in client templates and SSR.
+  Legacy raw-text elements display decoded static text consistently. Inline SVG and
+  MathML styles and inert scripts retain their namespace and text across rendering
+  modes. SVG titles and descriptions accept HTML children with correctly typed refs.
+  Rebuild precompiled components and deploy matching client and server bundles with
+  compiler/runtime contract 7.
+
 - A component inside a reactive hole keeps its input, selection and focus when a prop
   sampled during setup changes. An `ErrorBoundary` also keeps the active child or
   fallback on such a write. A copied prop now keeps its initial value for that mount.

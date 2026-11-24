@@ -30,8 +30,9 @@
  */
 
 import * as ts from 'typescript';
-import { isBindingAttr } from 'azerothjs/semantics';
+import { isBindingAttr, type MarkupContext } from 'azerothjs/semantics';
 import { blankMarkupRegions } from './markup-parser.ts';
+import { attributeParsingContext } from './scanner.ts';
 import { parseExpressionSlice } from './ts-slice.ts';
 import type {
     MarkupAttribute,
@@ -40,6 +41,12 @@ import type {
     MarkupExpression,
     MarkupFragment
 } from './types.ts';
+
+/** Ordinary component props and spreads may supply renderable children, including a fallback. */
+export function attributeMarkupContext(node: MarkupElement, attr: MarkupAttribute): MarkupContext | undefined
+{
+    return attributeParsingContext(node.isComponent, attr.name, node.context ?? node.namespace);
+}
 
 /** The accessor name a builtin's let or index attribute declares for its children. */
 export function markupBindingName(tag: string, attr: MarkupAttribute): string | undefined

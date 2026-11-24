@@ -27,12 +27,15 @@ import { createEffect, createRoot, isStringMode, isHydrating, onRootDispose, unt
 import { hydrationNode, isHydrationNode, HydrationCursor, HydrationMismatchError, transferCarriedSymbols, resolveThunks, isImpliedTbody } from '../reactivity/internal.ts';
 import { destroyComponent } from '../component/index.ts';
 import { isSlotHandle, slotDriverOf, refuseSlotHandle } from '../reactivity/slot-handle.ts';
-import { serializeElement, assertSafeAttribute, assertSafeTag, isAriaBoolean, joinText, holdsGetter } from './ssr.ts';
-import type { PeerAttr } from './ssr.ts';
+import { serializeElement, contentOwner, readContent, assertSafeAttribute, assertSafeTag, isAriaBoolean, joinText, holdsGetter } from './ssr.ts';
+import type { ContentOwner, PeerAttr } from './ssr.ts';
 import { writeSelectValue, settleSelectValue, watchFormResets } from './select-value.ts';
 import { boundText, setText, resetPending } from './text-value.ts';
 import { attachEvent } from './delegate.ts';
 import {
+    canonicalForeignTag,
+    neutralizeRawText,
+    hostNamespaceForTag,
     isChildResolvedProperty,
     isTextValueProperty,
     contentModel,
@@ -50,7 +53,8 @@ import {
     DOM_PROPERTIES,
     VOID_ELEMENTS
 } from '../semantics.ts';
-import { createElementByTag } from './namespace.ts';
+import type { HostNamespace } from '../semantics.ts';
+import { createElementByTag, NAMESPACE_URIS } from './namespace.ts';
 
 /**
  * Creates a real DOM element with the given props and children, wiring every reactive prop
@@ -94,39 +98,45 @@ import { createElementByTag } from './namespace.ts';
  */
 export function h(tag: string, props: Props | null, ...children: Child[]): HTMLElement
 {
+    return buildHost(undefined, tag, props, children);
+}
+
+/** Build a compiled host whose namespace was established by its lexical parent. */
+export function hNS(namespace: HostNamespace, tag: string, props: Props | null, ...children: Child[]): HTMLElement
+{
+    return buildHost(namespace, tag, props, children);
+}
+
+function buildHost(namespace: HostNamespace | undefined, tag: string, props: Props | null, children: Child[]): HTMLElement
+{
     // null is the conventional "no props" spelling (createElement muscle memory, and the natural
     // shape for element-only nodes). Normalized ONCE here so every path below - including
     // string-mode serialization, which iterates entries - sees an object.
     const properties = props ?? {};
+    const owner = contentOwner(properties);
 
     // Ahead of the mode dispatch, so an executable tag is refused identically whether it would
     // be serialized, adopted, or built. Returns the concrete name (an unsafeTag() marker is not
     // a string), which is what every mode below builds with.
-    const tagName = assertSafeTag(tag, properties);
+    const vettedTag = assertSafeTag(tag, properties);
+    const tagName = namespace === 'svg' || namespace === 'math' ? canonicalForeignTag(vettedTag, namespace) : vettedTag;
+    const host = namespace ?? hostNamespaceForTag(tagName);
 
     // Structural rules, also ahead of the dispatch so all three modes accept the same calls:
     // a void element owns no content, and a content property owns ALL of it.
-    if (VOID_ELEMENTS.has(tagName) && hasRenderableChildren(children))
+    if (host === 'html' && VOID_ELEMENTS.has(tagName) && hasRenderableChildren(children))
     {
         throw new TypeError(voidChildrenMessage(tagName));
     }
-    for (const contentProp of CONTENT_PROPERTIES)
+    if (owner !== null)
     {
-        if (Object.hasOwn(properties, contentProp) && hasRenderableChildren(children))
+        if (hasRenderableChildren(children))
         {
-            throw new TypeError(contentChildrenMessage(contentProp));
+            throw new TypeError(contentChildrenMessage(owner.key));
         }
-    }
-    // A textarea's value and a content property cannot both own its text; beside children the
-    // value wins.
-    if (Object.hasOwn(properties, 'value') && isTextValueProperty('value', tagName))
-    {
-        for (const contentProp of CONTENT_PROPERTIES)
+        if (Object.hasOwn(properties, 'value') && isTextValueProperty('value', tagName))
         {
-            if (Object.hasOwn(properties, contentProp))
-            {
-                throw new TypeError(textValueOwnerMessage(contentProp));
-            }
+            throw new TypeError(textValueOwnerMessage(owner.key));
         }
     }
 
@@ -136,14 +146,14 @@ export function h(tag: string, props: Props | null, ...children: Child[]): HTMLE
     // element would in the DOM path.
     if (isStringMode())
     {
-        return serializeElement(tagName, properties, children) as unknown as HTMLElement;
+        return serializeElement(tagName, properties, children, host, owner) as unknown as HTMLElement;
     }
 
     // Hydration: don't build DOM. Return a descriptor that, when walked by
     // hydrate(), adopts the matching server-rendered element in place.
     if (isHydrating())
     {
-        return createHydrationNode(tagName, properties, children) as unknown as HTMLElement;
+        return createHydrationNode(tagName, properties, children, namespace, owner) as unknown as HTMLElement;
     }
 
     // DOM-build path (not the compiled hot path - that clones tmpl()). A missing `document` here
@@ -157,13 +167,13 @@ export function h(tag: string, props: Props | null, ...children: Child[]): HTMLE
             + 'building it eagerly (renderToString(App())) runs h() against a missing DOM.');
     }
 
-    const el = createElementByTag(tagName);
+    const el = createElementByTag(tagName, host);
 
-    applyProps(el, properties);
+    applyProps(el, properties, owner);
 
     // A textarea's or a title's children are its one text; a noscript's content is the server's.
-    const model = contentModel(tagName);
-    if (model === 'escapable-raw-text')
+    const model = contentModel(tagName, host);
+    if (model === 'escapable-raw-text' || model === 'foreign-text')
     {
         if (hasRenderableChildren(children))
         {
@@ -189,8 +199,10 @@ export function h(tag: string, props: Props | null, ...children: Child[]): HTMLE
  *
  * @internal
  */
-function applyProps(el: HTMLElement, props: Props): void
+function applyProps(el: HTMLElement, props: Props, owner: ContentOwner | null = contentOwner(props)): void
 {
+    const body = owner === null ? undefined : readContent(props, owner);
+    let bodyApplied = false;
     // Untracked: reading a sibling to JUDGE a write must not subscribe the writing effect to
     // it, which would re-run this attribute whenever an unrelated one changed.
     const peer = (attr: string): unknown =>
@@ -218,6 +230,15 @@ function applyProps(el: HTMLElement, props: Props): void
             continue;
         }
 
+        if (CONTENT_PROPERTIES.has(key))
+        {
+            if (key === owner?.key)
+            {
+                bindProperty(el, key, body, peer);
+                bodyApplied = true;
+            }
+            continue;
+        }
         const value = props[key];
         // `ref` is never a DOM attribute: it hands the element back to the caller. Must run
         // before the reactive-function branch below, or a ref callback would be mistaken for a
@@ -239,16 +260,23 @@ function applyProps(el: HTMLElement, props: Props): void
             throw new TypeError(reservedHostAttributeMessage(key));
         }
 
-        if (typeof value === 'function')
-        {
-            createEffect(() =>
-            {
-                const resolved = resolveReactive(value);
-                setProperty(el, key, resolved, peer);
-            });
-            continue;
-        }
+        bindProperty(el, key, value, peer);
+    }
+    // A non-enumerable owner, or one removed by an earlier getter, still owns the captured value.
+    if (owner !== null && !bodyApplied)
+    {
+        bindProperty(el, owner.key, body, peer);
+    }
+}
 
+function bindProperty(el: HTMLElement, key: string, value: unknown, peer: PeerAttr): void
+{
+    if (typeof value === 'function')
+    {
+        createEffect(() => setProperty(el, key, resolveReactive(value), peer));
+    }
+    else
+    {
         setProperty(el, key, value, peer);
     }
 }
@@ -336,6 +364,12 @@ function setProperty(el: HTMLElement, key: string, value: unknown, peer: PeerAtt
         if (isTextValueProperty(key, el.localName))
         {
             writeTextValue(el as HTMLTextAreaElement, value);
+            return;
+        }
+        if (key === 'textContent' && el.namespaceURI === NAMESPACE_URIS.html && contentModel(el.localName) === 'raw-text-parsed')
+        {
+            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- textContent coerces non-null values as DOM strings
+            el.textContent = neutralizeRawText(el.localName, String(value ?? ''));
             return;
         }
         (el as unknown as Record<string, unknown>)[key] = value;
@@ -1479,15 +1513,20 @@ function stripEventAttributes(el: HTMLElement): void
  *
  * @internal
  */
-function createHydrationNode(tag: string, props: Props, children: Child[]): HydrationNode
+function createHydrationNode(tag: string, props: Props, children: Child[], namespace: HostNamespace | undefined, owner: ContentOwner | null): HydrationNode
 {
     const node = hydrationNode((cursor: HydrationCursorType): void =>
     {
         const el = cursor.takeElement(tag);
+        if (namespace !== undefined && (el.namespaceURI !== NAMESPACE_URIS[namespace]
+            || (namespace !== 'html' && el.localName !== tag)))
+        {
+            throw new HydrationMismatchError(`expected <${ tag }> in the ${ namespace } namespace`, cursor.parent, el);
+        }
 
         stripEventAttributes(el);
 
-        applyProps(el, props);
+        applyProps(el, props, owner);
 
         // Move any symbol-keyed teardown hooks the descriptor carried onto the
         // real element, so destroyComponent() finds them on the live node after
@@ -1499,13 +1538,13 @@ function createHydrationNode(tag: string, props: Props, children: Child[]): Hydr
         // already re-applied the prop onto the live element, so its content is correct - walking
         // the children (there are none) would (correctly) find the server-rendered content
         // unclaimed and trip the whole-page fallback. Skip the child walk.
-        if ('innerHTML' in props || 'textContent' in props)
+        if (owner !== null)
         {
             return;
         }
 
-        const model = contentModel(tag);
-        if (model === 'escapable-raw-text')
+        const model = contentModel(tag, namespace ?? hostNamespaceForTag(tag));
+        if (model === 'escapable-raw-text' || model === 'foreign-text')
         {
             // A textarea's value was served as its text, and applyProps wrote it on a difference.
             if (Object.hasOwn(props, 'value') && isTextValueProperty('value', tag))

@@ -14,6 +14,62 @@ const INTEGRATION = new Set(['foreignobject', 'desc', 'title']);
 const TAG = /^<(\/?)([a-zA-Z][^\t\n\f />]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/;
 const MARK = 'data-served-text';
 
+describe('programmatic raw-text fallback', () =>
+{
+    it('reads the winning body getter once and leaves the other getter alone in all three modes', () =>
+    {
+        const reads = { markup: 0, text: 0 };
+        const view = (): HTMLElement => h('div', {
+            get innerHTML(): string
+            {
+                reads.markup++;
+                return '<b>Ink</b>';
+            },
+            get textContent(): string
+            {
+                reads.text++;
+                return 'unused';
+            }
+        });
+        const html = renderToString(view);
+        expect(reads).toEqual({ markup: 1, text: 0 });
+        expect(view().innerHTML).toBe('<b>Ink</b>');
+        expect(reads).toEqual({ markup: 2, text: 0 });
+        const container = document.createElement('div');
+        container.innerHTML = html;
+        const old = container.firstChild;
+        hydrate(view, container);
+        expect(container.firstChild).toBe(old);
+        expect(container.firstElementChild?.innerHTML).toBe('<b>Ink</b>');
+        expect(reads).toEqual({ markup: 3, text: 0 });
+    });
+
+    it('checks legacy textContent on creation and adoption using the same text policy', () =>
+    {
+        const invalid = (): HTMLElement => h('xmp', { textContent: 'label &amp;' });
+        expect(invalid).toThrow(/text of <xmp>/i);
+        const host = document.createElement('div');
+        host.innerHTML = '<xmp></xmp>';
+        expect(() => hydrate(invalid, host)).toThrow(/text of <xmp>/i);
+    });
+
+    it('renders a reactive text child and retains an adopted textContent binding', () =>
+    {
+        const [read, write] = createSignal('one');
+        const built = document.createElement('div');
+        render(() => h('xmp', {}, read), built);
+        const adopted = document.createElement('div');
+        const owned = (): HTMLElement => h('xmp', { textContent: read });
+        adopted.innerHTML = renderToString(owned);
+        const original = adopted.firstElementChild;
+        hydrate(owned, adopted);
+        write('two & three < four');
+        expect(built.textContent).toBe('two & three < four');
+        expect(adopted.firstElementChild).toBe(original);
+        expect(original?.textContent).toBe('two & three < four');
+    });
+});
+
 // Cuts each textarea, title and noscript in HTML content out of the page source by the tokenizer's
 // end-tag rule and escapes it, so happy-dom reads it as the one text a scripted browser reads.
 function rebuildSource(html: string): string

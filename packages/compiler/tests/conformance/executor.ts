@@ -14,7 +14,7 @@ export function compileComponent(source: string, name: string, options?: Generat
     const { code } = generateModule(source, undefined, options);
     // The public compiler emits TypeScript for the bundler. Typed fixtures also run its JS transform.
     const executable = typed ? transpileModule(code, { compilerOptions: { module: ModuleKind.ESNext, target: ScriptTarget.ESNext } }).outputText : code;
-    const body = executable.replace(INTERNAL_IMPORT, 'const {$1} = __internal;');
+    const body = executable.replace(INTERNAL_IMPORT, (_line, imports: string) => `const {${ imports.replace(/\s+as\s+/g, ': ') }} = __internal;`);
     if (body === executable)
     {
         throw new Error('executor: emitted module has no azerothjs/internal import to rewrite');

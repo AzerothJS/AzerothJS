@@ -6,6 +6,92 @@ import { describe, expect, it } from 'vitest';
 
 import { createSignal, h, renderToString, renderToStream, ssr } from '../../src/index.ts';
 import type { Child } from '../../src/index.ts';
+import { hNS } from '../../src/internal.ts';
+
+describe('parser text and namespace', () =>
+{
+    it.each(['xmp', 'iframe', 'noembed', 'noframes'])('preserves literal fallback text in <%s>', tag =>
+    {
+        const content = 'A & B < C';
+        const view = (): HTMLElement => h(tag, {}, content);
+        expect(renderToString(view)).toBe(`<${ tag }>${ content }</${ tag }>`);
+        expect(renderToString(() => h(tag, { textContent: content }))).toBe(renderToString(view));
+    });
+
+    it('writes marker-free, decoded foreign text as character references in markup', () =>
+    {
+        const css = '.title::before { content: "A & B < C"; }';
+        const style = (): HTMLElement => hNS('svg', 'style', {}, css);
+        const data = (): HTMLElement => hNS('math', 'script', { type: 'application/json', textContent: '"A & B < C"' });
+        expect(renderToString(style)).toBe('<style>.title::before { content: "A &amp; B &lt; C"; }</style>');
+        expect(renderToString(data)).toBe('<script type="application/json">"A &amp; B &lt; C"</script>');
+    });
+
+    it('preserves markup used as programmatic frame fallback and rejects an unrepresentable CR', () =>
+    {
+        expect(renderToString(() => h('iframe', {}, h('p', {}, 'Fallback')))).toBe('<iframe><p>Fallback</p></iframe>');
+        expect(() => renderToString(() => h('xmp', {}, 'one\rtwo'))).toThrow(/carriage return/);
+    });
+
+    it('recognizes a complete plain run across adjacent values and preserves explicitly authored fallback nodes', () =>
+    {
+        expect(renderToString(() => h('xmp', {}, 'A <'))).toBe('<xmp>A <</xmp>');
+        expect(() => renderToString(() => h('xmp', {}, 'label &', ['amp;']))).toThrow(/text of <xmp>/i);
+        expect(() => renderToString(() => h('iframe', {}, h('p', {}, 'FAQ'), 'label &', () => 'amp;')))
+            .toThrow(/text of <iframe>/i);
+        expect(renderToString(() => h('iframe', {}, 'A & B ', h('p', {}, 'FAQ'))))
+            .toBe('<iframe>A &amp; B <p>FAQ</p></iframe>');
+        expect(renderToString(() => h('iframe', { innerHTML: '<p>FAQ</p>' }))).toBe('<iframe><p>FAQ</p></iframe>');
+    });
+
+    it('uses only own content properties when choosing whether to escape a foreign text node', () =>
+    {
+        const props = Object.create({ innerHTML: 'unused' }) as { textContent?: string };
+        props.textContent = 'A & B < C';
+        expect(renderToString(() => hNS('svg', 'style', props))).toBe('<style>A &amp; B &lt; C</style>');
+        const inherited = Object.create({ textContent: 'unused' }) as Record<string, unknown>;
+        expect(renderToString(() => h('title', inherited, 'Ink'))).toBe('<title>Ink</title>');
+    });
+
+    it('selects the content owner before reading attributes and reads its getter only once', () =>
+    {
+        let read = 0;
+        const props = {
+            get title(): string
+            {
+                Object.defineProperty(this, 'innerHTML', { value: 'later' });
+                return 'sample';
+            },
+            get textContent(): string
+            {
+                read++;
+                return 'A & B';
+            }
+        };
+        expect(renderToString(() => hNS('svg', 'style', props))).toBe('<style title="sample">A &amp; B</style>');
+        expect(read).toBe(1);
+    });
+
+    it('retains the elected own descriptor if an earlier metadata getter removes the key', () =>
+    {
+        let reads = 0;
+        const metadata = {
+            get type(): string
+            {
+                Reflect.deleteProperty(this, 'textContent');
+                return 'application/json';
+            },
+            get textContent(): string
+            {
+                reads++;
+                return '"Ink"';
+            }
+        };
+        Object.setPrototypeOf(metadata, { textContent: 'unused' });
+        expect(renderToString(() => h('script', metadata))).toBe('<script type="application/json">"Ink"</script>');
+        expect(reads).toBe(1);
+    });
+});
 
 async function streamed(view: () => HTMLElement): Promise<string>
 {

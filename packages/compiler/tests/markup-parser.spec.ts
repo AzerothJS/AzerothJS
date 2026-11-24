@@ -15,6 +15,76 @@ function el(src: string): MarkupElement
     return node as MarkupElement;
 }
 
+describe('namespace of static style and script text', () =>
+{
+    const body = '.a { --label: "one < two & three"; }';
+    const marked = '<![CDATA[' + body + ']]>';
+
+    it.each(['svg', 'math'])('unwraps CDATA sections in %s while retaining their original source span', tag =>
+    {
+        const source = `<${ tag }><style>/* before */${ marked }<![CDATA[/* after */]]></style></${ tag }>`;
+        const style = el(source).children[0] as MarkupElement;
+        const text = style.children[0] as MarkupText;
+        expect(text.value).toBe('/* before */' + body + '/* after */');
+        expect(source.slice(text.start, text.end)).toBe('/* before */' + marked + '<![CDATA[/* after */]]>');
+    });
+
+    it('reads inert JSON data and literal ampersands as authored', () =>
+    {
+        const data = '{"caption":"one &amp; two < three"}';
+        const script = el(`<svg><script type="application/ld+json"><![CDATA[${ data }]]></script></svg>`).children[0] as MarkupElement;
+        expect((script.children[0] as MarkupText).value).toBe(data);
+    });
+
+    it.each(['foreignObject', 'title', 'desc'])('preserves HTML raw text inside SVG %s', parent =>
+    {
+        const point = el(`<svg><${ parent }><style>${ marked }</style></${ parent }></svg>`).children[0] as MarkupElement;
+        const style = point.children[0] as MarkupElement;
+        expect((style.children[0] as MarkupText).value).toBe(marked);
+        expect(style.namespace).toBe('html');
+    });
+
+    it('retains the namespace across a fragment and a component child', () =>
+    {
+        const group = el(`<g><><Show when={true}><style>${ marked }</style></Show></></g>`);
+        const fragment = group.children[0] as MarkupFragment;
+        const show = fragment.children[0] as MarkupElement;
+        const style = show.children[0] as MarkupElement;
+        expect((style.children[0] as MarkupText).value).toBe(body);
+    });
+
+    it('skips a raw body while scanning a conditional expression', () =>
+    {
+        const source = `<div>{true ? <svg><style>${ marked }</style></svg> : null}</div>`;
+        expect((el(source).children[0] as MarkupExpression).code).toBe(source.slice(6, -7));
+    });
+
+    it('applies HTML voidness only in the HTML namespace', () =>
+    {
+        const source = '<div>{true ? <svg><input>note</input></svg> : null}</div>';
+        const svg = el('<svg><input>note</input></svg>');
+        expect((svg.children[0] as MarkupElement).children).toMatchObject([{ value: 'note' }]);
+        expect((el(source).children[0] as MarkupExpression).code).toBe(source.slice(6, -7));
+        expect(() => el('<div><input>note</input></div>')).toThrow(/void element/i);
+    });
+
+    it('resolves direct MathML child-specific integration points', () =>
+    {
+        const math = el('<math><mi><mglyph/><malignmark/><span/></mi><annotation-xml><svg/></annotation-xml></math>');
+        const mi = math.children[0] as MarkupElement;
+        const annotation = math.children[1] as MarkupElement;
+        expect(mi.children.map(child => (child as MarkupElement).namespace)).toEqual(['math', 'math', 'html']);
+        expect((annotation.children[0] as MarkupElement).namespace).toBe('svg');
+    });
+
+    it('locates an unfinished foreign CDATA section and leaves an HTML spelling literal', () =>
+    {
+        const source = '<svg><style>/* note */<![CDATA[data</style></svg>';
+        expect(() => el(source)).toThrow(expect.objectContaining({ offset: source.indexOf('<![CDATA[') }));
+        expect((el('<style><![CDATA[data</style>').children[0] as MarkupText).value).toBe('<![CDATA[data');
+    });
+});
+
 describe('parseMarkup - elements', () =>
 {
     it('parses a simple element with text, reporting the end offset', () =>

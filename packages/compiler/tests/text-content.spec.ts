@@ -151,7 +151,7 @@ describe('content with no text meaning is refused where it is written', () =>
         expect(findings('<textarea><b>x</b></textarea>')).toEqual([{ code: 'azeroth/text-only-content', text: '<b>x</b>' }]);
         expect(findings('<textarea>Hello <Show when={ on }>a</Show></textarea>')).toEqual([{ code: 'azeroth/text-only-content', text: '<Show when={ on }>a</Show>' }]);
         expect(findings('<div><title><>a</></title></div>')).toEqual([{ code: 'azeroth/text-only-content', text: '<>a</>' }]);
-        expect(findings('<div><svg><title><g></g></title></svg></div>')).toEqual([{ code: 'azeroth/text-only-content', text: '<g></g>' }]);
+        expect(findings('<div><svg><title><g></g></title></svg></div>')).toEqual([]);
         expect(findings('<textArea><b>x</b></textArea>')).toEqual([{ code: 'azeroth/text-only-content', text: '<b>x</b>' }]);
         expect(findings('<div><tiTle><Wrap /></tiTle></div>')).toEqual([{ code: 'azeroth/text-only-content', text: '<Wrap />' }]);
     });
@@ -165,7 +165,7 @@ describe('content with no text meaning is refused where it is written', () =>
         expect(messages('<textarea><b>x</b></textarea>')).toEqual([
             '<textarea> holds text only - the browser never renders <b> inside it as an element. Write text and { holes } here, or move <b> outside the <textarea>.'
         ]);
-        expect(messages('<div><svg><title><g></g></title></svg></div>')[0]).toContain('never renders <g> inside it as an element');
+        expect(messages('<div><title><g></g></title></div>')[0]).toContain('never renders <g> inside it as an element');
         expect(messages('<div><title><>a</></title></div>')[0]).toContain('never renders <> inside it as an element');
     });
 
@@ -199,6 +199,37 @@ describe('content with no text meaning is refused where it is written', () =>
             .toEqual(['azeroth/raw-text-content', 'azeroth/raw-text-content']);
         expect(findings('<div><iframe>no frames</iframe></div>')).toEqual([]);
         expect(findings('<div><noscript><p>Hello { v }</p></noscript></div>')).toEqual([]);
+    });
+
+    it.each(['xmp', 'iframe', 'noembed', 'noframes'])('locates static text an HTML %s cannot represent', tag =>
+    {
+        const text = `label: &lt;/${ tag.toUpperCase() }&gt;`;
+        expect(findings(`<${ tag }>${ text }</${ tag }>`)).toEqual([{ code: 'azeroth/raw-text-content', text }]);
+        expect(findings(`<${ tag }>a &amp; b &lt; c</${ tag }>`)).toEqual([]);
+    });
+
+    it.each(['ENCODING={ v }', '{...rest}', 'encoding="text/html" {...rest}', '{...rest} encoding="text/html"'])('locates unknown annotation parsing context for %s', attrs =>
+    {
+        const markup = `<math><annotation-xml ${ attrs }><a>label</a></annotation-xml></math>`;
+        expect(findings(markup)).toEqual([{ code: 'azeroth/annotation-encoding', text: attrs.includes('...rest') ? '{...rest}' : attrs }]);
+        expect(findings(markup.replace('<a>label</a>', 'label'))).toEqual([]);
+    });
+
+    it('keeps the namespace when diagnosing an expression child and a renderable fallback', () =>
+    {
+        const title = '<title><a>legend</a></title>';
+        expect(findings(`<svg><g>{true ? ${ title } : null}</g><Show when={true} fallback={${ title }}/></svg>`)).toEqual([]);
+        expect(findings(`<svg><desc>{true ? ${ title } : null}</desc></svg>`)).toEqual([{ code: 'azeroth/text-only-content', text: '<a>legend</a>' }]);
+        expect(findings(`<svg><desc><Show when={true} {...{fallback: ${ title }}}/></desc></svg>`)).toEqual([{ code: 'azeroth/text-only-content', text: '<a>legend</a>' }]);
+    });
+
+    it('locates malformed foreign CDATA inside a nested conditional in the full source', () =>
+    {
+        const source = component('<div>{on ? <svg><g>{on ? <style>/* before */<![CDATA[incomplete</style> : null}</g></svg> : null}</div>');
+        const offset = source.indexOf('<![CDATA[');
+        const errors = diagnoseModule(source).filter(d => d.severity === 'error');
+        expect(errors).toMatchObject([{ code: 'azeroth/syntax', start: offset, end: offset + 1 }]);
+        expect(errors[0]?.message).toMatch(/unclosed CDATA/i);
     });
 
     it('counts a child that is only whitespace as content beside textContent, innerHTML and value', () =>

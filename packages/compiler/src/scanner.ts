@@ -25,7 +25,65 @@
  * @see {@link findMarkupStart}
  */
 
-import { VOID_ELEMENTS } from 'azerothjs/semantics';
+import { VOID_ELEMENTS, contentModel, elementNamespace, hostChildContext, hostEventType, hostNamespaceForTag, isComponentTag, resolveMarkupContext, type MarkupContext } from 'azerothjs/semantics';
+
+/** Component prop values and spreads can supply renderable children in the incoming namespace. */
+export function attributeParsingContext(isComponent: boolean, name: string | null, parent?: MarkupContext): MarkupContext | undefined
+{
+    return isComponent && (name === null || (hostEventType(name) === null && !name.startsWith('bind:'))) ? parent : undefined;
+}
+
+/**
+ * The named HTML character references decoded in text content. Numeric references (`&#38;`,
+ * `&#x26;`) are handled generically; this table covers the common named set (an unknown name is
+ * left verbatim). The five XML built-ins plus the entities real markup routinely carries -
+ * spaces, dashes, quotes, symbols, arrows, and common accents.
+ */
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+    amp: '&', lt: '<', gt: '>', quot: '"', apos: '\'', nbsp: ' ',
+    copy: '©', reg: '®', trade: '™', hellip: '…',
+    mdash: '—', ndash: '–', lsquo: '‘', rsquo: '’',
+    ldquo: '“', rdquo: '”', laquo: '«', raquo: '»',
+    times: '×', divide: '÷', plusmn: '±', deg: '°',
+    micro: 'µ', para: '¶', sect: '§', middot: '·',
+    bull: '•', dagger: '†', Dagger: '‡', permil: '‰',
+    prime: '′', Prime: '″', euro: '€', pound: '£',
+    cent: '¢', yen: '¥', curren: '¤', frac12: '½',
+    frac14: '¼', frac34: '¾', larr: '←', uarr: '↑',
+    rarr: '→', darr: '↓', harr: '↔', hearts: '♥',
+    spades: '♠', clubs: '♣', diams: '♦', check: '✓',
+    cross: '✗', star: '★', ensp: ' ', emsp: ' ',
+    thinsp: ' ', zwnj: '‌', zwj: '‍', shy: '­',
+    iexcl: '¡', iquest: '¿', ordf: 'ª', ordm: 'º',
+    aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó',
+    uacute: 'ú', ntilde: 'ñ', uuml: 'ü', ouml: 'ö',
+    auml: 'ä', szlig: 'ß', ccedil: 'ç', agrave: 'à',
+    egrave: 'è'
+};
+
+/**
+ * Decodes numeric and supported named character references in ordinary markup text and quoted
+ * attributes. Unknown names keep their original spelling. Raw element bodies bypass this step.
+ */
+export function decodeEntities(text: string): string
+{
+    if (!text.includes('&'))
+    {
+        return text;
+    }
+    return text.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]*);/g, (whole, body: string) =>
+    {
+        if (body.charCodeAt(0) === 35) // '#'
+        {
+            const code = body[1] === 'x' || body[1] === 'X'
+                ? parseInt(body.slice(2), 16)
+                : parseInt(body.slice(1), 10);
+            return Number.isFinite(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : whole;
+        }
+        const named = NAMED_ENTITIES[body];
+        return named !== undefined ? named : whole;
+    });
+}
 
 /**
  * True for a single whitespace character (space, tab, newline, etc.).
@@ -151,7 +209,7 @@ export function skipString(src: string, i: number): number
  * skipTemplate(src, 3); // 13 (just past the closing backtick)
  * ```
  */
-export function skipTemplate(src: string, i: number): number
+export function skipTemplate(src: string, i: number, context?: MarkupContext): number
 {
     i++; // past opening `
     while (i < src.length)
@@ -169,7 +227,7 @@ export function skipTemplate(src: string, i: number): number
         if (ch === '$' && src[i + 1] === '{')
         {
             // The substitution is balanced like any `{ ... }` block.
-            i = skipBalanced(src, i + 1);
+            i = skipBalanced(src, i + 1, context);
             continue;
         }
         i++;
@@ -243,10 +301,10 @@ function isTagNameChar(ch: string): boolean
  *
  * @internal
  */
-function skipMarkupRegion(src: string, start: number): number
+function skipMarkupRegion(src: string, start: number, context?: MarkupContext): number
 {
     let i = start;
-    let depth = 0;
+    const contexts: (MarkupContext | undefined)[] = [];
 
     do
     {
@@ -266,33 +324,59 @@ function skipMarkupRegion(src: string, start: number): number
             {
                 i++;
             }
-            depth--;
+            contexts.pop();
             continue;
         }
         if (src[i] === '<')
         {
             // Opening tag or `<>` fragment. Scan to the end of the open tag, tracking
             // self-closing, and only descend for a container element.
-            const opened = scanOpenTag(src, i);
+            const parent = contexts.length === 0 ? context : contexts[contexts.length - 1];
+            const opened = scanOpenTag(src, i, parent);
             i = opened.end;
-            if (!opened.selfClosing && !VOID_ELEMENTS.has(opened.tag))
+            const inherited = parent === undefined ? hostNamespaceForTag(opened.tag) : resolveMarkupContext(parent, opened.tag);
+            const ns = elementNamespace(opened.tag, inherited);
+            if (!opened.selfClosing && !(ns === 'html' && VOID_ELEMENTS.has(opened.tag)))
             {
-                depth++;
+                const transparent = opened.tag === '' || isComponentTag(opened.tag);
+                contexts.push(transparent ? parent : hostChildContext(opened.tag, ns, opened.encoding));
+                const model = transparent ? null : contentModel(opened.tag, ns);
+                if (model === 'raw-text' || model === 'foreign-text')
+                {
+                    i = rawTextEnd(src, i, opened.tag);
+                }
             }
             continue;
         }
         if (src[i] === '{')
         {
             // A hole (or `{/* comment */}`); its braces are balanced independently.
-            i = skipBalanced(src, i);
+            i = skipBalanced(src, i, contexts[contexts.length - 1]);
             continue;
         }
         // Ordinary text: apostrophes, slashes, and quotes here are literal content.
         i++;
     }
-    while (depth > 0);
+    while (contexts.length > 0);
 
     return i;
+}
+
+/** The first matching raw-body close tag, using the markup language's case-sensitive spelling. */
+export function rawTextEnd(src: string, start: number, tag: string): number
+{
+    const close = '</' + tag;
+    let at = src.indexOf(close, start);
+    while (at !== -1)
+    {
+        const after = src[at + close.length];
+        if (after === undefined || after === '>' || after === '/' || isWhitespace(after))
+        {
+            return at;
+        }
+        at = src.indexOf(close, at + close.length);
+    }
+    return src.length;
 }
 
 /**
@@ -300,7 +384,7 @@ function skipMarkupRegion(src: string, start: number): number
  * Attribute `{...}` expressions and quoted values are skipped whole. On malformed input it bails
  * as self-closing at end-of-input rather than looping.
  */
-function scanOpenTag(src: string, i: number): { end: number; selfClosing: boolean; tag: string }
+function scanOpenTag(src: string, i: number, context?: MarkupContext): { end: number; selfClosing: boolean; tag: string; encoding?: string }
 {
     i++; // past '<'
     if (src[i] === '>')
@@ -313,6 +397,8 @@ function scanOpenTag(src: string, i: number): { end: number; selfClosing: boolea
         i++;
     }
     const tag = src.slice(nameStart, i);
+    const annotation = tag.toLowerCase() === 'annotation-xml';
+    let encoding: string | undefined;
 
     for (;;)
     {
@@ -327,19 +413,50 @@ function scanOpenTag(src: string, i: number): { end: number; selfClosing: boolea
         }
         if (ch === '>')
         {
-            return { end: i + 1, selfClosing: false, tag };
+            return { end: i + 1, selfClosing: false, tag, ...(encoding !== undefined && { encoding }) };
         }
         if (ch === '{')
         {
-            i = skipBalanced(src, i); // attribute expression or {...spread}
+            i = skipBalanced(src, i, attributeParsingContext(isComponentTag(tag), null, context));
             continue;
         }
-        if (ch === '"' || ch === '\'')
+        if (!isIdentStart(ch))
         {
-            i = skipString(src, i); // quoted attribute value
+            i++;
             continue;
         }
-        i++; // attribute name chars, '=', directives (class:x, bind:value)
+        const attrStart = i++;
+        while (isIdentPart(src[i]) || src[i] === '-' || src[i] === ':')
+        {
+            i++;
+        }
+        const name = src.slice(attrStart, i);
+        while (isWhitespace(src[i]))
+        {
+            i++;
+        }
+        if (src[i] !== '=')
+        {
+            continue;
+        }
+        i++;
+        while (isWhitespace(src[i]))
+        {
+            i++;
+        }
+        if (src[i] === '{')
+        {
+            i = skipBalanced(src, i, attributeParsingContext(isComponentTag(tag), name, context));
+        }
+        else if (src[i] === '"' || src[i] === '\'')
+        {
+            const end = skipString(src, i);
+            if (annotation && name.toLowerCase() === 'encoding')
+            {
+                encoding = decodeEntities(src.slice(i + 1, end - 1));
+            }
+            i = end;
+        }
     }
 }
 
@@ -356,7 +473,7 @@ function scanOpenTag(src: string, i: number): { end: number; selfClosing: boolea
  * skipBalanced(src, 0); // 15 (just past the matching outer '}')
  * ```
  */
-export function skipBalanced(src: string, openIndex: number): number
+export function skipBalanced(src: string, openIndex: number, context?: MarkupContext): number
 {
     const open = src[openIndex];
     const close = open === '(' ? ')' : open === '[' ? ']' : '}';
@@ -397,7 +514,7 @@ export function skipBalanced(src: string, openIndex: number): number
         }
         if (ch === '`')
         {
-            i = skipTemplate(src, i);
+            i = skipTemplate(src, i, context);
             prevChar = ')';
             prevWord = '';
             continue;
@@ -420,7 +537,7 @@ export function skipBalanced(src: string, openIndex: number): number
                         continue;
                     }
                 }
-                i = skipMarkupRegion(src, i);
+                i = skipMarkupRegion(src, i, context);
                 prevChar = ')'; // a markup value has ended
                 prevWord = '';
                 continue;

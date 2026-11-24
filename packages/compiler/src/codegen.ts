@@ -33,11 +33,11 @@
 
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
-import { isFactoryProp, isBranchPosition, bindWriteBack, canonicalHandlerName, contentModel, leadingNewlinePad, escapeCarriageReturns, VOID_ELEMENTS } from 'azerothjs/semantics';
+import { isFactoryProp, isBranchPosition, bindWriteBack, canonicalHandlerName, contentModel, hostNamespaceForTag, neutralizeRawText, leadingNewlinePad, escapeCarriageReturns, VOID_ELEMENTS } from 'azerothjs/semantics';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
 import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isLiteralValue, objectKey, alreadyImports } from './markup-util.ts';
 import { buildLineStarts, locationFor, encodeMappings, type SourceMapV3, type RawSegment } from './sourcemap.ts';
-import type { MarkupElement, MarkupFragment, Span } from './types.ts';
+import type { MarkupContext, MarkupElement, MarkupFragment, Span } from './types.ts';
 import { parseModule } from './parser.ts';
 import { diagnoseModule, moduleBindScope } from './diagnostics.ts';
 import { analyzeComponent } from './analyze.ts';
@@ -64,7 +64,7 @@ const RUNTIME_MODULE = 'azerothjs/internal';
  * RUNTIME_CONTRACT_VERSION (azerothjs/internal) must move with it in lockstep, and a drift
  * spec fails the build if the two disagree.
  */
-export const EMITTED_CONTRACT_VERSION = 6;
+export const EMITTED_CONTRACT_VERSION = 7;
 
 /** Empty reactive-source set, for compiling markup in module scope (no component state in scope). */
 const NO_SOURCES: ReactiveSources = { names: new Set(), hasProps: false };
@@ -123,6 +123,7 @@ interface Emit
 {
     used: Set<string>;
     showHelper: string;
+    namespaceHelper: string;
     importsShow: boolean;
     templates: Map<string, string>;
 
@@ -164,16 +165,20 @@ interface Emit
     shadowed: ReadonlySet<string>;
 }
 
-/** Interns a template HTML string, returning its hoisted const name. */
-function allocateTemplate(emit: Emit, html: string): string
+/** Interns the clone factory arguments, including the parsing context of a detached root. */
+function allocateTemplate(emit: Emit, root: TemplateNode): string
 {
-    const existing = emit.templates.get(html);
+    const html = quoteString(serialize(root));
+    const args = root.kind === 'element' && root.namespace !== undefined && root.namespace !== hostNamespaceForTag(root.tag)
+        ? `${ html }, ${ quoteString(root.namespace) }`
+        : html;
+    const existing = emit.templates.get(args);
     if (existing !== undefined)
     {
         return existing;
     }
     const name = `_tmpl$${ emit.templates.size + 1 }`;
-    emit.templates.set(html, name);
+    emit.templates.set(args, name);
     return name;
 }
 
@@ -242,20 +247,24 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
 
     const module = parseModule(source);
     const style = styleScopeOf(source, module);
-    // The internal Show dispatcher can occur inside authored callbacks and module helpers.
-    // Give it an unoccupied import name, including when an inner scope binds "renderShow".
+    // Internal dispatchers can occur inside authored callbacks and module helpers.
+    // Give them an unoccupied name even when an inner scope has a matching binding.
     // TypeScript accepts ASCII identifier characters written as Unicode escapes. Scanning
     // the decoded spelling also covers opaque module code and scopes inside embedded markup.
     const names = source.replace(/\\u(?:\{0*([0-7]?[0-9a-f])\}|00([0-7][0-9a-f]))/gi,
         (_match: string, braced: string | undefined, fixed: string) => String.fromCharCode(parseInt(braced ?? fixed, 16)));
-    const usedNames = new Set(names.match(/renderShow(?:\$[0-9]+)?/g));
-    let showHelper = 'renderShow';
-    for (let i = 1; usedNames.has(showHelper); i++)
+    const usedNames = new Set(names.match(/(?:renderShow|hNS)(?:\$[0-9]+)?/g));
+    const helperName = (base: string): string =>
     {
-        showHelper = `renderShow$${ i }`;
-    }
+        let name = base;
+        for (let i = 1; usedNames.has(name); i++)
+        {
+            name = `${ base }$${ i }`;
+        }
+        return name;
+    };
     const bindings = moduleBindScope(source, module.items);
-    const emit: Emit = { used: new Set(), showHelper, importsShow: bindings.imports.has('Show'), templates: new Map(), clientOnly: options.ssr === false, dev: options.dev === true, raw: false, holeDepth: 0, regionStart: 0, classes: style?.classes ?? null, shadowed: bindings.shadowed };
+    const emit: Emit = { used: new Set(), showHelper: helperName('renderShow'), namespaceHelper: helperName('hNS'), importsShow: bindings.imports.has('Show'), templates: new Map(), clientOnly: options.ssr === false, dev: options.dev === true, raw: false, holeDepth: 0, regionStart: 0, classes: style?.classes ?? null, shadowed: bindings.shadowed };
 
     interface Piece { outStart: number; sourceStart: number; verbatim: boolean; }
     const pieces: Piece[] = [];
@@ -338,7 +347,7 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
     }
     const importLine = buildImport(source, emit);
     const hoisted = emit.templates.size > 0
-        ? [...emit.templates].map(([html, name]) => `const ${ name } = tmpl(${ quoteString(html) });`).join('\n') + '\n'
+        ? [...emit.templates].map(([args, name]) => `const ${ name } = tmpl(${ args });`).join('\n') + '\n'
         : '';
     const prefix = importLine + hoisted;
     const code = prefix + out;
@@ -649,14 +658,14 @@ function ownsContent(node: TemplateNode): boolean
     {
         return false;
     }
-    const model = contentModel(node.tag);
+    const model = contentModel(node.tag, node.namespace);
     return model === 'escapable-raw-text' || model === 'server-only';
 }
 
 /** The textareas and titles that hold a hole, outside any server-only content. */
 function collectTextElements(node: TemplateNode, into: TemplateElement[]): void
 {
-    if (node.kind === 'element' && contentModel(node.tag) === 'escapable-raw-text')
+    if (node.kind === 'element' && contentModel(node.tag, node.namespace) === 'escapable-raw-text')
     {
         if (node.children.some(child => child.kind === 'hole'))
         {
@@ -664,7 +673,7 @@ function collectTextElements(node: TemplateNode, into: TemplateElement[]): void
         }
         return;
     }
-    if ((node.kind === 'element' && contentModel(node.tag) !== 'server-only') || node.kind === 'fragment')
+    if ((node.kind === 'element' && contentModel(node.tag, node.namespace) !== 'server-only') || node.kind === 'fragment')
     {
         for (const child of node.children)
         {
@@ -682,7 +691,7 @@ function collectServerOnly(node: TemplateNode, into: Set<number>, inside = false
     }
     if (node.kind === 'element' || node.kind === 'fragment')
     {
-        const below = inside || (node.kind === 'element' && contentModel(node.tag) === 'server-only');
+        const below = inside || (node.kind === 'element' && contentModel(node.tag, node.namespace) === 'server-only');
         for (const child of node.children)
         {
             collectServerOnly(child, into, below);
@@ -748,8 +757,7 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
     const onlyChildHoles = new Set<number>();
     collectOnlyChildHoles(plan.template, onlyChildHoles);
 
-    const html = serialize(plan.template);
-    const templateName = allocateTemplate(emit, html);
+    const templateName = allocateTemplate(emit, plan.template);
 
     const paths = new Map<number, number[]>();
     computePaths(plan.template, [], paths);
@@ -1199,24 +1207,33 @@ function emitNode(source: string, node: TemplateNode, plan: RenderPlan, sources:
     }
 
     // Element -> h('tag', { static attrs + dynamic bindings }, ...children).
-    emit.used.add('h');
+    const namespace = node.namespace;
+    const explicit = namespace !== undefined && (namespace !== 'html' || hostNamespaceForTag(node.tag) !== 'html');
+    const helper = explicit ? emit.namespaceHelper : 'h';
+    emit.used.add(explicit ? 'hNS' : 'h');
+    const host = explicit ? `${ quoteString(namespace) }, ${ quoteString(node.tag) }` : quoteString(node.tag);
     const group = plan.bindings.filter(b => b.target === node.id && b.kind !== 'text' && b.kind !== 'component');
     const props =
     [
         ...node.attrs.map(a => `${ objectKey(a.name) }: ${ a.value === true ? 'true' : quoteString(a.value) }`),
         ...propEntries(source, group, sources, emit)
     ];
-    const childItems = node.children.map(child => emitNode(source, child, plan, sources, emit));
+    const model = contentModel(node.tag, node.namespace);
+    // A compiled static data block has the same textContent whether a row constructs
+    // it eagerly or the browser parses its template. Public h() still takes authored text.
+    const childItems = model === 'raw-text' && node.children.length > 0
+        ? [quoteString(neutralizeRawText(node.tag, staticChildText(node)))]
+        : node.children.map(child => emitNode(source, child, plan, sources, emit));
     // A noscript's content is built only to serialize or hydrate it, so a client render never
     // loads an image or runs a ref or a component inside it.
-    if (childItems.length > 0 && contentModel(node.tag) === 'server-only')
+    if (childItems.length > 0 && model === 'server-only')
     {
         emit.used.add('isStringMode');
         emit.used.add('isHydrating');
-        return `h(${ quoteString(node.tag) }, { ${ props.join(', ') } }, ...(isStringMode() || isHydrating() ? [${ childItems.join(', ') }] : []))`;
+        return `${ helper }(${ host }, { ${ props.join(', ') } }, ...(isStringMode() || isHydrating() ? [${ childItems.join(', ') }] : []))`;
     }
-    const args = [quoteString(node.tag), `{ ${ props.join(', ') } }`, ...childItems];
-    return `h(${ args.join(', ') })`;
+    const args = [host, `{ ${ props.join(', ') } }`, ...childItems];
+    return `${ helper }(${ args.join(', ') })`;
 }
 
 /**
@@ -1262,15 +1279,15 @@ function projectedSpan(source: string, start: number, end: number, sources: Reac
  * One markup expression at `offset`: nested markup compiled, keywords lowered, reads rewritten.
  * Every markup-expression writer goes through here, so the clone and h() paths emit the same text.
  */
-function markupRewrite(emit: Emit, code: string, sources: ReactiveSources, offset: number): string
+function markupRewrite(emit: Emit, code: string, sources: ReactiveSources, offset: number, namespace?: MarkupContext): string
 {
-    return maybeRewrite(emit, projectMarkup(code, emit, sources, offset), sources, offset);
+    return maybeRewrite(emit, projectMarkup(code, emit, sources, offset, namespace), sources, offset);
 }
 
 /** The rewritten source of a binding expression. */
 function rewriteExpr(source: string, expr: ReactiveExpr, sources: ReactiveSources, emit: Emit): string
 {
-    return markupRewrite(emit, source.slice(expr.span.start, expr.span.end), sources, expr.span.start);
+    return markupRewrite(emit, source.slice(expr.span.start, expr.span.end), sources, expr.span.start, expr.namespace);
 }
 
 /**
@@ -1606,25 +1623,20 @@ function serialize(node: TemplateNode): string
         html += attr.value === true ? ` ${ attr.name }` : ` ${ attr.name }="${ escapeAttr(attr.value) }"`;
     }
     html += '>';
-    if (VOID_ELEMENTS.has(node.tag))
+    if ((node.namespace ?? 'html') === 'html' && VOID_ELEMENTS.has(node.tag))
     {
         return html;
     }
-    // Raw-text element (`<script>`/`<style>`): its content is CDATA, emitted VERBATIM. A browser
-    // does not decode entities inside these elements, so HTML-escaping `&`/`<` here would render
-    // `&amp;`/`&lt;` literally and corrupt the CSS or JSON-LD. The parser already read the content
-    // as a single literal text node (no holes), so only text children appear.
-    const model = contentModel(node.tag);
-    if (model === 'raw-text')
+    // HTML raw text and foreign character data cross different HTML tokenizer states.
+    // Join first so an element's complete text goes through the same policy as SSR.
+    const model = contentModel(node.tag, node.namespace);
+    if (model === 'raw-text' || model === 'raw-text-parsed' || model === 'foreign-text')
     {
-        for (const child of node.children)
-        {
-            if (child.kind === 'text')
-            {
-                html += child.value;
-            }
-        }
-        return `${ html }</${ node.tag }>`;
+        const value = staticChildText(node);
+        const text = model === 'foreign-text'
+            ? escapeCarriageReturns(escapeText(value))
+            : neutralizeRawText(node.tag, value);
+        return `${ html }${ text }</${ node.tag }>`;
     }
     // `<textarea>`/`<title>` content is one text: static text bakes in, and with a hole the element
     // stays empty for bindText. The parser drops one LF right after `<textarea>`, so one is added.
@@ -1634,7 +1646,7 @@ function serialize(node: TemplateNode): string
         {
             return `${ html }</${ node.tag }>`;
         }
-        const text = escapeCarriageReturns(escapeText(node.children.map(child => child.kind === 'text' ? child.value : '').join('')));
+        const text = escapeCarriageReturns(escapeText(staticChildText(node)));
         return `${ html }${ leadingNewlinePad(node.tag, text) }${ text }</${ node.tag }>`;
     }
     if (model === 'server-only')
@@ -1651,6 +1663,12 @@ function serialize(node: TemplateNode): string
         }
     }
     return `${ html }</${ node.tag }>`;
+}
+
+/** Content for a text-model element whose children have been validated as static. */
+function staticChildText(node: TemplateElement): string
+{
+    return node.children.map(child => child.kind === 'text' ? child.value : '').join('');
 }
 
 /** True when the template tree contains a fragment (which the tmpl path can't clone). */
@@ -1672,7 +1690,7 @@ function hasFragment(node: TemplateNode): boolean
  * ONE unified emitter: each markup region is lowered to a RenderPlan and emitted
  * by {@link emitNode}. No separate markup->h() emitter.
  */
-function projectMarkup(code: string, emit: Emit, sources: ReactiveSources, base = 0): string
+function projectMarkup(code: string, emit: Emit, sources: ReactiveSources, base = 0, namespace?: MarkupContext): string
 {
     let out = '';
     let j = 0;
@@ -1697,14 +1715,19 @@ function projectMarkup(code: string, emit: Emit, sources: ReactiveSources, base 
         let region: { node: MarkupElement | MarkupFragment; end: number };
         try
         {
-            region = parseMarkup(code, start);
+            region = parseMarkup(code, start, namespace);
         }
         catch (err)
         {
-            // A start that does not parse as markup is not markup: leave the rest of the region raw.
+            // A generic or comparison may resemble markup. Once an opening tag was
+            // recognized, its parse error belongs to this source expression.
             if (err instanceof CompileError && err.depthExceeded)
             {
                 throw err;
+            }
+            if (err instanceof CompileError && err.committed)
+            {
+                throw new CompileError(err.message, base + err.offset);
             }
             return out + code.slice(start);
         }
@@ -1762,8 +1785,9 @@ function buildImport(source: string, emit: Emit): string
     }
     const withAssert = new Set(emit.used);
     withAssert.add('assertRuntimeContract');
-    const names = [...withAssert].filter(name => name === 'Show' ? !emit.importsShow : name === 'renderShow' || !alreadyImports(source, name))
-        .map(name => name === 'renderShow' && emit.showHelper !== name ? `${ name } as ${ emit.showHelper }` : name);
+    const aliases = new Map([['renderShow', emit.showHelper], ['hNS', emit.namespaceHelper]]);
+    const names = [...withAssert].filter(name => name === 'Show' ? !emit.importsShow : aliases.has(name) || !alreadyImports(source, name))
+        .map(name => aliases.has(name) && aliases.get(name) !== name ? `${ name } as ${ aliases.get(name) }` : name);
     const importLine = names.length > 0 ? `import { ${ names.join(', ') } } from '${ RUNTIME_MODULE }';\n` : '';
     // Deliberately NOT `import.meta.url`, though it would name the offending module in the
     // failure: `import.meta` is only legal inside an ES module, and emitting it would make

@@ -35,6 +35,7 @@ import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span 
 import { findMarkupStart, skipString, skipTemplate, isWhitespace } from './scanner.ts';
 import { CompileError, parseMarkup, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import {
+    attributeMarkupContext,
     walkComponentTags,
     isFunctionLiteral,
     isBareReference,
@@ -44,7 +45,7 @@ import {
     quoteString,
     alreadyImports
 } from './markup-util.ts';
-import { hostEventType, isBindingAttr, isFactoryProp, bindWriteBack, BUILTIN_SET } from 'azerothjs/semantics';
+import { hostEventType, isBindingAttr, isFactoryProp, bindWriteBack, BUILTIN_SET, canonicalForeignTag, type MarkupContext } from 'azerothjs/semantics';
 import { parseModule } from './parser.ts';
 import { moduleBindScope } from './diagnostics.ts';
 import { findConstructs, splitTopLevelCommaSpans } from './lower-reactive.ts';
@@ -104,44 +105,6 @@ export const AZEROTH_REF_DECL: string =
 export function isRefTypeFailure(flattenedMessage: string): boolean
 {
     return flattenedMessage.includes(`${ REF_TYPE_NAME }<`);
-}
-
-/** MathML's HTML text integration points: their children parse as HTML again. */
-const MATHML_TEXT_INTEGRATION: ReadonlySet<string> = new Set(['mi', 'mo', 'mn', 'ms', 'mtext']);
-
-/** The annotation-xml encodings that make it an HTML integration point (HTML tree construction). */
-const HTML_ANNOTATION_ENCODINGS: ReadonlySet<string> = new Set(['text/html', 'application/xhtml+xml']);
-
-/**
- * The markup namespace of an element's CHILDREN, given the element's own namespace - the HTML
- * parser's foreign-content rule verbatim: `<foreignObject>` and the MathML text integration
- * points re-enter HTML, and `annotation-xml` does so only under a literal html encoding
- * (integration-point-ness is decided AT PARSE TIME from the attribute; an expression attribute
- * is applied after parsing, so it cannot switch the parser).
- */
-function childNamespace(node: MarkupElement, elementNs: 'html' | 'svg' | 'math'): 'html' | 'svg' | 'math'
-{
-    if (elementNs === 'svg')
-    {
-        return node.tag === 'foreignObject' ? 'html' : 'svg';
-    }
-    if (elementNs === 'math')
-    {
-        if (MATHML_TEXT_INTEGRATION.has(node.tag))
-        {
-            return 'html';
-        }
-        if (node.tag === 'annotation-xml')
-        {
-            const encoding = node.attributes.find(a => !a.spread && a.name === 'encoding');
-            const literal = encoding !== undefined && encoding.value.kind === 'static'
-                ? encoding.value.value.trim().toLowerCase()
-                : '';
-            return HTML_ANNOTATION_ENCODINGS.has(literal) ? 'html' : 'math';
-        }
-        return 'math';
-    }
-    return 'html';
 }
 
 /** Offset fields a {@link BodyItem} can carry; shifted in bulk when re-basing a nested-scan result. */
@@ -249,13 +212,8 @@ export function generateVirtualCode(source: string): VirtualCode
     let usedRow = false;
     let usedNarrow = false;
     let usedForNames = false;
-    /**
-     * The markup namespace at the CURRENT emission point, maintained by emitNode exactly as
-     * the HTML parser maintains it: entering <svg> switches to 'svg', <foreignObject> children
-     * return to 'html'. Only the ref contract consumes it today (element types are namespace-
-     * dependent); handlers are not (GlobalEventHandlersEventMap spans both).
-     */
-    let markupNamespace: 'html' | 'svg' | 'math' = 'html';
+    /** Parser context for embedded markup and the current host's ref type. */
+    let markupNamespace: MarkupContext | undefined;
     /** Expression-hole nesting depth of the markup walk, and the offset of the region it is inside. */
     let holeDepth = 0;
     let lastMarkupStart = 0;
@@ -322,7 +280,7 @@ export function generateVirtualCode(source: string): VirtualCode
             let parsed: { node: MarkupElement | MarkupFragment; end: number };
             try
             {
-                parsed = parseMarkup(source, m);
+                parsed = parseMarkup(source, m, markupNamespace);
             }
             catch (error)
             {
@@ -373,8 +331,10 @@ export function generateVirtualCode(source: string): VirtualCode
         builder.emit(')');
     };
 
-    const emitAttribute = (attr: MarkupAttribute, isHost: boolean, tag: string): void =>
+    const emitAttribute = (attr: MarkupAttribute, node: MarkupElement): void =>
     {
+        const isHost = !node.isComponent;
+        const tag = node.tag;
         if (attr.spread)
         {
             builder.emit('...');
@@ -436,8 +396,10 @@ export function generateVirtualCode(source: string): VirtualCode
             usedRef = true;
             builder.emit('(');
             emitCode(span.start, span.end, 'attribute');
-            const ns = markupNamespace === 'html' ? '' : ", '" + markupNamespace + "'";
-            builder.emit(`) satisfies ${ REF_TYPE_NAME }<'${ tag }'${ ns }>`);
+            const namespace = node.namespace ?? 'html';
+            const ns = namespace === 'html' ? '' : ", '" + namespace + "'";
+            const localName = namespace === 'html' ? tag : canonicalForeignTag(tag, namespace);
+            builder.emit(`) satisfies ${ REF_TYPE_NAME }<'${ localName }'${ ns }>`);
             return;
         }
         if (isHost && hostEventType(name) !== null)
@@ -475,7 +437,7 @@ export function generateVirtualCode(source: string): VirtualCode
         emitCode(span.start, span.end, 'attribute');
     };
 
-    const emitProps = (attrs: MarkupAttribute[], childrenEntry: (() => void) | null, isHost: boolean, tag: string): void =>
+    const emitProps = (attrs: MarkupAttribute[], childrenEntry: (() => void) | null, node: MarkupElement): void =>
     {
         builder.emit('{ ');
         attrs.forEach((attr, index) =>
@@ -484,7 +446,10 @@ export function generateVirtualCode(source: string): VirtualCode
             {
                 builder.emit(', ');
             }
-            emitAttribute(attr, isHost, tag);
+            const saved = markupNamespace;
+            markupNamespace = attributeMarkupContext(node, attr);
+            emitAttribute(attr, node);
+            markupNamespace = saved;
         });
         if (childrenEntry)
         {
@@ -506,7 +471,10 @@ export function generateVirtualCode(source: string): VirtualCode
         }
         if (child.kind === 'expression')
         {
+            const saved = markupNamespace;
+            markupNamespace = child.namespace;
             emitDynamic({ start: child.start + 1, end: child.end - 1 }, false);
+            markupNamespace = saved;
             return;
         }
         emitNode(child);
@@ -663,6 +631,17 @@ export function generateVirtualCode(source: string): VirtualCode
 
     function emitNode(node: MarkupElement | MarkupFragment): void
     {
+        const saved = markupNamespace;
+        if (node.kind === 'element')
+        {
+            markupNamespace = node.context ?? node.namespace;
+        }
+        emitNodeContents(node);
+        markupNamespace = saved;
+    }
+
+    function emitNodeContents(node: MarkupElement | MarkupFragment): void
+    {
         if (node.kind === 'fragment')
         {
             builder.emit('[');
@@ -729,7 +708,7 @@ export function generateVirtualCode(source: string): VirtualCode
                     }
                     builder.emit('children: ');
                     emitCode(renderChild.start, renderChild.end);
-                }, false, node.tag);
+                }, node);
                 builder.emit(')');
                 return;
             }
@@ -794,7 +773,7 @@ export function generateVirtualCode(source: string): VirtualCode
                 builder.emit(')), ');
                 builder.copy(tagStart, tagStart + node.tag.length, 'tag');
                 builder.emit('(');
-                emitProps(propAttrs, childrenSpread, false, node.tag);
+                emitProps(propAttrs, childrenSpread, node);
                 builder.emit('))');
                 return;
             }
@@ -814,7 +793,7 @@ export function generateVirtualCode(source: string): VirtualCode
             // Always a `Name({ ... })` call (never `Name()`), so a component with a REQUIRED props type is
             // checked: `<Card/>` -> `Card({})` surfaces the missing prop.
             builder.emit('(');
-            emitProps(propAttrs, hasChildren ? childrenSpread : null, false, node.tag);
+            emitProps(propAttrs, hasChildren ? childrenSpread : null, node);
             builder.emit(')');
             if (hasChildren)
             {
@@ -824,28 +803,13 @@ export function generateVirtualCode(source: string): VirtualCode
         }
 
         usedRuntime.add('h');
-        // The parser's namespace rule, applied to the projection's walk: the element's own
-        // namespace governs its attributes (an <svg> tag is itself an SVG element), the child
-        // context governs its children (childNamespace). The guards mirror foreign content
-        // exactly: an <svg> start tag inside non-integration MathML content stays MathML, and
-        // a <math> inside non-integration SVG content stays SVG - only HTML context (which
-        // integration points re-enter) opens a foreign subtree.
-        const saved = markupNamespace;
-        const elementNs = node.tag === 'svg' && saved !== 'math'
-            ? 'svg'
-            : node.tag === 'math' && saved !== 'svg'
-                ? 'math'
-                : saved;
         builder.emit(`h(${ quoteString(node.tag) }, `);
-        markupNamespace = elementNs;
-        emitProps(node.attributes, null, true, node.tag);
-        markupNamespace = childNamespace(node, elementNs);
+        emitProps(node.attributes, null, node);
         for (const child of node.children)
         {
             builder.emit(', ');
             emitChild(child);
         }
-        markupNamespace = saved;
         builder.emit(')');
     }
 

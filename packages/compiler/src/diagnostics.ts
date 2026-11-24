@@ -69,7 +69,7 @@ import type { ReactiveAnalysis } from './analyze.ts';
 import type { ReactiveSources } from './dep.ts';
 
 import { parseModule, step, skipTrivia, declaredName } from './parser.ts';
-import { blankMarkupRegions, parseMarkup } from './markup-parser.ts';
+import { annotationEncoding, blankMarkupRegions, CompileError, parseMarkup } from './markup-parser.ts';
 import { findConstructs } from './lower-reactive.ts';
 import { evalConstant } from './optimize.ts';
 import { arrayFormEachName } from './analyze.ts';
@@ -84,6 +84,8 @@ import {
     textValueOwnerMessage,
     textOnlyChildMessage,
     rawTextParsedMessage,
+    rawTextParsedRefusal,
+    type MarkupContext,
     titleValueMessage,
     contentModel,
     isTextValueProperty,
@@ -103,7 +105,7 @@ import {
     BUILTIN_SET,
     ONE_ELEMENT_COMPONENTS
 } from 'azerothjs/semantics';
-import { isRenderCallback, loneFunctionChild, markupBindingName, withoutSpacing } from './markup-util.ts';
+import { attributeMarkupContext, isRenderCallback, loneFunctionChild, markupBindingName, withoutSpacing } from './markup-util.ts';
 import { analyzeComponent } from './analyze.ts';
 import { parseStatementsSlice, parseExpressionSlice, parseDeclarationSlice } from './ts-slice.ts';
 import { findMarkupStart, isIdentStart, isIdentPart, isWhitespace, scanTypeParams, skipBalanced } from './scanner.ts';
@@ -173,7 +175,7 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
             diagnoseMalformedComponents(source, item.start, item.end, diagnostics);
             // Module-scope markup (`const row = () => <li/>`) compiles through the same
             // lowerer, so it answers to the same GRAMMAR 6.6 rules.
-            walkEmbeddedMarkup(source, item.start, item.end, embeddedRuleVisitor(source, diagnostics, shadowed));
+            walkEmbeddedMarkup(source, item.start, item.end, embeddedRuleVisitor(source, diagnostics, shadowed), diagnostics);
             // ...to the declaration shape rules, since its keywords are lowered too...
             shapeDeclarations(source.slice(item.start, item.end), item.start, false, diagnostics);
             // ...and to the bind-target rule: a bind in module-scope markup was invisible to the
@@ -1079,13 +1081,13 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
         if (item.kind === 'markup')
         {
             diagnoseEventHandlers(source, item.node, out);
-            walkMarkupDeep(source, item.node, markupRuleVisitor(source, out, shadowed));
+            walkMarkupDeep(source, item.node, markupRuleVisitor(source, out, shadowed), out);
         }
     }
     const embeddedRules = embeddedRuleVisitor(source, out, shadowed);
     for (const [start, end] of embeddedSpans(source, component))
     {
-        walkEmbeddedMarkup(source, start, end, embeddedRules);
+        walkEmbeddedMarkup(source, start, end, embeddedRules, out);
     }
 
     // azeroth/multiple-roots. The generator returns the LAST top-level markup region,
@@ -2635,16 +2637,16 @@ function* collectMarkupExpressions(source: string, node: MarkupElement | MarkupF
  * finding inside `{cond ? <a/> : <b/>}` carries its absolute span. One walker for every
  * markup-level rule, so no rule can quietly cover less markup than another.
  */
-function walkMarkupDeep(source: string, node: MarkupElement | MarkupFragment, visit: (el: MarkupElement) => void): void
+function walkMarkupDeep(source: string, node: MarkupElement | MarkupFragment, visit: (el: MarkupElement) => void, syntax?: AzerothDiagnostic[]): void
 {
     if (node.kind === 'element')
     {
         visit(node);
         for (const attr of node.attributes)
         {
-            if (!attr.spread && attr.value.kind === 'expression')
+            if (attr.value.kind === 'expression')
             {
-                walkEmbeddedMarkup(source, source.indexOf('{', attr.start) + 1, attr.end - 1, visit);
+                walkEmbeddedMarkup(source, source.indexOf('{', attr.start) + 1, attr.end - 1, visit, syntax, attributeMarkupContext(node, attr));
             }
         }
     }
@@ -2652,21 +2654,21 @@ function walkMarkupDeep(source: string, node: MarkupElement | MarkupFragment, vi
     {
         if (child.kind === 'element' || child.kind === 'fragment')
         {
-            walkMarkupDeep(source, child, visit);
+            walkMarkupDeep(source, child, visit, syntax);
         }
         else if (child.kind === 'expression')
         {
-            walkEmbeddedMarkup(source, child.start + 1, child.end - 1, visit);
+            walkEmbeddedMarkup(source, child.start + 1, child.end - 1, visit, syntax, child.namespace);
         }
     }
 }
 
 /**
  * Finds and walks any markup regions inside `[start, end)` of the original source.
- * Malformed embedded markup is skipped here - its parse error surfaces through the
- * compile/type-check gates with its own message.
+ * A committed parse error refers to an actual markup span. A speculative parse can
+ * instead have encountered TypeScript, so keep looking for the next markup region.
  */
-function walkEmbeddedMarkup(source: string, start: number, end: number, visit: (el: MarkupElement) => void): void
+function walkEmbeddedMarkup(source: string, start: number, end: number, visit: (el: MarkupElement) => void, syntax?: AzerothDiagnostic[], namespace?: MarkupContext): void
 {
     let pos = start;
     while (pos < end)
@@ -2679,13 +2681,19 @@ function walkEmbeddedMarkup(source: string, start: number, end: number, visit: (
         let parsed: { node: MarkupElement | MarkupFragment; end: number };
         try
         {
-            parsed = parseMarkup(source, at);
+            parsed = parseMarkup(source, at, namespace);
         }
-        catch
+        catch (error)
         {
-            return;
+            if (error instanceof CompileError && error.committed)
+            {
+                syntax?.push({ code: 'azeroth/syntax', severity: 'error', message: error.message, start: error.offset, end: Math.min(source.length, error.offset + 1) });
+                return;
+            }
+            pos = at + 1;
+            continue;
         }
-        walkMarkupDeep(source, parsed.node, visit);
+        walkMarkupDeep(source, parsed.node, visit, syntax);
         pos = parsed.end;
     }
 }
@@ -3110,13 +3118,37 @@ function hostAttributeRules(el: MarkupElement, out: AzerothDiagnostic[]): void
  */
 function textContentRules(el: MarkupElement, out: AzerothDiagnostic[]): void
 {
-    const model = contentModel(el.tag);
+    if (el.namespace === 'math' && el.tag.toLowerCase() === 'annotation-xml' && el.children.some(child => child.kind !== 'text'))
+    {
+        const encoding = el.attributes.find(attr => attr.spread) ?? annotationEncoding(el);
+        if (encoding?.value.kind === 'expression')
+        {
+            out.push({
+                code: 'azeroth/annotation-encoding',
+                severity: 'error',
+                message: 'Markup inside <annotation-xml> needs a known parsing namespace. Use explicit attributes and omit encoding or provide a literal encoding.',
+                start: encoding.start,
+                end: encoding.end
+            });
+        }
+    }
+    const model = contentModel(el.tag, el.namespace);
     const joined = model === 'escapable-raw-text';
     if (!joined && model !== 'raw-text-parsed')
     {
         return;
     }
     const tag = el.tag.toLowerCase();
+    if (model === 'raw-text-parsed' && el.children.length > 0 && el.children.every(c => c.kind === 'text'))
+    {
+        const message = rawTextParsedRefusal(tag, el.children.map(c => c.value).join(''));
+        const first = el.children[0];
+        const last = el.children.at(-1);
+        if (message !== null && first !== undefined && last !== undefined)
+        {
+            out.push({ code: 'azeroth/raw-text-content', severity: 'error', message, start: first.start, end: last.end });
+        }
+    }
     for (const child of el.children)
     {
         if (child.kind === 'text' || (child.kind === 'expression' && joined))

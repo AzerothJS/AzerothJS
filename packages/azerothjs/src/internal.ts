@@ -34,7 +34,7 @@ import { SPLIT_RUNTIME } from './reactivity/store-scope.ts';
  * Bump ONLY with an incompatible emit-vocabulary or helper-semantics change, together
  * with the compiler's EMITTED_CONTRACT_VERSION (the drift spec welds them).
  */
-export const RUNTIME_CONTRACT_VERSION = 6;
+export const RUNTIME_CONTRACT_VERSION = 7;
 
 /** The global slot naming the copy the latest compiled module bound to; unbound on evaluation. */
 const RUNTIME = Symbol.for('azerothjs.runtime');
@@ -164,7 +164,7 @@ export { currentBase, documentBase, isBasePrefix, renderWithBase } from './i18n/
 export { isLanguageTag } from './i18n/locale.ts';
 export { joinBase, normalizeBase, stripBasePrefix } from './router/base.ts';
 export { isAbsoluteAppPath, isExternalUrl } from './semantics.ts';
-export { bindHole, bindContent, bindText, bindEvent, bindSlot, bindProps, setProp, hydrateChild, appendChild } from './renderer/h.ts';
+export { hNS, bindHole, bindContent, bindText, bindEvent, bindSlot, bindProps, setProp, hydrateChild, appendChild } from './renderer/h.ts';
 export { tmpl } from './renderer/template.ts';
 
 // Compiled calls to the Show builtin use branch selection even with a zero-argument factory.

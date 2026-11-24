@@ -7,7 +7,8 @@
 //     as DIRECT children of the co-range - never inside a `display:contents` wrapper, which is invalid in
 //     <select>/<table>. This matches the reactive-array-hole guarantee.
 import { describe, it, expect } from 'vitest';
-import { createSignal, h, render, Show, Switch, Match } from 'azerothjs';
+import { createSignal, h, hydrate, render, Show, Switch, Match } from 'azerothjs';
+import { hNS, tmpl } from 'azerothjs/internal';
 
 function mount(component: () => HTMLElement): HTMLElement
 {
@@ -19,6 +20,43 @@ function mount(component: () => HTMLElement): HTMLElement
 
 describe('SVG / MathML namespaces', () =>
 {
+    it('creates detached shared tags and integration-point children in their authored namespace', () =>
+    {
+        const link = hNS('html', 'a', {}, 'caption');
+        const title = hNS('svg', 'title', {}, link);
+        const root = h('svg', {}, title);
+        expect(root.firstChild).toBe(title);
+        expect(title.namespaceURI).toBe(root.namespaceURI);
+        expect(title.firstChild).toBe(link);
+        expect(link.namespaceURI).toBe('http://www.w3.org/1999/xhtml');
+        expect(hNS('math', 'style', {}).namespaceURI).toBe('http://www.w3.org/1998/Math/MathML');
+        expect(h('style', {}).namespaceURI).toBe(link.namespaceURI);
+    });
+
+    it('parses the same template root in its supplied context', () =>
+    {
+        expect(tmpl('<style></style>', 'html')().namespaceURI).toBe('http://www.w3.org/1999/xhtml');
+        expect(tmpl('<style></style>', 'svg')().namespaceURI).toBe('http://www.w3.org/2000/svg');
+        expect(tmpl('<g></g>', 'html')().namespaceURI).toBe('http://www.w3.org/1999/xhtml');
+    });
+
+    it('builds parser-spelled foreign local names and adopts those elements in place', () =>
+    {
+        const view = (): HTMLElement => hNS('svg', 'svg', {}, hNS('svg', 'stYle', {}, '.x { fill: red; }'),
+            hNS('svg', 'fOreignObject', {}), hNS('svg', 'tiTle', {}, 'Ink'), hNS('svg', 'dEsC', {}, 'Drawing'));
+        const container = document.createElement('div');
+        const original = view();
+        container.appendChild(original);
+        const children = Array.from(original.children);
+        expect(children.map(el => el.localName)).toEqual(['style', 'foreignObject', 'title', 'desc']);
+        hydrate(view, container);
+        expect(container.firstChild).toBe(original);
+        expect(original.childElementCount).toBe(children.length);
+        for (const [i, child] of children.entries())
+        {
+            expect(original.children[i]).toBe(child);
+        }
+    });
     it('an <svg> subtree is created in the SVG namespace', () =>
     {
         const c = mount(() => h('svg', { viewBox: '0 0 10 10' }, h('circle', { cx: '5', cy: '5', r: '4' })));

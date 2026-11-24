@@ -356,9 +356,12 @@ otherwise. The element's type follows the TAG and its markup NAMESPACE, the same
 rule the HTML parser applies: `<input>` gives an `HTMLInputElement`, `<circle>`
 inside `<svg>` an `SVGCircleElement`, `<mi>` inside `<math>` a `MathMLElement`, an
 ambiguous tag follows its context (`<a>` is an HTML anchor outside `<svg>` and an
-SVG anchor inside), and the parser's re-entry points return to HTML
-(`<foreignObject>` children; the MathML text integration points `mi`/`mo`/`mn`/
-`ms`/`mtext`; `annotation-xml` under a literal html encoding). An unknown or
+SVG anchor inside). Children of SVG `foreignObject`, `desc` and `title` resume HTML.
+MathML `mi`, `mo`, `mn`, `ms` and `mtext` also resume HTML except for `mglyph`
+and `malignmark`. In MathML `annotation-xml`, a literal `text/html` or
+`application/xhtml+xml` encoding selects HTML. An `svg` child enters SVG for
+any encoding. With markup children, use explicit attributes and omit the encoding
+or give a literal value (`azeroth/annotation-encoding`). An unknown or
 custom-element tag gives the context's base element: `HTMLElement` in HTML
 content, `SVGElement`/`MathMLElement` in a foreign subtree.
 No annotation is needed; an incompatible one is a type error (subject to
@@ -373,6 +376,9 @@ rule thrown from `h()` in every mode. A child that is only whitespace counts (a
 same-line space, `&nbsp;`, `&#10;`); a line break alone is formatting and is
 dropped. A void element (`<input>`, `<br>`, ...) owns NO content: children or a
 closing tag on one is a located parse error.
+
+When both content properties are present, an own `innerHTML` supplies the content
+in every render mode.
 
 **Text-only content.** The HTML parser reads a `<textarea>`'s and a `<title>`'s
 content as ONE text. Their children are text and holes in any mix, and they join
@@ -398,14 +404,21 @@ keeps its line breaks as written, except that with no spread before it each CR o
 CRLF in it, `&#13;` included, is read as LF. A component that forwards its props
 to a textarea takes `children` out first, `const { children, ...rest } = props;`
 and `<textarea {...rest}>{ children }</textarea>`, because a spread of the whole
-props object copies `children` onto the host. The rule keys on the tag in any
-case, so `<textArea>` follows it and an svg `<title>` does too. `<iframe>`,
-`<noembed>`, `<noframes>` and `<xmp>`, whose content the parser reads as raw text,
-take static text only (`azeroth/raw-text-content`); a `<noscript>`'s content is
+props object copies `children` onto the host. The rule applies to HTML tags in any case, including `<textArea>`.
+An SVG `<title>` can contain markup. HTML `<iframe>`, `<noembed>`, `<noframes>`
+and `<xmp>` take static text only. Entity references in their authored text are
+decoded once. A decoded ampersand or less-than sign must precede HTML whitespace
+or end the text. A carriage return or null character is also refused. These
+restrictions keep text from acquiring markup or entity semantics when an enclosing
+component places the element inside foreign content. The diagnostic is
+`azeroth/raw-text-content`. An HTML `<noscript>`'s content is
 written by the server only: the client builds the element without its content;
 hydration adopts it with the content the server wrote, and a component inside
-still runs its setup. `<script>` and `<style>` content, in any case, is raw text:
-`{ }` there is text, not a hole; bind such content with textContent.
+still runs its setup. Braces in `<script>` and `<style>` are literal. Bind a dynamic
+value with `textContent`. HTML script and style use the same raw-text encoding in
+a client template and in served HTML. Inside SVG and MathML the compiler writes
+these bodies as character data. CDATA sections contribute their contents, and
+ampersands and comparison signs retain their authored values.
 
 **Event attachment (observable model).** Handlers attach through ONE model in
 every mode - client render, hydration, and `h()` alike. Types in the semantics

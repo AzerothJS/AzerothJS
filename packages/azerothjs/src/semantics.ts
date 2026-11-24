@@ -244,11 +244,110 @@ export function voidChildrenMessage(tag: string): string
     return `Void element <${ tag }> cannot have children or a closing tag; write <${ tag } />.`;
 }
 
+export type HostNamespace = 'html' | 'svg' | 'math';
+
+/** Standalone foreign host names used when no parent establishes a markup namespace. */
+const SVG_TAGS = new Set
+([
+    'svg', 'g', 'defs', 'symbol', 'use', 'switch', 'foreignObject', 'marker', 'mask',
+    'pattern', 'clipPath', 'filter', 'view', 'desc', 'metadata',
+    'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'tspan',
+    'textPath', 'image', 'animate', 'animateMotion', 'animateTransform', 'mpath', 'set',
+    'linearGradient', 'radialGradient', 'stop', 'feBlend', 'feColorMatrix',
+    'feComponentTransfer', 'feComposite', 'feConvolveMatrix', 'feDiffuseLighting',
+    'feDisplacementMap', 'feDistantLight', 'feDropShadow', 'feFlood', 'feFuncA',
+    'feFuncB', 'feFuncG', 'feFuncR', 'feGaussianBlur', 'feImage', 'feMerge',
+    'feMergeNode', 'feMorphology', 'feOffset', 'fePointLight', 'feSpecularLighting',
+    'feSpotLight', 'feTile', 'feTurbulence'
+]);
+
+/** Standalone MathML host names. */
+const MATHML_TAGS = new Set
+([
+    'math', 'mrow', 'mi', 'mn', 'mo', 'ms', 'mtext', 'mspace', 'mfrac', 'msqrt',
+    'mroot', 'mstyle', 'merror', 'mpadded', 'mphantom', 'mfenced', 'menclose', 'msub',
+    'msup', 'msubsup', 'munder', 'mover', 'munderover', 'mmultiscripts', 'mtable',
+    'mtr', 'mtd', 'maction', 'annotation', 'semantics'
+]);
+
+/** An independently constructed host has no parent to establish a namespace. */
+export function hostNamespaceForTag(tag: string): HostNamespace
+{
+    return SVG_TAGS.has(tag) ? 'svg' : MATHML_TAGS.has(tag) ? 'math' : 'html';
+}
+
+// The HTML tokenizer lowercases tag names before it adjusts SVG element spellings.
+// Include the five historical SVG names outside the standalone host vocabulary.
+const SVG_NAMES = new Map<string, string>();
+for (const tag of [...SVG_TAGS, 'altGlyph', 'altGlyphDef', 'altGlyphItem', 'animateColor', 'glyphRef'])
+{
+    if (tag !== tag.toLowerCase())
+    {
+        SVG_NAMES.set(tag.toLowerCase(), tag);
+    }
+}
+
+/** Match the element's parsed localName when building a compiled host with createElementNS. */
+export function canonicalForeignTag(tag: string, namespace: HostNamespace): string
+{
+    const lower = tag.toLowerCase();
+    return namespace === 'svg' ? SVG_NAMES.get(lower) ?? lower : lower;
+}
+
+/** Enter a foreign root from an HTML parsing context. */
+export function elementNamespace(tag: string, context: HostNamespace): HostNamespace
+{
+    const name = tag.toLowerCase();
+    return context === 'html' && (name === 'svg' || name === 'math') ? name : context;
+}
+
+const MATH_TEXT_POINTS: ReadonlySet<string> = new Set(['mi', 'mo', 'mn', 'ms', 'mtext']);
+
+export type MarkupContext = HostNamespace | 'math-text' | 'math-annotation';
+
+/** Keep child-dependent MathML integration rules until the child host's tag is known. */
+export function hostChildContext(tag: string, namespace: HostNamespace, encoding?: string): MarkupContext
+{
+    const name = tag.toLowerCase();
+    if (namespace === 'svg' && (name === 'foreignobject' || name === 'desc' || name === 'title'))
+    {
+        return 'html';
+    }
+    if (namespace === 'math')
+    {
+        if (MATH_TEXT_POINTS.has(name))
+        {
+            return 'math-text';
+        }
+        if (name === 'annotation-xml')
+        {
+            const type = encoding?.toLowerCase();
+            return type === 'text/html' || type === 'application/xhtml+xml' ? 'html' : 'math-annotation';
+        }
+    }
+    return namespace;
+}
+
+/** Resolve the parent context when an immediate or deferred child host is encountered. */
+export function resolveMarkupContext(context: MarkupContext, childTag?: string): HostNamespace
+{
+    const child = childTag?.toLowerCase();
+    if (context === 'math-text')
+    {
+        return child === 'mglyph' || child === 'malignmark' ? 'math' : 'html';
+    }
+    if (context === 'math-annotation')
+    {
+        return child === 'svg' ? 'html' : 'math';
+    }
+    return context;
+}
+
 /**
  * How the HTML parser reads content that is not markup: verbatim (script, style), as one decoded
  * text (textarea, title), as raw text (iframe, noembed, noframes, xmp), or server-only (noscript).
  */
-export type ContentModel = 'raw-text' | 'escapable-raw-text' | 'raw-text-parsed' | 'server-only';
+export type ContentModel = 'raw-text' | 'escapable-raw-text' | 'raw-text-parsed' | 'server-only' | 'foreign-text';
 
 const CONTENT_MODELS: ReadonlyMap<string, ContentModel> = new Map<string, ContentModel>([
     ['script', 'raw-text'],
@@ -263,12 +362,70 @@ const CONTENT_MODELS: ReadonlyMap<string, ContentModel> = new Map<string, Conten
 ]);
 
 /**
- * The content model of a host element, or null for markup content. Looked up in any case, as the
- * parser reads tag names, and keyed on the tag alone, so an svg `<title>` holds one text too.
+ * A foreign style or script contains authored text, which the foreign-content parser
+ * decodes like ordinary text. An SVG title can contain markup.
  */
-export function contentModel(tag: string): ContentModel | null
+export function contentModel(tag: string): ContentModel | null;
+// eslint-disable-next-line @typescript-eslint/unified-signatures -- the original unary callback also accepts Array.map's unused numeric index
+export function contentModel(tag: string, namespace: HostNamespace | undefined): ContentModel | null;
+export function contentModel(tag: string, namespace: HostNamespace = 'html'): ContentModel | null
 {
-    return CONTENT_MODELS.get(tag.toLowerCase()) ?? null;
+    const name = tag.toLowerCase();
+    if (namespace === 'svg' || namespace === 'math')
+    {
+        return name === 'style' || name === 'script' ? 'foreign-text' : null;
+    }
+    return CONTENT_MODELS.get(name) ?? null;
+}
+
+const RAW_TEXT_ENDS: ReadonlyMap<string, RegExp> = new Map(
+    ['iframe', 'noembed', 'noframes', 'xmp'].map(tag => [tag, new RegExp(`</${ tag }(?=[\\t\\n\\f\\r />])`, 'i')])
+);
+
+/** No raw content, including trusted markup, can end the surrounding legacy element. */
+function rawMarkupRefusal(tag: string, content: string): string | null
+{
+    const close = RAW_TEXT_ENDS.get(tag.toLowerCase());
+    if (close !== undefined && (close.test(content) || content.includes('\r') || content.includes('\0')))
+    {
+        return `The text of <${ tag }> cannot contain its own end tag, a carriage return, or a null character.`;
+    }
+    return null;
+}
+
+/** Plain fallback may also be placed in foreign markup, where references and tags would parse. */
+export function rawTextParsedRefusal(tag: string, content: string): string | null
+{
+    const refusal = rawMarkupRefusal(tag, content);
+    if (refusal !== null)
+    {
+        return refusal;
+    }
+    if (RAW_TEXT_ENDS.has(tag.toLowerCase()) && /[<&](?=[^\t\n\f\r ])/.test(content))
+    {
+        return `In the text of <${ tag }>, a '<' or '&' must be followed by whitespace or the end of the text.`;
+    }
+    return null;
+}
+
+/** Write character data in an HTML raw-text element, preserving its CSS or script spelling. */
+export function neutralizeRawText(tag: string, content: string, kind: 'text' | 'markup' = 'text'): string
+{
+    const name = tag.toLowerCase();
+    if (name === 'script')
+    {
+        return content.replace(/<(?=\/script|script|!--)/gi, '\\u003c');
+    }
+    if (name === 'style')
+    {
+        return content.replace(/<(?=\/style)/gi, '\\3c');
+    }
+    const refusal = kind === 'markup' ? rawMarkupRefusal(name, content) : rawTextParsedRefusal(name, content);
+    if (refusal !== null)
+    {
+        throw new TypeError(refusal);
+    }
+    return content;
 }
 
 /**

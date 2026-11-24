@@ -28,10 +28,9 @@
 import { isStringMode } from '../reactivity/index.ts';
 import { currentFrame, resetSlotCss, strayWriteFrame, takeSlotCss } from './frame.ts';
 import type { RenderFrame } from './frame.ts';
-import { hashCss, scopeSelectors } from '../semantics.ts';
+import { hashCss, neutralizeRawText, scopeSelectors } from '../semantics.ts';
 
 import { adoptStyleSheet, resetAdoptedStyleSheets } from './adopt-style.ts';
-import { STYLE_BREAKOUT } from './ssr.ts';
 
 /** Scopes already injected into the document, so injection happens once per scope. */
 const injectedScopes = new Set<string>();
@@ -237,7 +236,7 @@ export function collectStyleSheet(frame?: RenderFrame): string
     // `content:` label). A value carrying `</style>` would close the element and everything after
     // it would parse as markup, so the terminating sequence is neutralised with the CSS escape,
     // which is lossless for every legitimate use: `\3c` inside a CSS string is still `<`.
-    return parts.join('\n').replace(STYLE_BREAKOUT, '\\3c');
+    return neutralizeRawText('style', parts.join('\n'));
 }
 
 /**

@@ -39,8 +39,8 @@
 import { isWhitespace, findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError } from './markup-parser.ts';
 import { hostEventType, bindWriteBack, isBindingAttr, isBranchPosition, isChildResolvedProperty, isTextValueProperty, normalizeLineBreaks, CONTENT_PROPERTIES, BUILTIN_SET as BUILTINS, ONE_ELEMENT_COMPONENTS } from 'azerothjs/semantics';
-import { loneFunctionChild, withoutSpacing } from './markup-util.ts';
-import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
+import { attributeMarkupContext, loneFunctionChild, withoutSpacing } from './markup-util.ts';
+import type { MarkupContext, MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
 // Type-only (erased at runtime), so the runtime module graph stays acyclic even though analyze imports
 // the VALUE `lowerMarkup` from here. See the module header for why the type-graph cycle is intentional.
@@ -167,14 +167,14 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope> 
     const scopeClassList = (value: string): string =>
         classes === null ? value : value.replace(/\S+/g, scopeName);
 
-    const exprFor = (span: Span, lookupKey: number): ReactiveExpr =>
+    const exprFor = (span: Span, lookupKey: number, namespace?: MarkupContext): ReactiveExpr =>
     {
         const scope = scopeByStart?.get(lookupKey);
         if (scopeByStart !== null && scope === undefined)
         {
             throw new CompileError('Missing analysis scope for a component markup binding.', lookupKey);
         }
-        return { span, deps: scope?.deps ?? [], pure: scope?.pure ?? true };
+        return { span, ...(namespace === undefined ? {} : { namespace }), deps: scope?.deps ?? [], pure: scope?.pure ?? true };
     };
 
     const lowerNode = (node: MarkupElement | MarkupFragment, ctx: Ctx): TemplateNode =>
@@ -194,6 +194,9 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope> 
         // dynamic `class={expr}`, and the toggles) merge into one reactive ClassBinding; otherwise `class`
         // lowers as an ordinary attribute (behaviour unchanged for elements with no class directive).
         const hasClassDirective = node.attributes.some(a => !a.spread && typeof a.name === 'string' && a.name.startsWith('class:'));
+        // An own innerHTML is the content owner in every runtime mode. Avoid installing
+        // a competing text binding on the clone when both properties are explicit.
+        const ownsMarkup = node.attributes.some(a => a.name === 'innerHTML');
         let classBase: string | null = null;
         let classDynamic: Span | null = null;
         const classToggles: { name: string; expr: Span }[] = [];
@@ -225,7 +228,15 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope> 
                 ctx.bindings.push({ kind: 'spread', target: id, expr: exprFor(attrInnerSpan(source, attr), attr.start) });
                 continue;
             }
-            const name = attr.name as string;
+            // The HTML parser folds this MathML attribute name. Its value also determines
+            // the children's namespace, so eager construction must use the same spelling.
+            const name = node.namespace === 'math' && node.tag.toLowerCase() === 'annotation-xml' && attr.name?.toLowerCase() === 'encoding'
+                ? 'encoding'
+                : attr.name as string;
+            if (ownsMarkup && name === 'textContent')
+            {
+                continue;
+            }
             if (hasClassDirective && name === 'class')
             {
                 if (attr.value.kind === 'static')
@@ -332,7 +343,7 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope> 
         const children = valueText !== null
             ? [{ kind: 'text' as const, id: ctx.next++, value: valueText }]
             : node.children.map(child => lowerChild(child, ctx));
-        return { kind: 'element', id, tag: node.tag, attrs, children };
+        return { kind: 'element', id, tag: node.tag, ...(node.namespace === undefined ? {} : { namespace: node.namespace }), attrs, children };
     };
 
     const lowerChild = (child: MarkupChild, ctx: Ctx): TemplateNode =>
@@ -345,7 +356,7 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope> 
         {
             const id = ctx.next++;
             const span: Span = { start: child.start + 1, end: child.end - 1 };
-            ctx.bindings.push({ kind: 'text', target: id, expr: exprFor(span, child.start) });
+            ctx.bindings.push({ kind: 'text', target: id, expr: exprFor(span, child.start, child.namespace) });
             return { kind: 'hole', id };
         }
         return lowerNode(child, ctx);
@@ -364,7 +375,7 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope> 
         {
             if (attr.spread)
             {
-                props.push({ kind: 'spread', expr: exprFor(attrInnerSpan(source, attr), attr.start) });
+                props.push({ kind: 'spread', expr: exprFor(attrInnerSpan(source, attr), attr.start, attributeMarkupContext(node, attr)) });
                 continue;
             }
             const name = attr.name as string;
@@ -404,7 +415,7 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope> 
             }
             else
             {
-                props.push({ kind: 'prop', name, expr: exprFor(attrInnerSpan(source, attr), attr.start) });
+                props.push({ kind: 'prop', name, expr: exprFor(attrInnerSpan(source, attr), attr.start, attributeMarkupContext(node, attr)) });
             }
         }
 
@@ -462,10 +473,10 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope> 
         {
             const child = soloChild;
             const span: Span = { start: child.start + 1, end: child.end - 1 };
-            const expr = exprFor(span, child.start);
+            const expr = exprFor(span, child.start, child.namespace);
             if (loneFunctionChild(children) !== undefined)
             {
-                const clone = renderClone(source, span);
+                const clone = renderClone(source, span, child.namespace);
                 if (clone === null)
                 {
                     return { kind: 'render', param: null, body: expr };
@@ -502,7 +513,7 @@ export function componentChildren(node: MarkupElement, shadowed: ReadonlySet<str
  * complex parameter list with the whole arrow so its patterns, initializers and
  * TypeScript syntax are scoped and rewritten together.
  */
-export function renderClone(source: string, span: Span): { node: MarkupElement; param: Span } | null
+export function renderClone(source: string, span: Span, namespace?: MarkupContext): { node: MarkupElement; param: Span } | null
 {
     const code = source.slice(span.start, span.end);
     const arrow = /^\s*(\(\s*(?:[A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*\s*,?\s*)?\)|[A-Za-z_$][\w$]*)\s*=>\s*(?=<)/.exec(code);
@@ -519,7 +530,7 @@ export function renderClone(source: string, span: Span): { node: MarkupElement; 
     let parsed: ReturnType<typeof parseMarkup>;
     try
     {
-        parsed = parseMarkup(source, span.start + bodyStart);
+        parsed = parseMarkup(source, span.start + bodyStart, namespace);
     }
     catch (error)
     {

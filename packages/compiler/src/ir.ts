@@ -35,7 +35,8 @@
  * @internal Compiler IR; not part of the package's public API.
  */
 
-import type { Span } from './types.ts';
+import type { HostNamespace } from 'azerothjs/semantics';
+import type { MarkupContext, Span } from './types.ts';
 import type { Dep } from './dep.ts';
 
 /**
@@ -48,6 +49,8 @@ export interface ReactiveExpr
 {
     /** Source span of the expression (codegen emits this slice, projecting nested markup). */
     span: Span;
+    /** Placement for markup embedded in this expression. */
+    namespace?: MarkupContext;
     /** Reactive sources read; empty => not reactive. */
     deps: Dep[];
     /** Conservative purity (may be refined later). */
@@ -76,6 +79,7 @@ export interface TemplateElement
     kind: 'element';
     id: number;
     tag: string;
+    namespace?: HostNamespace;
     attrs: StaticAttr[];
     children: TemplateNode[];
 }

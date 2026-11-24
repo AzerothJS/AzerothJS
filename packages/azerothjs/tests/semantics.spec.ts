@@ -15,6 +15,8 @@ import {
     DOM_PROPERTIES,
     VOID_ELEMENTS,
     contentModel,
+    hostChildContext,
+    resolveMarkupContext,
     leadingNewlinePad,
     escapeCarriageReturns,
     normalizeLineBreaks,
@@ -131,6 +133,18 @@ describe('write-back, content, and property facts', () =>
     {
         expect(VOID_ELEMENTS.has('input')).toBe(true);
         expect(VOID_ELEMENTS.has('div')).toBe(false);
+    });
+
+    it('selects the parsing context for MathML integration children', () =>
+    {
+        const text = hostChildContext('mi', 'math');
+        const annotation = hostChildContext('annotation-xml', 'math', 'text/plain');
+        expect(resolveMarkupContext(text, 'style')).toBe('html');
+        expect(resolveMarkupContext(text, 'mglyph')).toBe('math');
+        expect(resolveMarkupContext(text, 'malignmark')).toBe('math');
+        expect(resolveMarkupContext(annotation, 'svg')).toBe('html');
+        expect(resolveMarkupContext(annotation, 'style')).toBe('math');
+        expect(hostChildContext('annotation-xml', 'math', 'APPLICATION/XHTML+XML')).toBe('html');
     });
 
     it('one content-model table names how the parser reads each element, in any case', () =>

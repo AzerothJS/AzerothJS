@@ -25,7 +25,9 @@ import { untrack, escapeText, escapeAttr, ssr, isSSRNode } from '../reactivity/i
 import { resolveThunks, serializeChild, currentStreamSession, isHydrationNode } from '../reactivity/internal.ts';
 import type { SSRNode } from '../reactivity/index.ts';
 import { isSlotHandle } from '../reactivity/slot-handle.ts';
+import type { HostNamespace } from '../semantics.ts';
 import {
+    neutralizeRawText,
     isChildResolvedProperty,
     isTextValueProperty,
     textHoleValueMessage,
@@ -54,37 +56,6 @@ import {
     executableScriptMessage,
     refreshRefusal
 } from '../semantics.ts';
-
-/**
- * Raw-text content is CDATA, but CDATA is closed by the element's own end tag: a child
- * containing `</script>` terminates the element mid-content and everything after it is
- * parsed as MARKUP - `h('script', {}, JSON.stringify(data))` becomes an injection the
- * moment `data` holds `'</script><img onerror=...>'`. The DOM path appends an inert Text
- * node for the same call, so without this transform the same component is safe
- * client-rendered and live server-rendered.
- *
- * The `<` opening a sequence the HTML tokenizer acts on inside script data (`</script`,
- * `<script`, `<!--`) becomes the six-character JS unicode escape for `<`; inside style
- * data, the `<` opening `</style` becomes the CSS hex escape `\3c`. Both decode back to
- * `<` in every context
- * that can legitimately carry the sequence (JSON/JS strings, template literals, regexes,
- * CSS strings), so real content round-trips losslessly - only in raw code position do
- * they differ, where the original sequence already terminated the element.
- *
- * @internal
- */
-const SCRIPT_BREAKOUT = /<(?=\/script|script|!--)/gi;
-
-/** The `<` opening a `</style` sequence, which would close a style element mid-content. */
-export const STYLE_BREAKOUT: RegExp = /<(?=\/style)/gi;
-
-/** Applies the raw-text breakout transform for one element. @internal */
-function neutralizeRawText(tagName: string, content: string): string
-{
-    return tagName === 'script'
-        ? content.replace(SCRIPT_BREAKOUT, '\\u003c')
-        : content.replace(STYLE_BREAKOUT, '\\3c');
-}
 
 /** Bounds the arrays {@link joinText} walks, so an array that holds itself stops. */
 const MAX_TEXT_DEPTH = 512;
@@ -130,6 +101,54 @@ export function joinText(tag: string, value: unknown, depth = 0): string
     return String(value);
 }
 
+/**
+ * A legacy fallback is text in HTML. Public h() can also give it serialized child nodes.
+ * In that case preserve their markup and the ordinary escaping of neighboring text.
+ * Join adjacent plain children before checking them, including children nested in arrays.
+ */
+function legacyFallback(tag: string, children: readonly Child[]): string
+{
+    let markup = '';
+    let plain = '';
+
+    function append(value: unknown, depth: number): void
+    {
+        if (typeof value === 'function')
+        {
+            value = resolveThunks(value);
+            if (typeof value === 'function')
+            {
+                return;
+            }
+        }
+        if (Array.isArray(value))
+        {
+            if (depth < MAX_TEXT_DEPTH)
+            {
+                for (const child of value)
+                {
+                    append(child, depth + 1);
+                }
+            }
+        }
+        else if (isSSRNode(value))
+        {
+            if (value.html !== '')
+            {
+                markup += escapeText(neutralizeRawText(tag, plain)) + value.html;
+                plain = '';
+            }
+        }
+        else
+        {
+            plain += joinText(tag, value);
+        }
+    }
+    append(children, 0);
+    const tail = neutralizeRawText(tag, plain);
+    return markup.length > 0 ? neutralizeRawText(tag, markup + escapeText(tail), 'markup') : tail;
+}
+
 /** Whether a list of children holds a getter at any depth. @internal */
 export function holdsGetter(parts: readonly unknown[], depth = 0): boolean
 {
@@ -143,6 +162,38 @@ export function holdsGetter(parts: readonly unknown[], depth = 0): boolean
     return false;
 }
 
+type ContentKey = 'innerHTML' | 'textContent';
+
+export interface ContentOwner
+{
+    key: ContentKey;
+    descriptor: PropertyDescriptor;
+}
+
+/** Capture the own property before any accessor can replace it. Reading its value can wait. */
+export function contentOwner(props: Props): ContentOwner | null
+{
+    const markup = Object.getOwnPropertyDescriptor(props, 'innerHTML');
+    if (markup !== undefined)
+    {
+        return { key: 'innerHTML', descriptor: markup };
+    }
+    const text = Object.getOwnPropertyDescriptor(props, 'textContent');
+    return text === undefined ? null : { key: 'textContent', descriptor: text };
+}
+
+/** Preserve normal property reads (including Proxy getters) while its descriptor is still current. */
+export function readContent(props: Props, owner: ContentOwner): unknown
+{
+    const { key, descriptor } = owner;
+    const current = Object.getOwnPropertyDescriptor(props, key);
+    if (current !== undefined && current.get === descriptor.get && Object.is(current.value, descriptor.value))
+    {
+        return props[key];
+    }
+    return Object.hasOwn(descriptor, 'value') ? descriptor.value : descriptor.get?.call(props);
+}
+
 /** The `</textarea` or `</title` that would end the element, in any case. @internal */
 const END_TAG = { textarea: /<(?=\/textarea)/gi, title: /<(?=\/title)/gi } as const;
 
@@ -152,19 +203,19 @@ const END_TAG = { textarea: /<(?=\/textarea)/gi, title: /<(?=\/title)/gi } as co
  *
  * @internal
  */
-function escapableContent(tagName: 'textarea' | 'title', props: Props, children: Child[]): string
+function escapableContent(tagName: 'textarea' | 'title', props: Props, children: Child[], owner: ContentKey | null, body: unknown): string
 {
     let html: string;
-    if ('innerHTML' in props)
+    if (owner === 'innerHTML')
     {
         // The client parses it as this element's text, so only an end tag needs neutralizing.
         // eslint-disable-next-line @typescript-eslint/no-base-to-string -- caller-trusted HTML
-        html = String(resolveValue(props.innerHTML) ?? '').replace(END_TAG[tagName], '&lt;');
+        html = String(body ?? '').replace(END_TAG[tagName], '&lt;');
     }
-    else if ('textContent' in props)
+    else if (owner === 'textContent')
     {
         // eslint-disable-next-line @typescript-eslint/no-base-to-string -- as the DOM coerces it
-        html = escapeCarriageReturns(escapeText(String(resolveValue(props.textContent) ?? '')));
+        html = escapeCarriageReturns(escapeText(String(body ?? '')));
     }
     else if (Object.hasOwn(props, 'value') && isTextValueProperty('value', tagName))
     {
@@ -595,8 +646,13 @@ function serializeAttrs(props: Props, tag?: string): string
 {
     let out = '';
 
-    for (const [key, rawValue] of Object.entries(props))
+    for (const key of Object.keys(props))
     {
+        if (CONTENT_PROPERTIES.has(key) || !Object.hasOwn(props, key))
+        {
+            continue;
+        }
+        const rawValue = props[key];
         // Refs never serialize, but the ref-value rule still holds (mirroring the handler
         // gate below): the same three "no ref" values pass here and in applyRef, and anything
         // else throws the same rule text, so no mode accepts a program another refuses.
@@ -626,11 +682,6 @@ function serializeAttrs(props: Props, tag?: string): string
         if (isReservedHostAttribute(key))
         {
             throw new TypeError(reservedHostAttributeMessage(key));
-        }
-
-        if (CONTENT_PROPERTIES.has(key))
-        {
-            continue;
         }
 
         const value = resolveValue(rawValue);
@@ -722,38 +773,39 @@ function serializeChildren(children: Child[]): string
  * // '<img src="a.png">'  (void element, no closing tag)
  * ```
  */
-export function serializeElement(tag: string, props: Props, children: Child[]): SSRNode
+export function serializeElement(tag: string, props: Props, children: Child[], namespace: HostNamespace = 'html', captured: ContentOwner | null = contentOwner(props)): SSRNode
 {
     const tagName = tag.toLowerCase();
 
+    const isVoid = namespace === 'html' && VOID_ELEMENTS.has(tagName);
+    const owner = captured?.key ?? null;
+    const body = isVoid || captured === null ? undefined : resolveValue(readContent(props, captured));
     const attrs = serializeAttrs(props, tagName);
 
-    if (VOID_ELEMENTS.has(tagName))
+    if (isVoid)
     {
         return ssr(`<${ tagName }${ attrs }>`);
     }
 
-    // Raw-text element (`<script>`/`<style>`): content is CDATA, emitted without HTML-escaping.
-    // Entity-escaping would corrupt the CSS/JSON-LD, since a browser does not decode entities
-    // inside these elements - which is also why `textContent` takes the breakout transform here
-    // rather than escapeText. The content properties keep their usual precedence: the DOM path
-    // assigns them verbatim on these elements too, so skipping them shipped an EMPTY element to
-    // every non-hydrating reader while the browser render carried the content. Only the
-    // sequences that could TERMINATE the element are neutralized (see neutralizeRawText), so a
-    // content value can never close the tag and continue as live markup.
-    const model = contentModel(tagName);
-    if (model === 'raw-text')
+    // HTML script/style and legacy fallback elements parse character data verbatim.
+    // SVG and MathML parse entities instead. Resolve their single text run without hole markers.
+    const model = contentModel(tagName, namespace);
+    if (model === 'raw-text' || model === 'raw-text-parsed' || model === 'foreign-text')
     {
-        let raw: string;
-        if ('innerHTML' in props)
+        if (model === 'raw-text-parsed' && owner === null)
         {
-            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- innerHTML is caller-trusted raw content; non-string input is caller error surfaced visibly
-            raw = String(resolveValue(props.innerHTML) ?? '');
+            const fallback = untrack(() => legacyFallback(tagName, children));
+            return ssr(`<${ tagName }${ attrs }>${ fallback }</${ tagName }>`);
         }
-        else if ('textContent' in props)
+        let raw: string;
+        if (owner !== null)
         {
-            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- textContent coerces like the DOM property; non-string input is caller error surfaced visibly
-            raw = String(resolveValue(props.textContent) ?? '');
+            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- a content property coerces to its DOM string
+            raw = String(body ?? '');
+        }
+        else if (model !== 'raw-text')
+        {
+            raw = untrack(() => joinText(tagName, children));
         }
         else
         {
@@ -768,28 +820,36 @@ export function serializeElement(tag: string, props: Props, children: Child[]): 
                 raw += String(typeof child === 'function' ? resolveValue(child) ?? '' : child);
             }
         }
-        return ssr(`<${ tagName }${ attrs }>${ neutralizeRawText(tagName, raw) }</${ tagName }>`);
+        if (model !== 'foreign-text')
+        {
+            raw = neutralizeRawText(tagName, raw, owner === 'innerHTML' ? 'markup' : 'text');
+        }
+        else if (owner !== 'innerHTML')
+        {
+            raw = escapeCarriageReturns(escapeText(raw));
+        }
+        return ssr(`<${ tagName }${ attrs }>${ raw }</${ tagName }>`);
     }
 
     // `<textarea>`/`<title>`: the parser reads the content as one text, so it is written as one
     // escaped text with no hole anchors, which would show as text.
     if (model === 'escapable-raw-text')
     {
-        return ssr(`<${ tagName }${ attrs }>${ escapableContent(tagName as 'textarea' | 'title', props, children) }</${ tagName }>`);
+        return ssr(`<${ tagName }${ attrs }>${ escapableContent(tagName as 'textarea' | 'title', props, children, owner, body) }</${ tagName }>`);
     }
 
     let inner: string;
 
-    if ('innerHTML' in props)
+    if (owner === 'innerHTML')
     {
         // Raw passthrough: same trust model as `el.innerHTML = x`.
         // eslint-disable-next-line @typescript-eslint/no-base-to-string -- innerHTML is caller-trusted raw content; non-string input is caller error surfaced visibly
-        inner = String(resolveValue(props.innerHTML) ?? '');
+        inner = String(body ?? '');
     }
-    else if ('textContent' in props)
+    else if (owner === 'textContent')
     {
         // eslint-disable-next-line @typescript-eslint/no-base-to-string -- textContent coerces like the DOM property; non-string input is caller error surfaced visibly
-        inner = escapeText(String(resolveValue(props.textContent) ?? ''));
+        inner = escapeText(String(body ?? ''));
     }
     else
     {
