@@ -512,6 +512,11 @@ The shell (loader handoff included) flushes before slow data resolves; each pend
 and hydrates without refetching. Redirects, guard vetoes, and HEAD stay buffered - they
 resolve before any byte exists.
 
+Keep each boundary's `on` list in the same order during server rendering and
+hydration. Widgets in a lazy route, in a layout or in a separate hydration root
+adopt the results carried for their own boundary. A resource outside an adopted
+list fetches on the client. Route loader data continues to arrive in the shell handoff.
+
 ```ts
 { path: '/dashboard', component: Dashboard, render: 'stream' }
 ```

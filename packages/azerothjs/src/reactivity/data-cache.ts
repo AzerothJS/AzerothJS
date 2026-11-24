@@ -583,6 +583,16 @@ export class DataCache
         this.#startFetch(entry);
     }
 
+    /** A late private failure seed replaces only this subscriber's original cold fetch. */
+    public cancelSoleSeedRead(entry: CacheEntry, flight: NonNullable<CacheEntry['inflight']>): void
+    {
+        if (entry.inflight === flight && entry.subscribers === 1 && entry.waiters === 0 && entry.settleWaiters.length === 0)
+        {
+            flight.controller.abort();
+            entry.inflight = null;
+        }
+    }
+
     /** Bypasses freshness: aborts any in-flight fetch and starts over. */
     public restart(entry: CacheEntry): void
     {

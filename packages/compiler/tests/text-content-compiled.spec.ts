@@ -102,21 +102,21 @@ describe('a noscript in compiled output', () =>
         expect(container.querySelectorAll('noscript')).toHaveLength(2);
     });
 
-    // A guard that skipped the content while hydrating too would shift every later seed.
-    it('keeps the streamed resource seeds aligned past a noscript at hydration (control)', async () =>
+    it('fetches the unadopted noscript resource and keeps the following widget’s own stream seed', async () =>
     {
         const source =
-            'component NoJs()\n{\n'
-            + '    const r = createResource(() => Promise.resolve(\'ns-data\'));\n'
+            'component NoJs(props)\n{\n'
+            + '    const r = createResource(() => props.load("ns-data"));\n'
             + '    <Suspense on={ [r] } fallback={ <i>wait</i> }><b>{ r.data() }</b></Suspense>\n}\n'
-            + 'component Widget()\n{\n'
-            + '    const r = createResource(() => Promise.resolve(\'w-data\'));\n'
+            + 'component Widget(props)\n{\n'
+            + '    const r = createResource(() => props.load("w-data"));\n'
             + '    <Suspense on={ [r] } fallback={ <i>wait</i> }><em id="w">{ r.data() }</em></Suspense>\n}\n'
-            + 'export default component T()\n{\n'
-            + '    <main><noscript><NoJs /></noscript><Widget /></main>\n}\n';
+            + 'export default component T(props)\n{\n'
+            + '    <main><noscript><NoJs load={ props.load } /></noscript><Widget load={ props.load } /></main>\n}\n';
         const T = compile(source);
-
-        const chunks = await streamAll(renderToStream(() => T() as HTMLElement));
+        const load = vi.fn((name: string) => Promise.resolve(name));
+        const app = () => T({ load }) as HTMLElement;
+        const chunks = await streamAll(renderToStream(app));
         const container = mount();
         for (const chunk of chunks)
         {
@@ -127,10 +127,12 @@ describe('a noscript in compiled output', () =>
         expect(container.querySelectorAll('script')).toHaveLength(0);
 
         const warn = vi.spyOn(console, 'warn');
-        hydrate(() => T() as HTMLElement, container);
+        load.mockClear();
+        hydrate(app, container);
         await Promise.resolve();
         expect(warn.mock.calls.filter((call) => String(call[0]).includes('hydrate'))).toEqual([]);
         expect(container.querySelector('#w')?.textContent).toBe('w-data');
+        expect(load.mock.calls.flat()).toEqual(['ns-data']);
     });
 });
 

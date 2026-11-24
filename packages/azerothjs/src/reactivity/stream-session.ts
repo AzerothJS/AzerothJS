@@ -14,9 +14,8 @@
  * under concurrency.
  *
  * It tracks the eager server fetches createResource started inside the session, keyed by
- * resource and each carrying the scoped-ordinal id the client re-derives at hydration to
- * seed the same resource without refetching; the pending Suspense boundaries, with the
- * fetches gating them and the continuation that serializes their children; and
+ * resource, and the Suspense boundaries that list them. Each boundary supplies the document
+ * id and watch-list indexes that identify its seeds at hydration. The session also owns
  * finalization, which defers root disposal to stream completion and aborts every fetch no
  * boundary consumed.
  *
@@ -31,20 +30,24 @@ export interface ServerFetch
     promise: Promise<void>;
     controller: AbortController;
 
-    /** The scoped-ordinal seed id: `':0'` at the root, `'7:2'` for boundary 7's third resource. */
-    id: string;
+    /** A diagnostic name when available in a development build. */
+    name?: string | undefined;
 
     /** The settled outcome as a wire seed. Only meaningful once `promise` has settled. */
     read: () => { d?: unknown; e?: string };
 }
 
-/** One pending Suspense boundary awaiting its resources. */
-export interface PendingBoundary
+/** A boundary's full watch list, with empty positions for resources the server did not fetch. */
+export interface BoundarySeeds
 {
     id: number;
-    entries: ServerFetch[];
+    entries: Array<ServerFetch | undefined>;
+}
 
-    /** Serializes the children under the captured owner and scopes, in a continuation window. */
+/** One pending Suspense boundary awaiting its resources. */
+export interface PendingBoundary extends BoundarySeeds
+{
+    /** Serializes the children under the captured owner, in a continuation window. */
     render: () => string;
 
     /**
@@ -71,9 +74,7 @@ export class StreamSession
 
     #nextBoundaryId = 0;
 
-    readonly #scopeStack: string[] = [''];
-
-    readonly #ordinals = new Map<string, number>();
+    #inlineSeeds: BoundarySeeds[] = [];
 
     readonly #fetches = new Map<object, ServerFetch>();
 
@@ -96,27 +97,18 @@ export class StreamSession
         return this.#nextBoundaryId++;
     }
 
-    /** Runs `fn` with `scope` as the active resource-ordinal scope. */
-    public inScope<T>(scope: string, fn: () => T): T
+    /** An already-settled boundary's content and seeds travel with the enclosing chunk. */
+    public registerInlineSeeds(boundary: BoundarySeeds): void
     {
-        this.#scopeStack.push(scope);
-        try
-        {
-            return fn();
-        }
-        finally
-        {
-            this.#scopeStack.pop();
-        }
+        this.#inlineSeeds.push(boundary);
     }
 
-    /** The next seed id in the active scope - the client counts identically at hydrate. */
-    public allocateResourceId(): string
+    /** Drains the inline boundaries produced by this synchronous continuation. */
+    public takeInlineSeeds(): BoundarySeeds[]
     {
-        const scope = this.#scopeStack[this.#scopeStack.length - 1] ?? '';
-        const ordinal = this.#ordinals.get(scope) ?? 0;
-        this.#ordinals.set(scope, ordinal + 1);
-        return `${ scope }:${ ordinal }`;
+        const taken = this.#inlineSeeds;
+        this.#inlineSeeds = [];
+        return taken;
     }
 
     public registerFetch(resource: object, entry: ServerFetch): void

@@ -2,13 +2,13 @@
 
 ## Current framework handoff, 2026-11-24
 
-**Runtime unit 11 complete.** A-259 and A-263 shared an accidental subscription during construction. A mounted editor keeps its setup snapshot and draft while its live markup updates. A failed error boundary retries against current inputs, and a fallback that throws releases the work it started. The [implementation decision](decisions/component-construction.md) records the compatibility change and evidence. Find the implementation commit with `git log -1 -- .claude/decisions/component-construction.md`.
+**A-288 and A-322 complete.** A streamed resource adopts the result at its position in its own Suspense boundary. The boundary captures its watch list once. The [implementation decision](decisions/stream-seed-ownership.md) records request and cache ownership, late chunks, recovery, deployment compatibility and cost. Find this commit with `git log -1 -- .claude/decisions/stream-seed-ownership.md`.
 
-**Verification.** Of the 27 new tests, 16 failed on `04fc843` and 11 passed as controls. Selectively restoring each of the three defects broke seven, five and four cases. The final repository run passed 7,552 tests in 443 files, with two skipped. All 15 packages passed the clean consumer smoke test. The packed fullstack application retained identity, focus, draft and caret in Chromium, Firefox and WebKit across SSR hydration and client-only render. Registered Playwright QA independently confirmed both modes.
+**Verification.** Of 65 new tests, 54 failed on `b87d15f` and 11 passed as controls. All 23 isolated changes restoring defects tripped regressions. The full gate passed 7,617 tests in 447 files, with two skipped. All 15 packages passed clean consumer smoke. Chromium, Firefox and WebKit exercised packed applications. Registered Playwright independently verified eight workflows, including both deployment directions. Older browser code on new HTML can lose a pre-start draft during recovery. Independent streams in one document remain A-320.
 
-**Next action.** Begin A-288. Reproduce the two-resource streamed seed swap on this runtime, then revise the [stream seed design](STREAM-SEEDS.md) with the current request, cancellation and hydration behavior before implementation. Unit 10, including the separate Show and Switch issue A-121, follows A-288.
+**Next action.** Begin unit 10 with A-262. Reproduce a value-producing Show condition being evaluated multiple times and count the extra components or resource requests it creates. Establish the value and lifetime each branch should receive before taking A-210 and the related A-121, A-212 and A-211 design.
 
-**Previous work.** Compiler unit 9 (`04fc843`) fixed [lexical bindings in render callbacks](decisions/compiler-arrow-bindings.md). `b945b60` completed [rendered route ownership](decisions/rendered-route-ownership.md) after unit 8 (`758a3a4`). The original roadmap and tracker remain local to this checkout.
+**Previous work.** Unit 11 (`b87d15f`) fixed [component and error boundary construction](decisions/component-construction.md). Compiler unit 9 (`04fc843`) fixed [lexical bindings in render callbacks](decisions/compiler-arrow-bindings.md). `b945b60` completed [rendered route ownership](decisions/rendered-route-ownership.md) after unit 8 (`758a3a4`). The original roadmap and tracker remain local to this checkout.
 
 ## Bootstrap history
 

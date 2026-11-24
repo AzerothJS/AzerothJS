@@ -23,15 +23,16 @@
  */
 
 import type { Resource } from '../reactivity/index.ts';
-import { createEffect, createMemo, createSignal, getOwner, isHydrating, isStringMode, runInMode, runWithOwner, untrack } from '../reactivity/index.ts';
+import { batch, createEffect, createMemo, createSignal, getOwner, isHydrating, isStringMode, runInMode, runWithOwner, untrack } from '../reactivity/index.ts';
 import {
-    currentStreamSession, hydrationNode, popSeedScope, pushSeedScope,
+    currentStreamSession, hydrationNode, seedBoundary,
     serializeChild, wrapContentsAnchored
 } from '../reactivity/internal.ts';
-import type { HydrationCursor, HydrationNode, ServerFetch } from '../reactivity/internal.ts';
+import type { HydrationCursor } from '../reactivity/internal.ts';
+import { adoptCoRange, clearCo } from '../component/co-range.ts';
 import type { MountNode } from '../component/index.ts';
-import { claimStreamBoundary } from './stream-swap.ts';
-import { Show } from './show.ts';
+import { claimStreamBoundary, discardStreamRange } from './stream-swap.ts';
+import { driveShow, Show } from './show.ts';
 
 /** Props for {@link Suspense}. */
 export interface SuspenseProps
@@ -41,9 +42,8 @@ export interface SuspenseProps
 
     /**
      * The resources to watch: the fallback shows while ANY of them reports loading. The list
-     * is captured at construction and mutating the array afterwards is not observed, so pass
-     * stable references rather than a signal-derived array. An empty list always renders the
-     * children.
+     * is captured at construction. Keep the same resources in the same order on the server
+     * and client so each streamed outcome reaches its owner. An empty list renders the children.
      */
     on: Resource<unknown>[];
 
@@ -59,9 +59,10 @@ export interface SuspenseProps
  * picked up unless Suspense is re-mounted with the new list.
  *
  * A buffered server render emits the fallback, since a synchronous render cannot await
- * anything. A streaming render emits the fallback under an numbered marker and streams
+ * anything. A streaming render emits the fallback under a numbered marker and streams
  * the children as an out-of-order chunk once the watched fetches settle - or, if they had
- * already settled, renders the children inline under a ready marker. An empty watch list retains the bare marker.
+ * already settled, renders the children inline and sends their seeds with the enclosing chunk.
+ * An empty watch list retains the bare marker.
  *
  * For per-item skeletons, render each resource's own `loading()` instead.
  *
@@ -82,33 +83,27 @@ export function Suspense(props: SuspenseProps): MountNode
         const session = currentStreamSession();
         if (session !== null)
         {
-            // A boundary with pending resources emits its fallback under an ID-SUFFIXED marker
-            // and registers a continuation the driver streams once those fetches settle. One
-            // whose resources already settled renders its children inline. An empty watch list
-            // can never suspend, so it needs no branch annotation.
-            const pending: ServerFetch[] = [];
-            for (const resource of props.on)
+            // Keep the full list: an options seed or loader view has a position even though
+            // the server made no fetch for it. A settled fetch still has an outcome to send.
+            const resources = props.on;
+            const entries = resources.map(resource => session.fetchOf(resource));
+            if (!entries.some(entry => entry !== undefined))
             {
-                if (untrack(resource.loading))
-                {
-                    const entry = session.fetchOf(resource);
-                    if (entry !== undefined)
-                    {
-                        pending.push(entry);
-                    }
-                }
-            }
-            if (pending.length === 0)
-            {
-                return wrapContentsAnchored(props.on.length === 0 ? 'suspense' : 'suspense:ready', serializeChild(props.children())) as unknown as MountNode;
+                return wrapContentsAnchored(resources.length === 0 ? 'suspense' : 'suspense:ready', serializeChild(props.children())) as unknown as MountNode;
             }
             const id = session.allocateBoundaryId();
+            if (!resources.some((resource, i) => entries[i] !== undefined && untrack(resource.loading)))
+            {
+                const children = serializeChild(props.children());
+                session.registerInlineSeeds({ id, entries });
+                return wrapContentsAnchored(`suspense:${ id }`, children) as unknown as MountNode;
+            }
             const owner = getOwner();
-            const fallbackHtml = session.inScope(`${ id }f`, () => serializeChild(props.fallback()));
+            const fallbackHtml = serializeChild(props.fallback());
             session.registerBoundary({
                 id,
-                entries: pending,
-                render: (): string => runWithOwner(owner, () => session.inScope(String(id), () => serializeChild(props.children())))
+                entries,
+                render: (): string => runWithOwner(owner, () => serializeChild(props.children()))
             });
             return wrapContentsAnchored(`suspense:${ id }`, fallbackHtml) as unknown as MountNode;
         }
@@ -117,7 +112,9 @@ export function Suspense(props: SuspenseProps): MountNode
         return wrapContentsAnchored('suspense:fallback', serializeChild(props.fallback())) as unknown as MountNode;
     }
 
-    const resourcesReady = (): boolean => !props.on.some(resource => resource.loading());
+    // This exact list owns both the wire indexes and the subsequent loading checks.
+    const resources = untrack(() => [...props.on]);
+    const resourcesReady = (): boolean => !resources.some(resource => resource.loading());
 
     if (isHydrating())
     {
@@ -127,9 +124,15 @@ export function Suspense(props: SuspenseProps): MountNode
             const marker = open?.nodeType === 8 ? (open as Comment).data : '';
             const id = /^azc:suspense:(\d+)$/.exec(marker)?.[1];
             let served: boolean | undefined;
+            let rebuild = false;
             if (id !== undefined)
             {
                 served = claimStreamBoundary(open as Comment);
+                const seeded = untrack(() => runInMode('dom', () => batch(() => seedBoundary(id, resources))));
+                rebuild = seeded === false || (served === true && seeded !== true)
+                    || (seeded === true && !untrack(resourcesReady));
+                // A settled boundary inline in a parent chunk has seeds but no swap of its own.
+                served = rebuild ? false : seeded ?? served;
             }
             else if (marker === 'azc:suspense:fallback' || marker === 'azc:suspense:ready')
             {
@@ -141,30 +144,24 @@ export function Suspense(props: SuspenseProps): MountNode
             // is still needed. Legacy unlabelled output follows the original loading inference.
             const [initial, setInitial] = createSignal<boolean | undefined>(served);
             const ready = createMemo(() => initial() ?? resourcesReady());
-            let adopting = true;
-            const branch = (build: () => MountNode, fallback: boolean): MountNode =>
-            {
-                if (!adopting || id === undefined)
-                {
-                    return build();
-                }
-                pushSeedScope(fallback ? id + 'f' : id);
-                try
-                {
-                    return build();
-                }
-                finally
-                {
-                    popSeedScope();
-                }
-            };
-            const shown = Show({
+            const branches = {
                 when: ready,
-                fallback: () => branch(props.fallback, true),
-                children: () => branch(props.children, false)
-            }) as unknown as HydrationNode;
-            shown.hydrate(cursor);
-            adopting = false;
+                fallback: () => props.fallback(),
+                children: () => props.children()
+            };
+            const { target, contentCursor } = adoptCoRange(cursor);
+            if (rebuild)
+            {
+                // A public refetch or older wire can leave ready HTML with no usable data.
+                // Replacing just this range preserves the pending request and its callers.
+                discardStreamRange(target.start, target.end);
+                clearCo(target);
+                runInMode('dom', () => driveShow(branches, target, false));
+            }
+            else
+            {
+                driveShow(branches, target, true, contentCursor);
+            }
             if (served !== undefined)
             {
                 createEffect(() => runInMode('dom', () =>

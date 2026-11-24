@@ -18,7 +18,7 @@
 
 import { createRoot } from '../reactivity/index.ts';
 import { DEV } from '../reactivity/dev.ts';
-import { HydrationCursor, HydrationMismatchError, resetSeedScopes, beginHydrationPass, runInPass, settleHydrationPass } from '../reactivity/internal.ts';
+import { HydrationCursor, HydrationMismatchError, warnUnclaimedSeeds, beginHydrationPass, runInPass, settleHydrationPass } from '../reactivity/internal.ts';
 import type { MountNode } from '../component/index.ts';
 import { containerDisposers } from './container-disposers.ts';
 import { render } from './render.ts';
@@ -47,9 +47,6 @@ import { hydrateChild } from './h.ts';
  */
 export function hydrate(component: () => MountNode, container: HTMLElement): void
 {
-    // A streamed page's seed ids count from zero per hydration pass.
-    resetSeedScopes();
-
     const previousDispose = containerDisposers.get(container);
     if (previousDispose)
     {
@@ -87,6 +84,10 @@ export function hydrate(component: () => MountNode, container: HTMLElement): voi
     }
 
     const pass = beginHydrationPass(fallBackToClientRender);
+    if (DEV)
+    {
+        pass.onComplete = () => warnUnclaimedSeeds(container);
+    }
 
     try
     {

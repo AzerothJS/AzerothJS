@@ -23,6 +23,8 @@ import { createRoot, runInMode, runInStoreScope } from '../reactivity/index.ts';
 import { markSelectedOption, markSelectedOptions } from '../renderer/ssr.ts';
 import { StreamSession, getStoreScope, runInExistingStoreScope } from '../reactivity/internal.ts';
 import type { PendingBoundary } from '../reactivity/internal.ts';
+import type { BoundarySeeds } from '../reactivity/stream-session.ts';
+import { DEV } from '../reactivity/dev.ts';
 import { streamRuntimeScript } from '../renderer/stream-swap.ts';
 import { escapeAttr, inertJson, serializeChild } from '../reactivity/ssr.ts';
 import { latchServerData, releaseDataCache } from '../reactivity/data-cache.ts';
@@ -288,7 +290,8 @@ export function renderToStream(
 
             const drive = (boundary: PendingBoundary): void =>
             {
-                void Promise.allSettled(boundary.entries.map((entry) => entry.promise)).then(() =>
+                const fetches = boundary.entries.filter(entry => entry !== undefined);
+                void Promise.allSettled(fetches.map(entry => entry.promise)).then(() =>
                 {
                     // finalized covers what closed does not: cancel() finalizes without
                     // setting closed, and a continuation rendering after finalize would
@@ -298,7 +301,7 @@ export function renderToStream(
                     {
                         return;
                     }
-                    let childrenHtml: string | null = null;
+                    let chunk: string | null = null;
                     // The continuation's OWN window: created behind the drive gate, handed
                     // to no host, and discarded on every exit - the head has already
                     // flushed, so nothing declared here can reach this response's
@@ -307,13 +310,18 @@ export function renderToStream(
                     try
                     {
                         continuation = openContinuationWindow();
-                        childrenHtml = runInMode('string',
+                        const childrenHtml = runInMode('string',
                             () => runInExistingStoreScope(session.storeScope as object,
                                 () => withDocument(() => boundary.render())),
                             { markers: true, session });
+                        chunk = chunkFor(boundary, childrenHtml, nonce, session.takeInlineSeeds());
                     }
                     catch (error)
                     {
+                        // Unsent children cannot receive their own chunks. Drain this render's
+                        // work before another continuation can collect it as its own.
+                        session.takeBoundaries();
+                        session.takeInlineSeeds();
                         // The fallback DOM stays; the client's unseeded resources refetch
                         // after hydration and the error re-surfaces through client Suspense.
                         //
@@ -350,7 +358,7 @@ export function renderToStream(
                     // structural, so a statement added above cannot reintroduce the hang.
                     try
                     {
-                        if (childrenHtml !== null)
+                        if (chunk !== null)
                         {
                             // Boundaries the continuation itself registered (nested Suspense)
                             // join the pending set BEFORE this one settles the counter.
@@ -363,7 +371,7 @@ export function renderToStream(
                             // chunk travel together, so a reader never sees a half-delivered swap.
                             const prefix = runtimeSent ? '' : streamRuntimeScript(nonce);
                             runtimeSent = true;
-                            enqueue(prefix + chunkFor(boundary, childrenHtml, nonce));
+                            enqueue(prefix + chunk);
                         }
                     }
                     finally
@@ -391,7 +399,7 @@ export function renderToStream(
 }
 
 /** @internal One settled boundary as its wire chunk: template + seed script + swap call. */
-function chunkFor(boundary: PendingBoundary, childrenHtml: string, nonce: string | undefined): string
+function chunkFor(boundary: PendingBoundary, childrenHtml: string, nonce: string | undefined, inline: BoundarySeeds[]): string
 {
     // The enclosing <select>'s value, recorded when it serialized (see ssr.ts). Marking here is
     // what keeps a streamed page's first paint correct: the swap inserts these options directly,
@@ -405,23 +413,36 @@ function chunkFor(boundary: PendingBoundary, childrenHtml: string, nonce: string
             : markSelectedOption(children, select.desired as string);
     }
 
-    const seeds: Record<string, { d?: unknown; e?: string }> = {};
-    for (const entry of boundary.entries)
-    {
-        seeds[entry.id] = entry.read();
-    }
+    const seeds: Record<string, { d?: unknown; e?: string; n?: string } | number> = {};
     let json: string;
     try
     {
+        for (const { id, entries } of [boundary, ...inline])
+        {
+            if (DEV)
+            {
+                seeds[`${ id }.l`] = entries.length;
+            }
+            entries.forEach((entry, i) =>
+            {
+                if (entry !== undefined)
+                {
+                    const seed = entry.read();
+                    seeds[`${ id }.${ i }`] = DEV && entry.name ? { ...seed, n: entry.name } : seed;
+                }
+            });
+        }
         json = inertJson(seeds);
     }
-    catch
+    catch (cause)
     {
-        // Non-JSON-serializable data: omit the seeds; the client refetches after hydration.
-        json = '{}';
+        throw new TypeError(`Cannot serialize resource seeds for Suspense boundary ${ boundary.id }`, { cause });
     }
     const attribute = nonce === undefined ? '' : ` nonce="${ escapeAttr(nonce) }"`;
-    return `<template data-azs="${ boundary.id }">${ children }</template>`
+    // A settled inline boundary has no swap of its own. Identify its served DOM even
+    // when the separate JSON payload is incomplete. All ids are session-assigned integers.
+    const inlineIds = inline.length ? ` data-azs-inline="${ inline.map(group => group.id).join(' ') }"` : '';
+    return `<template data-azs="${ boundary.id }"${ inlineIds }>${ children }</template>`
         + `<script type="application/json" data-azs-seed="${ boundary.id }">${ json }</script>`
         + `<script${ attribute }>__AZS(${ boundary.id });document.currentScript.remove()</script>`;
 }

@@ -360,6 +360,13 @@ references, not an array built from a signal. An empty list renders the children
 immediately. A listed resource that is loading shows the fallback. A same-key refresh
 of a plain resource with a successful value keeps the children and their local state.
 
+Use the same resources in the same order on the server and client. Each streamed
+boundary supplies the initial results for its own list when hydration reaches it.
+Setup code before that point can see a loading resource. A resource outside every
+adopted list fetches on the client. An explicit refetch or a changed source uses
+the new request. An unserializable result leaves the fallback visible and reaches
+the streaming renderer's `onError` callback.
+
 ```ts
 import { renderToStream } from 'azerothjs';
 

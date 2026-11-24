@@ -24,6 +24,7 @@
  */
 
 import type { StreamSession } from './stream-session.ts';
+import { withStreamSeedWindow } from './stream-seeds.ts';
 
 /** The active rendering strategy. See the module header for each mode's semantics. */
 export type RenderMode = 'dom' | 'string' | 'hydrate';
@@ -82,6 +83,8 @@ export interface HydrationPass
      * cleanly. hydrate() installs the same fallback it uses for the synchronous case.
      */
     onMismatch: ((error: unknown) => void) | null;
+    /** Development diagnostics run after the last deferred range finishes. */
+    onComplete?: () => void;
 }
 
 /** The pass being adopted right now, or null outside one. @internal */
@@ -194,9 +197,10 @@ export function deferHydration(): { pass: HydrationPass; release: () => void } |
  */
 export function settleHydrationPass(pass: HydrationPass): void
 {
-    if (pass.pending === 0)
+    if (pass.open && pass.pending === 0)
     {
         pass.open = false;
+        pass.onComplete?.();
     }
 }
 
@@ -311,7 +315,9 @@ export function runInMode<T>(mode: RenderMode, fn: () => T, options?: RunInModeO
 
     try
     {
-        return fn();
+        return mode === 'hydrate'
+            ? withStreamSeedWindow(fn, work => runInMode('dom', work))
+            : fn();
     }
     finally
     {

@@ -4,7 +4,7 @@
 // the data cache live, a failure seed must stay this instance's own and a value seed must be
 // the one the entry takes.
 import { afterEach, describe, expect, it } from 'vitest';
-import { cached, createResource, h, hydrate } from 'azerothjs';
+import { cached, createResource, h, hydrate, Suspense } from 'azerothjs';
 import { getDataCache, resetDataCache } from 'azerothjs/internal';
 
 const flush = async (): Promise<void> =>
@@ -17,16 +17,9 @@ const flush = async (): Promise<void> =>
 
 interface SeedGlobal { __AZS_S?: Record<string, { d?: unknown; e?: string }> }
 
-// The hydrate-side ordinal keeps ticking across hydrations in one file, so every id this file
-// can mint carries the seed.
 function seedStore(seed: { d?: unknown; e?: string }): void
 {
-    const store: Record<string, { d?: unknown; e?: string }> = {};
-    for (let i = 0; i < 40; i++)
-    {
-        store[`:${ i }`] = seed;
-    }
-    (globalThis as SeedGlobal).__AZS_S = store;
+    (globalThis as SeedGlobal).__AZS_S = { '0.0': seed };
 }
 
 afterEach(() =>
@@ -37,12 +30,12 @@ afterEach(() =>
 
 function hydrateWith<T>(fetcher: () => Promise<T>): ReturnType<typeof createResource<T>>
 {
-    document.body.innerHTML = '<div id="root"><p>x</p></div>';
+    document.body.innerHTML = '<div id="root"><!--azc:suspense:0--><p>x</p><!--/azc--></div>';
     let resource: ReturnType<typeof createResource<T>> | null = null;
     hydrate(() =>
     {
         resource = createResource<T>(fetcher);
-        return h('p', {}, 'x');
+        return Suspense({ on: [resource], children: () => h('p', {}, 'x'), fallback: () => h('p', {}, 'x') });
     }, document.getElementById('root') as HTMLElement);
     return resource as unknown as ReturnType<typeof createResource<T>>;
 }

@@ -16,6 +16,7 @@ import { createRoot } from '../reactivity/index.ts';
 import { destroyComponent, type MountNode } from '../component/index.ts';
 import { containerDisposers } from './container-disposers.ts';
 import { appendChild } from './h.ts';
+import { discardStreamChildren } from './stream-swap.ts';
 
 /**
  * Mounts a component into `container`, clearing whatever was there and owning the new tree
@@ -50,6 +51,7 @@ export function render(component: () => MountNode, container: HTMLElement): void
     }
 
     // Node by node, so destroy hooks run on the way out.
+    discardStreamChildren(container);
     while (container.firstChild)
     {
         const node = container.firstChild;

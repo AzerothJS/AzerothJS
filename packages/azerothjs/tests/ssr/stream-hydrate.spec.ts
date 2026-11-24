@@ -1,6 +1,6 @@
 // Hydration AFTER streaming (happy-dom): the swapped DOM adopts node-for-node with zero
-// mismatches and zero refetches, because the chunk seeds land under the same scoped-ordinal
-// ids the client re-derives. The swap function under test is the REAL azsRuntime - the same
+// mismatches and zero refetches, because each boundary receives its own watched outcomes.
+// The swap function under test is the REAL azsRuntime - the same
 // code browsers execute - applied chunk by chunk exactly as the wire would.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Show, Suspense, createMemo, createResource, createSignal, h, hydrate, render, renderToStream } from 'azerothjs';
@@ -184,7 +184,7 @@ describe('hydrating a streamed page', () =>
         warn.mockRestore();
     });
 
-    it('a resource created INSIDE the boundary children seeds through the boundary scope', async () =>
+    it('an inner Suspense adopts the resource created in the outer boundary children', async () =>
     {
         const outer = vi.fn(() => Promise.resolve('outer-data'));
         const inner = vi.fn(() => Promise.resolve('inner-data'));

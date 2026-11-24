@@ -110,9 +110,9 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   branch, component children and a `<For>` row included), so nothing inside it loads, applies or
   calls a `ref`; hydration adopts the element with the content the server wrote. A component
   inside a noscript still runs its setup while the page hydrates, so a resource it creates
-  fetches unless the stream seeded it. A hand-written `h('noscript', ...)` call evaluates its
-  arguments first, so on a client render what they build is still built: an image loads, a ref
-  runs and a component called there runs its setup.
+  follows the usual client fetch path when its boundary is never adopted. A hand-written
+  `h('noscript', ...)` call evaluates its arguments first, so on a client render what they build is
+  still built: an image loads, a ref runs and a component called there runs its setup.
 
 - **Markup that has no meaning inside a text-only element is refused at compile time.** These
   programs compiled before and are now errors, each located where it is written:
@@ -224,6 +224,15 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   without a router, now does the same in an app with one.
 
 ### Fixed
+
+- Streamed widgets now hydrate with the data their own Suspense boundary awaited.
+  A lazy widget before an eager sibling could show the sibling's data, write it
+  into a shared cache, or throw during startup when the two values had different
+  types. Keep the resources in each `on` list in the same order on both sides.
+  The list is captured once per mount. A setup read can see loading until the
+  boundary is adopted. Pages served across this wire-format change may fetch
+  fresh data. An older browser bundle can rebuild the root and lose edits made
+  before startup. An explicit refetch still waits for its own accepted result.
 
 - Overlapping `refetch()` calls now wait for an accepted result for the resource's
   current key. A superseded response could previously release a caller with stale data

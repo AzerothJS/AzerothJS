@@ -26,7 +26,11 @@ import { escapeAttr } from '../reactivity/ssr.ts';
 interface AzsWindow
 {
     __AZS_S?: Record<string, unknown>;
-    __AZS?: ((id: number) => void) & { swapped?: WeakSet<Comment> };
+    __AZS?: ((id: number) => void) & {
+        swapped?: WeakSet<Comment>;
+        delivered?: WeakSet<Comment>;
+        discard?: (first: ChildNode | null, end: ChildNode | null) => void;
+    };
 }
 
 /** The hydration client takes DOM ownership after claiming a numbered boundary. */
@@ -40,7 +44,19 @@ export function claimStreamBoundary(open: StreamAnchor): boolean | undefined
 {
     open.__azsClaimed = true;
     const swap = (globalThis as AzsWindow).__AZS;
-    return swap === undefined ? false : swap.swapped?.has(open);
+    return swap === undefined ? false : (swap.delivered ?? swap.swapped)?.has(open);
+}
+
+/** Discard the seed groups whose numbered markers will be removed by local recovery. */
+export function discardStreamRange(start: ChildNode, end: ChildNode): void
+{
+    (globalThis as AzsWindow).__AZS?.discard?.(start.nextSibling, end);
+}
+
+/** Retire all numbered groups whose markers leave with the root's existing contents. */
+export function discardStreamChildren(root: HTMLElement): void
+{
+    (globalThis as AzsWindow).__AZS?.discard?.(root.firstChild, null);
 }
 
 /** @internal Installs the seed store and the swap entry point. Self-contained by contract. */
@@ -49,28 +65,54 @@ export function azsRuntime(): void
     const host = globalThis as AzsWindow;
     const store: Record<string, unknown> = host.__AZS_S ?? {};
     host.__AZS_S = store;
-    const swapped = host.__AZS?.swapped ?? new WeakSet<Comment>();
+    const delivered = host.__AZS?.delivered ?? new WeakSet<Comment>();
+    function walkBoundaries(first: ChildNode | null, end: ChildNode | null, visit: (id: string, marker: Comment) => void): void
+    {
+        if (first === null || first === end)
+        {
+            return;
+        }
+        // Restrict the walk to these siblings and their subtrees. A range's exclusive
+        // end is its closing comment, so the walker also visits the stopping point.
+        const walker = document.createTreeWalker(first.parentNode as Node, 128 /* SHOW_COMMENT */);
+        walker.currentNode = first;
+        for (let node = first.nodeType === 8 ? first as Node : walker.nextNode(); node !== null && node !== end; node = walker.nextNode())
+        {
+            const marker = node as Comment;
+            const id = /^azc:suspense:(\d+)$/.exec(marker.data)?.[1];
+            if (id !== undefined)
+            {
+                visit(id, marker);
+            }
+        }
+    }
+    function discard(first: ChildNode | null, end: ChildNode | null): void
+    {
+        const ids = new Set<string>();
+        walkBoundaries(first, end, id => ids.add(id));
+        if (ids.size > 0)
+        {
+            for (const key of Object.keys(store))
+            {
+                const dot = key.indexOf('.');
+                if (dot > 0 && ids.has(key.slice(0, dot)))
+                {
+                    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- only groups removed with this range
+                    delete store[key];
+                }
+            }
+        }
+    }
     host.__AZS = function (id: number): void
     {
         const doc = document;
         const seedScript = doc.querySelector(`script[data-azs-seed="${ id }"]`);
-        if (seedScript !== null)
-        {
-            try
-            {
-                const parsed = JSON.parse(seedScript.textContent) as Record<string, unknown>;
-                for (const key in parsed)
-                {
-                    store[key] = parsed[key];
-                }
-            }
-            catch
-            {
-                // A torn seed degrades to a client refetch; the swap still proceeds.
-            }
-            seedScript.remove();
-        }
+        seedScript?.remove();
         const template = doc.querySelector<HTMLTemplateElement>(`template[data-azs="${ id }"]`);
+        if (template === null)
+        {
+            return;
+        }
         const target = `azc:suspense:${ id }`;
         let open: StreamAnchor | null = null;
         const stack: Node[] = [doc.body];
@@ -94,10 +136,7 @@ export function azsRuntime(): void
         if (open === null || open.__azsClaimed)
         {
             // A client-owned or removed boundary has no server DOM work left.
-            if (template !== null)
-            {
-                template.remove();
-            }
+            template.remove();
             return;
         }
         // Balanced walk: nested azc ranges inside the fallback raise depth, so the close
@@ -128,24 +167,56 @@ export function azsRuntime(): void
         }
         if (node === null)
         {
-            if (template !== null)
-            {
-                template.remove();
-            }
+            template.remove();
             return;
         }
+        discard(open.nextSibling, node);
         for (const gone of removable)
         {
             gone.remove();
         }
-        if (template !== null)
+        // A late or orphaned chunk never installs seeds for a range the client owns.
+        if (seedScript !== null)
         {
-            (node.parentNode as ParentNode).insertBefore(template.content, node);
-            swapped.add(open);
-            template.remove();
+            try
+            {
+                const parsed = JSON.parse(seedScript.textContent) as Record<string, unknown>;
+                for (const key of Object.keys(parsed))
+                {
+                    if (/^\d+\.(?:\d+|l)$/.test(key))
+                    {
+                        store[key] = parsed[key];
+                    }
+                }
+            }
+            catch
+            {
+                // A torn seed is recovered when hydration claims the delivered range.
+            }
         }
+        // Already-settled descendants arrived inside this template. Remember their
+        // selected branch independently of seed JSON, which can be torn or absent.
+        const inline = template.getAttribute('data-azs-inline');
+        if (inline)
+        {
+            const ids = new Set(inline.split(' '));
+            walkBoundaries(template.content.firstChild, null, (childId, marker) =>
+            {
+                if (ids.has(childId))
+                {
+                    delivered.add(marker);
+                }
+            });
+        }
+        (node.parentNode as ParentNode).insertBefore(template.content, node);
+        delivered.add(open);
+        template.remove();
     };
-    host.__AZS.swapped = swapped;
+    host.__AZS.discard = discard;
+    host.__AZS.delivered = delivered;
+    // Ordinal-based clients cannot read these seeds. Let them adopt their fallback
+    // or recover before evaluating settled children with the wrong data type.
+    host.__AZS.swapped = new WeakSet<Comment>();
 }
 
 /**

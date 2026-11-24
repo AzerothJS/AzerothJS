@@ -18,8 +18,9 @@
 
 import { createRoot, runInMode } from '../reactivity/index.ts';
 import { DEV } from '../reactivity/dev.ts';
-import { isHydrationNode, HydrationCursor, HydrationMismatchError } from '../reactivity/internal.ts';
+import { isHydrationNode, HydrationCursor, HydrationMismatchError, warnUnclaimedSeeds } from '../reactivity/internal.ts';
 import { containerDisposers } from './container-disposers.ts';
+import { discardStreamChildren } from './stream-swap.ts';
 
 /** What an island loader resolves to: the component, or a module whose default is the component. */
 export type IslandComponent = (props: Record<string, unknown>) => HTMLElement;
@@ -145,6 +146,10 @@ function hydrateIslandRoot(component: () => HTMLElement, anchor: HTMLElement): v
                 cursor.assertExhausted('island root');
             });
         });
+        if (DEV)
+        {
+            warnUnclaimedSeeds(anchor);
+        }
     }
     catch (error)
     {
@@ -173,6 +178,7 @@ function hydrateIslandRoot(component: () => HTMLElement, anchor: HTMLElement): v
             containerDisposers.set(el, dispose);
             return el;
         });
+        discardStreamChildren(anchor);
         anchor.replaceWith(fresh);
     }
 }

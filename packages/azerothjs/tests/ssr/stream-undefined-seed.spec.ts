@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 //
-// A streamed render with an undefined seed runs the eager server fetch with seed ids aligned,
+// A streamed render with initialValue undefined runs the eager server fetch,
 // and a stream page whose loader resolves undefined runs it once and shows the same on both sides.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Suspense, cached, createMemoryHistory, createResource, createRouter, h, hydrate, readLoaderHandoff, render, renderToStream, Routes, useLoader } from 'azerothjs';
@@ -112,7 +112,7 @@ describe('a streamed render with an undefined seed', () =>
         expect({ calls: fetcher.mock.calls.length, streamed: html.includes('server-data') }).toEqual({ calls: 1, streamed: true });
     });
 
-    it('keeps seed ids aligned: an undefined-seeded resource and a plain neighbour both reach their data', async () =>
+    it('supplies both an undefined-initialized resource and its plain neighbour', async () =>
     {
         const seeded = vi.fn(() => Promise.resolve('P'));
         const plain = vi.fn(() => Promise.resolve('N'));
@@ -127,7 +127,7 @@ describe('a streamed render with an undefined seed', () =>
             .toEqual({ swapped: 'P|N', settled: 'P|N', seeded: 1, plain: 1 });
     });
 
-    it('keeps seed ids aligned inside a boundary scope', async () =>
+    it('supplies both watched outcomes inside a nested boundary', async () =>
     {
         const outer = vi.fn(() => Promise.resolve('A'));
         const seeded = vi.fn(() => Promise.resolve('P'));
@@ -148,7 +148,7 @@ describe('a streamed render with an undefined seed', () =>
             .toEqual({ swapped: 'AP|N', settled: 'AP|N', outer: 1, seeded: 1, plain: 1 });
     });
 
-    it('keeps seed ids aligned for cached fetchers', async () =>
+    it('supplies the watched outcomes for cached fetchers', async () =>
     {
         const calls = { seeded: 0, plain: 0 };
         const seeded = cached('stream-undefined-seed.p', async (): Promise<string> =>

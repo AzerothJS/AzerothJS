@@ -23,7 +23,8 @@ import { assertFunction, describeArg } from './validate.ts';
 import { currentErrorHandler } from './catch-error.ts';
 import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
 import { currentStreamSession, isHydrating, isStringMode } from './render-mode.ts';
-import { allocateSeedId, takeStreamSeed } from './stream-seeds.ts';
+import { hasSeedWindow, holdStreamSeed, type StreamSeed } from './stream-seeds.ts';
+import { DEV } from './dev.ts';
 import { untrack } from './untrack.ts';
 import { invokeFetcher } from './invoke-fetcher.ts';
 import { createSourceKey, type SourceKey } from './source-key.ts';
@@ -155,6 +156,10 @@ function isOptionsBag(value: unknown): boolean
  *
  * The synchronous state updates are batched, so subscribers never observe `loading` true
  * with a stale error still set.
+ *
+ * During stream hydration, a Suspense boundary supplies its watched resources' initial
+ * outcomes when its marker is adopted. An initial setup read can therefore see loading.
+ * A resource outside every adopted watch list starts its fetch when the hydration walk finishes.
  *
  * @typeParam T - The fetched value type.
  * @typeParam S - The source value type, in the source-driven form.
@@ -326,6 +331,7 @@ export function buildResource<T, S>(
     let cacheRef: DataCache | null = null;
     let currentEntry: CacheEntry | null = null;
     let stopObserving: (() => void) | undefined;
+    let unregisterSeed: (() => void) | undefined;
     let disposed = false;
     const stringMode = isStringMode();
     let requested = 0;
@@ -367,6 +373,7 @@ export function buildResource<T, S>(
     onCleanup(() =>
     {
         disposed = true;
+        unregisterSeed?.();
         leaveEntry();
         finishRequests(Infinity);
     });
@@ -436,6 +443,9 @@ export function buildResource<T, S>(
             {
                 return;
             }
+            // A later boundary may only replace the first fetch while it is pending.
+            unregisterSeed?.();
+            unregisterSeed = undefined;
             try
             {
                 batch(() =>
@@ -533,13 +543,11 @@ export function buildResource<T, S>(
     if (stringMode)
     {
         // Effects never run in string mode, so inside a streaming session the fetch starts here,
-        // eagerly at creation, and fetch time overlaps serialization. The session records the
-        // settle promise under a scoped-ordinal id; Suspense awaits it, and the chunk carries the
-        // id so hydration seeds this same resource.
+        // eagerly at creation, and fetch time overlaps serialization. Suspense matches the
+        // registered promise to the resource at its original position in the watch list.
         const session = currentStreamSession();
         if (session !== null)
         {
-            const id = session.allocateResourceId();
             if (!pendingInitial)
             {
                 const sourceValue = source !== null ? untrack(source) : undefined;
@@ -567,7 +575,7 @@ export function buildResource<T, S>(
                     session.registerFetch(resource, {
                         promise,
                         controller,
-                        id,
+                        name: DEV ? options?.name ?? fetcher.name : undefined,
                         read: (): { d?: unknown; e?: string } =>
                         {
                             const failure = untrack(error);
@@ -586,36 +594,98 @@ export function buildResource<T, S>(
         return resource;
     }
 
-    if (isHydrating())
-    {
-        // A streamed page merged this resource's outcome into the seed store under the same
-        // scoped-ordinal id the server allocated. The id ticks UNCONDITIONALLY so the counting
-        // stays aligned; a miss, or a page that was never streamed, is ordinary behaviour.
-        const id = allocateSeedId();
-        if (!pendingInitial)
-        {
-            const seed = takeStreamSeed(id);
-            if (seed !== undefined)
-            {
-                if ('d' in seed)
-                {
-                    seedValue = seed.d as T;
-                    seedFailure = false;
-                    hasValue = true;
-                    setData(() => seed.d as T);
-                }
-                else if (seed.e !== undefined)
-                {
-                    seedFailure = true;
-                    setError(() => new Error(seed.e));
-                }
-                pendingInitial = true;
-            }
-        }
-    }
-
     const readKey = source === null ? undefined : createSourceKey(source, options?.equals, tick);
     let previousKey: SourceKey<S> | undefined;
+
+    // The hydration wakeup is independent of tick, whose value identifies a public
+    // refetch and its waiters. Both a release and a seed must re-enter the owning effect.
+    const seedDrive = isHydrating() && keyObserver === undefined && !pendingInitial
+        ? createSignal(0) : undefined;
+    // If the shell hydrates before any chunks arrive, keep the usual first fetch. A
+    // boundary adopted later can still seed that original request while it is pending.
+    let held = seedDrive !== undefined && hasSeedWindow();
+    let initialKeyKnown = held;
+    let initialKey = held && readKey ? untrack(readKey) : undefined;
+    let initialFlight: CacheEntry['inflight'] = null;
+
+    function stopSeed(): void
+    {
+        held = false;
+        unregisterSeed?.();
+        unregisterSeed = undefined;
+    }
+
+    function applySeed(seed: StreamSeed): boolean
+    {
+        if (disposed || !initialKeyKnown || requested !== 0 || (readKey && untrack(readKey) !== initialKey))
+        {
+            return false;
+        }
+
+        const cache = family === null ? null : getDataCache();
+        const entry = family !== null && cache !== null
+            ? cache.entryFor(family, initialKey?.kind === 'value' ? [initialKey.value] : [])
+            : null;
+        if (entry && !entry.hasValue && !entry.hasError
+            && (entry.markSeq !== 0 || entry.inflight !== initialFlight))
+        {
+            // Another reader started or invalidated this key. Its generation owns the answer.
+            return false;
+        }
+
+        stopSeed();
+        batch(() =>
+        {
+            pendingInitial = true;
+            if (entry && (entry.hasValue || entry.hasError))
+            {
+                seedValue = entry.value as T;
+                seedFailure = !entry.hasValue && entry.hasError;
+                hasValue = entry.hasValue;
+                mirrorEntry(entry);
+            }
+            else
+            {
+                seedValue = seed.d as T;
+                seedFailure = seed.e !== undefined;
+                hasValue = !seedFailure;
+                if (!seedFailure && cache && entry)
+                {
+                    // Publish now, in the same batch as the boundary's other seeds. A
+                    // sibling may invalidate or fetch this entry before our first drive.
+                    cache.writeEntry(entry, seedValue);
+                    mirrorEntry(entry);
+                }
+                else
+                {
+                    if (cache && entry && initialFlight)
+                    {
+                        cache.cancelSoleSeedRead(entry, initialFlight);
+                    }
+                    setData(() => seedValue);
+                    setError(() => seed.e === undefined ? null : new Error(seed.e));
+                    setLoading(false);
+                    setRefreshing(false);
+                }
+            }
+            seedDrive?.[1](revision => revision + 1);
+        });
+        return true;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the source getter above can synchronously dispose the construction scope
+    if (seedDrive && (initialKey === undefined || initialKey.kind === 'value') && !disposed)
+    {
+        if (held)
+        {
+            setLoading(true);
+        }
+        unregisterSeed = holdStreamSeed(resource, applySeed, () =>
+        {
+            held = false;
+            seedDrive[1](revision => revision + 1);
+        }, DEV ? options?.name ?? fetcher.name : undefined);
+    }
 
     function driveEntry(cache: DataCache, entry: CacheEntry, force: boolean, request: number): void
     {
@@ -629,7 +699,8 @@ export function buildResource<T, S>(
             cache.subscribe(entry);
         }
 
-        const adopting = pendingInitial;
+        const streamSeed = pendingInitial && seedDrive !== undefined;
+        const adopting = pendingInitial && (!streamSeed || seedFailure || entry.hasValue);
         pendingInitial = false;
         if (adopting)
         {
@@ -645,9 +716,19 @@ export function buildResource<T, S>(
             seededFailureHeld = false;
             cache.restart(entry);
         }
-        else if (!adopting || (seedKey !== undefined && entry.stale))
+        else if (!adopting || ((streamSeed || seedKey !== undefined) && entry.stale))
         {
+            const canReplace = unregisterSeed !== undefined && entering && entry.inflight === null
+                && !entry.hasValue && !entry.hasError && entry.markSeq === 0;
             cache.read(entry, { subscribing: entering, fromZero });
+            if (canReplace)
+            {
+                initialFlight = entry.inflight;
+            }
+            if (unregisterSeed && (!initialFlight || initialFlight !== entry.inflight || entry.markSeq !== 0))
+            {
+                stopSeed();
+            }
         }
 
         // Cache invalidations and mutation landings can replace a fetch without another
@@ -670,6 +751,28 @@ export function buildResource<T, S>(
         const request = tick();
         let force = request !== driven;
         const key = readKey?.();
+        if (unregisterSeed)
+        {
+            seedDrive?.[0]();
+            if (!initialKeyKnown)
+            {
+                initialKey = key;
+                initialKeyKnown = true;
+            }
+            if (force || key !== initialKey || (key !== undefined && key.kind !== 'value'))
+            {
+                stopSeed();
+            }
+            else if (held)
+            {
+                return;
+            }
+        }
+        if (seedDrive && pendingInitial && key !== initialKey)
+        {
+            pendingInitial = false;
+            hasValue = false;
+        }
         // A source can synchronously unmount the component that asked for this read.
         if (disposed)
         {

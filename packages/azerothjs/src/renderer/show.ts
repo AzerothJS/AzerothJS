@@ -138,7 +138,7 @@ export function Show<W>(props: ShowProps<W>): MountNode
  *                          server children instead of appending new ones.
  * @param hydrationCursor - The cursor over the server range (hydration path only).
  */
-function driveShow<W>(props: ShowProps<W>, target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
+export function driveShow<W>(props: ShowProps<W>, target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
 {
     let branchDispose: DisposeFn | null = null;
     let firstRun = hydrateFirstRun;
