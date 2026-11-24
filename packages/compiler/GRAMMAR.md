@@ -127,6 +127,19 @@ StyleSection    := `style` `{` ... CSS-aware balanced ... `}`
 - `component` is recognized at statement position in module code. A preceding
   `export` / `export default` remains part of the surrounding opaque region (the
   compiler handles the association; the grammar does not).
+- A component's single props parameter can have an ordinary identifier such as
+  `p`. Reads of `p.title` in markup track that field. A nested JavaScript
+  binding of the same name takes precedence in its own scope. This also applies
+  to nested bindings that shadow a `let=` or `index=` row getter.
+- A named value export of a module-level `state`, `derived` or `deferred`
+  binding produces `azeroth/reactive-export`, including an export under an alias.
+  To expose its current value, declare an exported reader alongside the binding.
+
+  ```ts
+  state count = 0;
+  export function readCount() { return count; }
+  ```
+
 - `style { ... }` is a **section**, not a declaration: module level only, at most one
   per module, build-time only, no runtime value and no reactivity. Its interior is
   plain CSS and is never parsed as such - the compiler only rewrites `.class`

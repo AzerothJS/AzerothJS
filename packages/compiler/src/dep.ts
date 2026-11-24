@@ -22,8 +22,11 @@ export interface ReactiveSources
     /** `state` and `derived` declaration names. */
     names: ReadonlySet<string>;
 
-    /** Whether `props` is a reactive source (its field reads track). */
+    /** Whether this component receives props. */
     hasProps: boolean;
+
+    /** Authored receiver, null for a pattern. Standalone walks may omit it to use `props`. */
+    paramName?: string | null | undefined;
 
     /**
      * The subset of `names` that is WRITABLE - i.e. has a generated setter. Only `state`
@@ -72,9 +75,8 @@ export interface ReactiveSources
      * markup. The row builder receives `() => T` (a replaced item updates the row in place), and the
      * language keeps value reads - `item.name` rewrites to `item().name`, a bare `item` to `item()`.
      * Threaded per-render-child at codegen (never component-global), so an identically named binding
-     * outside the row callback is untouched. Like {@link rowForms}, deliberately NOT a shadowing name:
-     * the For arrow's own param must not suppress the rewrite; the cost is that a nested callback
-     * inside the row reusing the exact name is rewritten too.
+     * outside the row callback is untouched. Ordinary declarations inside the row shadow these
+     * getters. The raw-mode emitter identifies the framework's own row callback by marker.
      */
     rowItems?: ReadonlySet<string>;
 }

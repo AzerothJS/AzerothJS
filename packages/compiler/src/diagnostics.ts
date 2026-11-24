@@ -103,7 +103,7 @@ import {
     BUILTIN_SET,
     ONE_ELEMENT_COMPONENTS
 } from 'azerothjs/semantics';
-import { isRenderCallback, loneFunctionChild, withoutSpacing } from './markup-util.ts';
+import { isRenderCallback, loneFunctionChild, markupBindingName, withoutSpacing } from './markup-util.ts';
 import { analyzeComponent } from './analyze.ts';
 import { parseStatementsSlice, parseExpressionSlice, parseDeclarationSlice } from './ts-slice.ts';
 import { findMarkupStart, isIdentStart, isIdentPart, isWhitespace, scanTypeParams, skipBalanced } from './scanner.ts';
@@ -153,7 +153,7 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
     const items = parseModule(source).items;
     // Imports and module-scope variables, resolved once: a bind target that names one is a
     // silent half-dead binding (or a TypeError on the first keystroke, for an import).
-    const moduleScope = moduleBindScope(source, items);
+    const moduleScope = moduleBindScope(source, items, diagnostics);
     const shadowed = moduleScope.shadowed;
     diagnoseStyleSections(source, items, diagnostics);
     for (const item of items)
@@ -1048,7 +1048,7 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
     }
 
     // azeroth/self-write-in-effect
-    const reactive: ReactiveSources = { names: new Set(analysis.sources.map(s => s.name)), hasProps: analysis.hasProps };
+    const reactive: ReactiveSources = { names: new Set(analysis.sources.map(s => s.name)), hasProps: analysis.hasProps, paramName: analysis.paramName };
     const stateNames = new Set(analysis.sources.filter(s => s.kind === 'state').map(s => s.name));
     diagnoseSelfWriteEffects(source, component, reactive, stateNames, out);
 
@@ -1197,26 +1197,7 @@ export function bindTargetNotReactiveMessage(name: string): string
  */
 function markupBoundNames(el: MarkupElement): string[]
 {
-    const names: string[] = [];
-    for (const attr of el.attributes)
-    {
-        // The SAME gate the lowerer applies. Without it, a plain `<div let="x">` or any author
-        // attribute happening to be called `let`/`index` was treated as a row binding, which
-        // shadowed a real component local and rejected programs that used to build. Semantics owns
-        // which attributes bind on which tag; this rule must not re-decide it - `isBindingAttr`
-        // already answers for the tag, so no separate built-in test is needed.
-        if (attr.spread || attr.name === null || attr.value.kind !== 'expression'
-            || !isBindingAttr(el.tag, attr.name))
-        {
-            continue;
-        }
-        const text = attr.value.code.trim();
-        if (/^[A-Za-z_$][\w$]*$/.test(text))
-        {
-            names.push(text);
-        }
-    }
-    return names;
+    return el.attributes.map(attr => markupBindingName(el.tag, attr)).filter(name => name !== undefined);
 }
 
 /** An array-form linkage carried LEXICALLY with a row name: which form, its keys, its openness. */
@@ -2197,11 +2178,13 @@ interface ModuleBindScope
 }
 
 /** Collects value bindings once so diagnostics and builtin calls agree on their origin. */
-export function moduleBindScope(source: string, items: readonly ModuleItem[]): ModuleBindScope
+export function moduleBindScope(source: string, items: readonly ModuleItem[], diagnostics?: AzerothDiagnostic[]): ModuleBindScope
 {
     const imports = new Set<string>();
     const vars = new Set<string>();
     const shadowed = new Set<string>();
+    const localExports: Array<{ name: string; start: number; end: number }> = [];
+    const sourceRegions: Array<{ item: ModuleItem; starts: Set<number> }> = [];
     for (const item of items)
     {
         if (item.kind === 'component' && item.name === 'Show')
@@ -2212,9 +2195,28 @@ export function moduleBindScope(source: string, items: readonly ModuleItem[]): M
         {
             continue;
         }
-        const { sourceFile } = parseStatementsSlice(blankMarkupRegions(source, item.start, item.end), item.start);
+        const { sourceFile, mapPos } = parseStatementsSlice(blankMarkupRegions(source, item.start, item.end), item.start);
+        const starts = new Set<number>();
         for (const statement of sourceFile.statements)
         {
+            if (diagnostics && ts.isExportDeclaration(statement) && !statement.isTypeOnly
+                && !statement.moduleSpecifier && statement.exportClause && ts.isNamedExports(statement.exportClause))
+            {
+                for (const spec of statement.exportClause.elements)
+                {
+                    const local = spec.propertyName ?? spec.name;
+                    if (!spec.isTypeOnly && ts.isIdentifier(local))
+                    {
+                        localExports.push({ name: local.text, start: mapPos(local.getStart(sourceFile)), end: mapPos(local.end) });
+                    }
+                }
+            }
+            if (diagnostics && ts.isExpressionStatement(statement) && ts.isIdentifier(statement.expression))
+            {
+                // TypeScript parses the keyword of `state n = ...` as a standalone identifier.
+                // Only an actual declaration found by the lowerer at this position can match.
+                starts.add(statement.getStart(sourceFile));
+            }
             if (ts.isImportDeclaration(statement) && statement.importClause !== undefined
                 && statement.importClause.phaseModifier !== ts.SyntaxKind.TypeKeyword)
             {
@@ -2261,6 +2263,34 @@ export function moduleBindScope(source: string, items: readonly ModuleItem[]): M
                 && statement.name !== undefined)
             {
                 vars.add(statement.name.text);
+            }
+        }
+        if (starts.size > 0)
+        {
+            sourceRegions.push({ item, starts });
+        }
+    }
+    if (diagnostics && localExports.length > 0)
+    {
+        const reactive = new Set<string>();
+        for (const { item, starts } of sourceRegions)
+        {
+            for (const decl of findConstructs(source.slice(item.start, item.end)))
+            {
+                if ((decl.kind === 'state' || decl.kind === 'derived' || decl.kind === 'deferred') && starts.has(decl.start))
+                {
+                    reactive.add(decl.name);
+                }
+            }
+        }
+        for (const { name, start, end } of localExports)
+        {
+            if (reactive.has(name))
+            {
+                diagnostics.push({
+                    code: 'azeroth/reactive-export', severity: 'error', start, end,
+                    message: `Cannot export the reactive value \`${ name }\` by name. Export a reader function immediately after its declaration, for example \`export function readValue() { return ${ name }; }\`.`
+                });
             }
         }
     }
@@ -2474,7 +2504,7 @@ function diagnoseDerivedWrites(source: string, component: ComponentDecl, analysi
     {
         return;
     }
-    const reactive: ReactiveSources = { names: new Set(analysis.sources.map(s => s.name)), hasProps: analysis.hasProps };
+    const reactive: ReactiveSources = { names: new Set(analysis.sources.map(s => s.name)), hasProps: analysis.hasProps, paramName: analysis.paramName };
 
     // Reports each read-only source written in a parsed slice, at the write's own identifier.
     const flag = (sourceFile: ts.SourceFile, mapPos: (p: number) => number, seen: Set<string>): void =>

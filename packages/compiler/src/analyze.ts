@@ -35,6 +35,7 @@ import { renderSources, type Dep, type ReactiveSources } from './dep.ts';
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import { lowerMarkup, renderClone, componentChildren } from './lower.ts';
+import { markupBindingName } from './markup-util.ts';
 import { parseDeclarationSlice, parseStatementsSlice, parseExpressionSlice, parsePropsPattern, parseComponentParam, formFieldKeys } from './ts-slice.ts';
 import { collectReads } from './resolve.ts';
 
@@ -186,7 +187,7 @@ export function analyzeComponent(source: string, component: ComponentDecl, shado
         }
     }
 
-    const reactive: ReactiveSources = { names, hasProps, propAliases, forms, rowForms };
+    const reactive: ReactiveSources = { names, hasProps, paramName: param.identName, propAliases, forms, rowForms };
     const scopes: ReactiveScope[] = [];
 
     for (const item of component.body)
@@ -553,7 +554,7 @@ function analyzeExpression(code: string, reactive: ReactiveSources, anchor = 0):
 function collectMarkupBindings(source: string, node: MarkupElement | MarkupFragment, reactive: ReactiveSources,
     scopes: ReactiveScope[], shadowed: ReadonlySet<string>, depth = 0): void
 {
-    const visitChild = (child: MarkupChild): void =>
+    const visitChild = (child: MarkupChild, current: ReactiveSources): void =>
     {
         if (child.kind === 'text')
         {
@@ -561,26 +562,34 @@ function collectMarkupBindings(source: string, node: MarkupElement | MarkupFragm
         }
         if (child.kind === 'expression')
         {
-            const { deps, pure } = analyzeExpression(child.code, reactive, child.start);
+            const { deps, pure } = analyzeExpression(child.code, current, child.start);
             scopes.push({ origin: 'text', span: { start: child.start, end: child.end }, deps, pure });
             return;
         }
-        visitNode(child);
+        visitNode(child, current);
     };
 
-    const visitNode = (n: MarkupElement | MarkupFragment): void =>
+    const visitNode = (n: MarkupElement | MarkupFragment, current: ReactiveSources): void =>
     {
+        let childLocals: Set<string> | undefined;
         if (n.kind === 'element')
         {
             for (const attr of n.attributes)
             {
                 if (attr.value.kind === 'expression')
                 {
-                    const { deps, pure } = analyzeExpression(attr.value.code, reactive, attr.start);
+                    const declared = markupBindingName(n.tag, attr);
+                    if (declared !== undefined)
+                    {
+                        (childLocals ??= new Set(current.locals)).add(declared);
+                        continue;
+                    }
+                    const { deps, pure } = analyzeExpression(attr.value.code, current, attr.start);
                     scopes.push({ origin: 'attribute', span: { start: attr.start, end: attr.end }, deps, pure });
                 }
             }
         }
+        const inner = childLocals === undefined ? current : { ...current, locals: childLocals };
         if (n.kind === 'element' && n.isComponent)
         {
             const { children } = componentChildren(n, shadowed);
@@ -598,18 +607,18 @@ function collectMarkupBindings(source: string, node: MarkupElement | MarkupFragm
                     // dependencies and are analyzed once, in the callback's lexical scope.
                     scopes.push({ origin: 'text', span: { start: arrow.start, end: arrow.end }, deps: [], pure: true });
                     const parameters = source.slice(clone.param.start, clone.param.end);
-                    collectMarkupBindings(source, clone.node, renderSources(reactive, parameters), scopes, shadowed, depth + 1);
+                    collectMarkupBindings(source, clone.node, renderSources(inner, parameters), scopes, shadowed, depth + 1);
                     return;
                 }
             }
         }
         for (const child of n.children)
         {
-            visitChild(child);
+            visitChild(child, inner);
         }
     };
 
-    visitNode(node);
+    visitNode(node, reactive);
 }
 
 /**

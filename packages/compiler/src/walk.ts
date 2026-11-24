@@ -102,7 +102,14 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
     // a function/block (a render callback, an IIFE, a composable) becomes a `__azMemo`/`__azSignal`
     // marker declaration; the walk treats it as a reactive SOURCE within its scope rather than a
     // shadowing local, so its bare reads gain `()` exactly like a top-level source.
-    interface Scope { shadows: Set<string>; scoped: Map<string, boolean>; rows: Set<string> }
+    interface Scope
+    {
+        shadows: Set<string>;
+        scoped: Map<string, boolean>;
+        rows: Set<string>;
+        /** Ordinary helper parameters that receive array-form records by the registered row name. */
+        records?: Set<string>;
+    }
     const scopeStack: Scope[] = [];
 
     // Arrows wrapped by a `__azRow(...)` marker in the walked text - For render children whose
@@ -117,81 +124,67 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
     const isScopedSource = (name: string): boolean =>
         scopeStack.some(scope => scope.scoped.has(name));
 
+    const propsName = sources.hasProps && sources.paramName !== null ? sources.paramName ?? 'props' : null;
+
     const interesting = (name: string): boolean =>
-        sources.names.has(name) || (sources.hasProps && name === 'props') || isScopedSource(name)
+        sources.names.has(name) || name === propsName || isScopedSource(name)
         || (sources.propAliases?.has(name) ?? false) || (sources.forms?.has(name) ?? false);
 
-    const isShadowed = (name: string): boolean =>
-        scopeStack.some(scope => scope.shadows.has(name));
+    /** The nearest declaration decides whether an occurrence names a local, a getter or a keyword. */
+    const bindingScope = (name: string): Scope | undefined =>
+        scopeStack.findLast(scope => scope.shadows.has(name) || scope.rows.has(name) || scope.scoped.has(name));
 
-    /** True when `objName` is an unshadowed `form` source and `fieldName` is one of its initial-object keys. */
-    const formFieldOf = (objName: string, fieldName: string): boolean =>
-        !isShadowed(objName) && (sources.forms?.get(objName)?.has(fieldName) ?? false);
+    const isShadowed = (name: string): boolean => bindingScope(name)?.shadows.has(name) ?? false;
 
-    /** True when `objName` is an unshadowed array-form ROW variable and `fieldName` is a blank-row key.
-     *  Row variables are NOT in `interesting()`, so a `<For>` arrow param of the same name is never bound
-     *  as a shadowing local - the field access below it still resolves. */
-    const rowFieldOf = (objName: string, fieldName: string): boolean =>
-        !isShadowed(objName) && (sources.rowForms?.get(objName)?.has(fieldName) ?? false);
-
-    /** True when `name` resolves (innermost-first) to a marker-scoped row param. Only an
-     *  interposed KEYWORD source wins over an outer row scope; a plain local of the same name
-     *  does NOT (row names are excluded from shadow registration by the rowFieldOf trade), so
-     *  a local alias sharing a registered row name is still rewritten as the row. */
-    const isRowParam = (name: string): boolean =>
+    /** A raw render child declares its getter in the walk; a detached IR child supplies it as a source. */
+    const rowItemOf = (name: string): boolean =>
     {
-        for (let k = scopeStack.length - 1; k >= 0; k--)
-        {
-            const scope = scopeStack[k];
-            if (scope === undefined)
-            {
-                continue;
-            }
-            if (scope.shadows.has(name) || scope.scoped.has(name))
-            {
-                return false;
-            }
-            if (scope.rows.has(name))
-            {
-                return true;
-            }
-        }
-        return false;
+        const owner = bindingScope(name);
+        return owner !== undefined ? owner.rows.has(name) : (sources.rowItems?.has(name) ?? false);
     };
 
-    /** True when `name` is an unshadowed `<For>` row-item getter param - either threaded in via
-     *  `sources.rowItems` (codegen's IR path) or scoped from a `__azRow` marker in the walked
-     *  text (a raw-mode For render child). Same non-shadowing rule (and the same trade) as
-     *  {@link rowFieldOf}: the arrow's own param must not suppress the rewrite. */
-    const rowItemOf = (name: string): boolean =>
-        (!isShadowed(name) && (sources.rowItems?.has(name) ?? false)) || isRowParam(name);
+    const formFieldOf = (name: string, field: string): boolean =>
+        (sources.forms?.get(name)?.has(field) ?? false) && bindingScope(name) === undefined
+        && !(sources.rowItems?.has(name) ?? false);
 
-    /** A control-flow getter named props takes precedence over the component's argument. */
+    /** Global record-style row sugar still applies to ordinary helpers. Inside a row callback,
+     *  a nearer declaration can instead name a plain local or a nested row getter. */
+    const rowFieldOf = (name: string, field: string): boolean =>
+    {
+        if (!sources.rowForms?.get(name)?.has(field))
+        {
+            return false;
+        }
+        const owner = bindingScope(name);
+        return owner === undefined || owner.rows.has(name) || (owner.records?.has(name) ?? false);
+    };
+
+    /** Named record parameters can occur in nested helpers; a getter or plain local masks the convention. */
+    const recordParameter = (name: string): boolean =>
+    {
+        if (!sources.rowForms?.has(name))
+        {
+            return false;
+        }
+        const owner = bindingScope(name);
+        return owner === undefined ? !sources.rowItems?.has(name) : (owner.records?.has(name) ?? false);
+    };
+
+    /** A nested binding with the same name takes precedence over the component's argument. */
     const isComponentProps = (name: string): boolean =>
-        sources.hasProps && name === 'props' && !isShadowed(name) && !rowItemOf(name);
+        name === propsName && !isShadowed(name) && !isScopedSource(name) && !rowItemOf(name);
 
     /** Resolves a name innermost-first: a scoped marker source (with writability), a shadowing local, or
      *  finally the component's flat sources. Returns null when the name is not reactive here. */
     const resolveSource = (name: string): { writable: boolean } | null =>
     {
-        for (let k = scopeStack.length - 1; k >= 0; k--)
+        const owner = bindingScope(name);
+        if (owner !== undefined)
         {
-            const scope = scopeStack[k];
-            if (scope === undefined)
-            {
-                continue;
-            }
-            const scoped = scope.scoped.get(name);
-            if (scoped !== undefined)
-            {
-                return { writable: scoped };
-            }
-            if (scope.shadows.has(name))
-            {
-                return null;
-            }
+            const writable = owner.scoped.get(name);
+            return writable !== undefined ? { writable } : null;
         }
-        if (sources.names.has(name))
+        if (sources.names.has(name) && !sources.rowItems?.has(name))
         {
             return { writable: sources.writable === undefined ? true : sources.writable.has(name) };
         }
@@ -200,7 +193,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
 
     const bind = (name: string): void =>
     {
-        if (interesting(name))
+        if (interesting(name) || rowItemOf(name) || bindingScope(name)?.records?.has(name))
         {
             top()?.shadows.add(name);
         }
@@ -304,9 +297,65 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
         ts.isBlock(n) || ts.isForStatement(n) || ts.isForInStatement(n) ||
         ts.isForOfStatement(n) || ts.isCatchClause(n) || ts.isCaseBlock(n);
 
+    const bindLexicalList = (list: ts.VariableDeclarationList): void =>
+    {
+        if (list.flags & ts.NodeFlags.BlockScoped)
+        {
+            for (const declaration of list.declarations)
+            {
+                if (!tryScopedDeclaration(declaration))
+                {
+                    visitBinding(declaration.name, bind);
+                }
+            }
+        }
+    };
+
+    /** A closure before a later declaration already resolves that name to the same block. */
+    const bindStatements = (statements: ts.NodeArray<ts.Statement>): void =>
+    {
+        for (const statement of statements)
+        {
+            if (ts.isVariableStatement(statement))
+            {
+                bindLexicalList(statement.declarationList);
+            }
+            else if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)
+                || ts.isModuleDeclaration(statement)) && statement.name && ts.isIdentifier(statement.name))
+            {
+                bind(statement.name.text);
+            }
+        }
+    };
+
+    /** A var inside a nested block belongs to the function body. Parameter defaults are
+     *  evaluated outside that body. Skip the extra scan for ordinary var-free slices. */
+    const hasVar = /\bvar\b/.test(root.getSourceFile().text);
+    const bindVars = (n: ts.Node): void =>
+    {
+        if (ts.isFunctionLike(n) || ts.isClassLike(n) || ts.isModuleDeclaration(n))
+        {
+            return;
+        }
+        if (ts.isVariableDeclarationList(n))
+        {
+            if (!(n.flags & ts.NodeFlags.BlockScoped))
+            {
+                for (const declaration of n.declarations)
+                {
+                    visitBinding(declaration.name, bind);
+                }
+            }
+            return;
+        }
+        ts.forEachChild(n, bindVars);
+    };
+
     const visit = (n: ts.Node): void =>
     {
-        if (n.kind >= ts.SyntaxKind.FirstTypeNode && n.kind <= ts.SyntaxKind.LastTypeNode)
+        if ((n.kind >= ts.SyntaxKind.FirstTypeNode && n.kind <= ts.SyntaxKind.LastTypeNode)
+            || ts.isTypeAliasDeclaration(n) || ts.isInterfaceDeclaration(n) || ts.isTypeParameterDeclaration(n)
+            || (ts.isHeritageClause(n) && n.token === ts.SyntaxKind.ImplementsKeyword))
         {
             return;
         }
@@ -463,17 +512,105 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
 
         if (ts.isIdentifier(n))
         {
-            reference(n);
+            // A literal class field key is a name. Its initializer and computed keys are reads.
+            if (!(ts.isPropertyDeclaration(n.parent) && n.parent.name === n))
+            {
+                reference(n);
+            }
+            return;
+        }
+
+        if (ts.isLabeledStatement(n))
+        {
+            visit(n.statement);
+            return;
+        }
+        if (ts.isBreakOrContinueStatement(n) || ts.isImportDeclaration(n) || ts.isExportDeclaration(n))
+        {
+            return;
+        }
+        if (ts.isModuleDeclaration(n))
+        {
+            if (ts.isIdentifier(n.name))
+            {
+                bind(n.name.text);
+            }
+            if (n.body)
+            {
+                scopeStack.push({ shadows: new Set(), scoped: new Map(), rows: new Set() });
+                if (ts.isModuleBlock(n.body))
+                {
+                    bindStatements(n.body.statements);
+                    if (hasVar)
+                    {
+                        bindVars(n.body);
+                    }
+                }
+                visit(n.body);
+                scopeStack.pop();
+            }
+            return;
+        }
+        if (ts.isClassLike(n))
+        {
+            if (ts.isClassDeclaration(n) && n.name)
+            {
+                bind(n.name.text);
+            }
+            scopeStack.push({ shadows: new Set(), scoped: new Map(), rows: new Set() });
+            if (ts.isClassExpression(n) && n.name)
+            {
+                bind(n.name.text);
+            }
+            ts.forEachChild(n, child =>
+            {
+                if (child !== n.name)
+                {
+                    visit(child);
+                }
+            });
+            scopeStack.pop();
+            return;
+        }
+        if (ts.isEnumDeclaration(n))
+        {
+            bind(n.name.text);
+            scopeStack.push({ shadows: new Set(), scoped: new Map(), rows: new Set() });
+            for (const member of n.members)
+            {
+                const name = member.name;
+                if (ts.isIdentifier(name) || ts.isStringLiteral(name))
+                {
+                    bind(name.text);
+                }
+                else if (ts.isComputedPropertyName(name) && ts.isStringLiteralLike(name.expression))
+                {
+                    bind(name.expression.text);
+                }
+            }
+            for (const member of n.members)
+            {
+                if (member.initializer)
+                {
+                    visit(member.initializer);
+                }
+            }
+            scopeStack.pop();
             return;
         }
 
         if (isFunctionScope(n))
         {
+            if (n.name && ts.isComputedPropertyName(n.name))
+            {
+                visit(n.name.expression);
+            }
             if (ts.isFunctionDeclaration(n) && n.name)
             {
                 bind(n.name.text);
             }
-            scopeStack.push({ shadows: new Set(), scoped: new Map(), rows: new Set() });
+            const scope: Scope = { shadows: new Set(), scoped: new Map(), rows: new Set() };
+            scopeStack.push(scope);
             if (ts.isFunctionExpression(n) && n.name)
             {
                 bind(n.name.text);
@@ -481,22 +618,23 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
             // All parameters already bind when a default is evaluated, including later
             // parameters in their temporal dead zone. Separate binding from evaluation.
             const rowArrow = rowMarkerArrows.has(n);
-            const scope = top();
             for (const parameter of n.parameters)
             {
-                if (rowArrow && ts.isIdentifier(parameter.name))
+                const name = ts.isIdentifier(parameter.name) ? parameter.name.text : undefined;
+                if (rowArrow && name !== undefined)
                 {
-                    scope?.rows.add(parameter.name.text);
+                    scope.rows.add(name);
+                }
+                else if (name !== undefined && recordParameter(name))
+                {
+                    // A helper can receive a record indirectly. Its parameter shadows the
+                    // component receiver while retaining registered fields such as row.qty.
+                    scope.shadows.add(name);
+                    (scope.records ??= new Set()).add(name);
                 }
                 else
                 {
-                    visitBinding(parameter.name, name =>
-                    {
-                        if (interesting(name) || rowItemOf(name))
-                        {
-                            scope?.shadows.add(name);
-                        }
-                    });
+                    visitBinding(parameter.name, bind);
                 }
             }
             for (const parameter of n.parameters)
@@ -509,6 +647,10 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
             }
             if (n.body)
             {
+                if (hasVar)
+                {
+                    bindVars(n.body);
+                }
                 visit(n.body);
             }
             scopeStack.pop();
@@ -518,6 +660,30 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
         if (isBlockScope(n))
         {
             scopeStack.push({ shadows: new Set(), scoped: new Map(), rows: new Set() });
+            if (ts.isBlock(n))
+            {
+                bindStatements(n.statements);
+                if (hasVar && ts.isClassStaticBlockDeclaration(n.parent))
+                {
+                    bindVars(n);
+                }
+            }
+            else if (ts.isCaseBlock(n))
+            {
+                for (const clause of n.clauses)
+                {
+                    bindStatements(clause.statements);
+                }
+            }
+            else if (ts.isCatchClause(n) && n.variableDeclaration)
+            {
+                visitBinding(n.variableDeclaration.name, bind);
+            }
+            else if ((ts.isForStatement(n) || ts.isForOfStatement(n) || ts.isForInStatement(n))
+                && n.initializer && ts.isVariableDeclarationList(n.initializer))
+            {
+                bindLexicalList(n.initializer);
+            }
             ts.forEachChild(n, visit);
             scopeStack.pop();
             return;
@@ -527,6 +693,14 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
     };
 
     scopeStack.push({ shadows: new Set(sources.locals), scoped: new Map(), rows: new Set() });
+    if (ts.isSourceFile(root))
+    {
+        bindStatements(root.statements);
+        if (hasVar)
+        {
+            bindVars(root);
+        }
+    }
     ts.forEachChild(root, visit);
     scopeStack.pop();
 }

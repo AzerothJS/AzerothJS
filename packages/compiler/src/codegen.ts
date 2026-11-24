@@ -422,6 +422,7 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
     {
         names: new Set(analysis.sources.map(s => s.name)),
         hasProps: analysis.hasProps,
+        paramName: analysis.paramName,
         // Only `state` has a generated setter; `derived` is read-only. The rewrite uses this
         // to reject (rather than mis-emit a setter for) any write to a derived value.
         writable: new Set(analysis.sources.filter(s => s.kind === 'state').map(s => s.name)),

@@ -228,6 +228,15 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- A component with a props parameter such as `p` now updates bare `p.title` text and
+  attributes after hydration. JavaScript locals inside a `let=` or `index=` row can
+  reuse the row name. Rebuild affected components and deploy their server and
+  client output together. A new client hydrating an old page can replace an
+  input when the old markup lacks the markers for a newly reactive field.
+- Reactive names can also be used as class field names and loop labels. A named
+  value export of a module-level reactive declaration now reports
+  `azeroth/reactive-export` at the source. An exported reader function declared
+  immediately after the binding exposes its current value.
 - `azeroth build` reads the SSR entry's optional `locales` and `origin` exports.
   It writes each supported translation and uses the negotiated default for the
   unsuffixed page. Prefix builds can publish absolute alternate-language links.

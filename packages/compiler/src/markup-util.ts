@@ -30,14 +30,27 @@
  */
 
 import * as ts from 'typescript';
+import { isBindingAttr } from 'azerothjs/semantics';
 import { blankMarkupRegions } from './markup-parser.ts';
 import { parseExpressionSlice } from './ts-slice.ts';
 import type {
+    MarkupAttribute,
     MarkupChild,
     MarkupElement,
     MarkupExpression,
     MarkupFragment
 } from './types.ts';
+
+/** The accessor name a builtin's let or index attribute declares for its children. */
+export function markupBindingName(tag: string, attr: MarkupAttribute): string | undefined
+{
+    if (attr.spread || attr.name === null || attr.value.kind !== 'expression' || !isBindingAttr(tag, attr.name))
+    {
+        return undefined;
+    }
+    const name = attr.value.code.trim();
+    return /^[A-Za-z_$][\w$]*$/.test(name) ? name : undefined;
+}
 
 /**
  * Classify the whole expression. Looking only at its opening token makes a join,
