@@ -30,6 +30,7 @@ import { collectStyleSheet, createRenderFrame, escapeAttr, loaderHandoffScript, 
 import type { RenderFrame } from 'azerothjs';
 import type { CollectedHead } from 'azerothjs/internal';
 import { assertOneRuntime, collectHead, guardedMatch, joinBase, loaderFailures, renderAsDenied, renderWithBase, renderWithLocale, requestWasRead, stampRuntime, targetToFullPath } from 'azerothjs/internal';
+import { documentElement, shellLanguage } from './document-shell.ts';
 
 /** The app-component signature the renderer drives (the template's `App` shape). */
 export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => MountNode;
@@ -259,41 +260,43 @@ export interface DocumentContext
  * Runs on every response. The base attribute is always stripped and written back only when a
  * base exists, so a stale or hand-written one never reaches a document that does not live under
  * it; `lang` and `dir` are rewritten only when a locale exists and are otherwise the shell's own.
- * With nothing to write and nothing to strip the shell goes out byte for byte. Only the FIRST
- * `<html` is touched, and a shell with no `<html` is returned unchanged.
+ * With nothing to write and nothing to strip the shell goes out byte for byte. Only the
+ * explicit opening document element can be stamped.
  *
  * @internal Exported for the kit test suite.
  */
 export function applyDocumentContext(shell: string, context: DocumentContext): string
 {
-    const open = /<html\b([^>]*)>/i.exec(shell);
-    if (open === null)
+    return stampDocument(shell, documentElement(shell), context);
+}
+
+function stampDocument(shell: string, open: ReturnType<typeof documentElement>, context: DocumentContext): string
+{
+    if (!open || (context.locale === undefined && context.base === undefined
+        && !open.attributes.some(attr => attr.name === 'data-azeroth-base')))
     {
         return shell;
     }
-    const run = open[1] ?? '';
-    if (context.locale === undefined && context.base === undefined && !/\sdata-azeroth-base\s*=/i.test(run))
-    {
-        return shell;
-    }
-    let attrs = run.replace(/\s+data-azeroth-base\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
-    const own: string[] = [];
+    const attributes: string[] = [];
     if (context.locale !== undefined)
     {
-        attrs = attrs
-            .replace(/\s+lang\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-            .replace(/\s+dir\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
-        own.push(`lang="${ escapeAttr(context.locale) }"`, `dir="${ localeDirection(context.locale) }"`);
+        attributes.push(`lang="${ escapeAttr(context.locale) }"`, `dir="${ localeDirection(context.locale) }"`);
     }
     if (context.base !== undefined)
     {
-        own.push(`data-azeroth-base="${ escapeAttr(context.base) }"`);
+        attributes.push(`data-azeroth-base="${ escapeAttr(context.base) }"`);
     }
-    attrs = attrs.trim();
-    const rebuilt = `<html${ own.length === 0 ? '' : ` ${ own.join(' ') }` }${ attrs === '' ? '' : ` ${ attrs }` }>`;
+    for (const attr of open.attributes)
+    {
+        if (attr.name !== 'data-azeroth-base' && (context.locale === undefined || (attr.name !== 'lang' && attr.name !== 'dir')))
+        {
+            attributes.push(attr.source);
+        }
+    }
+    const rebuilt = `<html${ attributes.length === 0 ? '' : ` ${ attributes.join(' ') }` }>`;
     // Spliced rather than String.replace-d: a preserved attribute can hold a $-pattern, which
     // a replacement string would expand into the tag.
-    return shell.slice(0, open.index) + rebuilt + shell.slice(open.index + open[0].length);
+    return shell.slice(0, open.start) + rebuilt + shell.slice(open.end);
 }
 
 /**
@@ -418,7 +421,9 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // root marker and enqueues the head half immediately, so a later stamp would arrive after
         // those bytes had already left.
         const base = options?.base;
-        const shell = applyDocumentContext(rawShell, { locale: options?.locale, base });
+        const open = documentElement(rawShell);
+        const locale = options?.locale ?? shellLanguage(open) ?? 'en';
+        const shell = stampDocument(rawShell, open, { locale: options?.locale, base });
         // The app's history holds the url the browser's will hold; matching, guarding and the
         // handoff stay in app space, where the pinned base puts the client too.
         const documentUrl = base === undefined ? url : joinBase(base, url);
@@ -541,7 +546,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
                         ...(options.signal !== undefined ? { signal: options.signal } : {}),
                         ...(options.onError !== undefined ? { onError: options.onError } : {}),
                         ...(options.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {}),
-                        ...(options.locale !== undefined ? { locale: options.locale } : {}),
+                        locale,
                         ...(base !== undefined ? { base } : {}),
                         ...(options.request !== undefined ? { request: options.request } : {})
                     });
@@ -598,8 +603,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
                 () => app(stamped !== undefined ? { url: documentUrl, handoff: stamped } : { url: documentUrl }),
                 { frame, ...(options?.request !== undefined ? { request: options.request } : {}) });
         const pinned = (): string => (base === undefined ? renderTree() : renderWithBase(base, renderTree));
-        const render = (): string =>
-            (options?.locale === undefined ? pinned() : renderWithLocale(options.locale, pinned));
+        const render = (): string => renderWithLocale(locale, pinned);
         try
         {
             body = denied === null ? render() : renderAsDenied(denied, render);

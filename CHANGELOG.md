@@ -228,6 +228,13 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- `azeroth build` reads the SSR entry's optional `locales` and `origin` exports.
+  It writes each supported translation and uses the negotiated default for the
+  unsuffixed page. Prefix builds can publish absolute alternate-language links.
+- A missing negotiated translation renders live in the reader's language when a
+  renderer is available. A static-only server reports when it serves the unsuffixed
+  file. Without locale configuration, buffered and streamed pages render their
+  content in the document shell's language before hydration.
 - Hydrating a form now preserves drafts typed before startup when a label includes
   adjacent static text, a constant expression, an empty string or an array of strings.
   The browser adopts the existing text nodes. Server output stays byte-compatible.

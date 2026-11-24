@@ -18,13 +18,14 @@
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
 import { inspect } from 'node:util';
-import { assertOneRuntime, guardedMatch, isLanguageTag, setBuildContext } from 'azerothjs/internal';
+import { resolveLocale } from 'azerothjs';
+import { assertOneRuntime, guardedMatch, setBuildContext } from 'azerothjs/internal';
 
 import { alternatesOf, hrefPathOf } from './alternates.ts';
-import { flattenPages, prerenderFileFor, type PageRoute } from './index.ts';
+import { flattenPages, prerenderFileFor, type KitOptionsBase, type PageRoute } from './index.ts';
+import { pageBuildId, publicOrigin, validatePageLocales } from './page-config.ts';
 import { carriesBaseStamp } from './isr.ts';
 import type { PageRenderer } from './ssr.ts';
 
@@ -47,12 +48,15 @@ export interface PrerenderOptions
      * artifact for each reader instead of one language's copy negotiated at request time (which a
      * static host cannot do at all). Omit for a single-language build, which is unchanged.
      */
-    locales?: readonly string[];
+    locales?: readonly string[] | NonNullable<KitOptionsBase['locales']>;
+
+    /** Optional canonical HTTP(S) origin for the prefix build's alternate-language links. */
+    origin?: string;
 
     /**
      * The url mode the site is mounted in. Under `'prefix'` every artifact carries the hreflang
-     * set for its languages, as root-relative hrefs; the default carries none, because outside
-     * prefix mode there are no per-language urls to name.
+     * set for its languages. Hrefs are root-relative unless `origin` is configured. The default
+     * mode has no per-language urls to name.
      */
     routing?: 'negotiate' | 'prefix';
 }
@@ -86,14 +90,15 @@ export function resolveStaticPath(pattern: string, params: Record<string, string
 export async function prerender(options: PrerenderOptions): Promise<string[]>
 {
     assertOneRuntime('kit prerender', options.renderer);
-    for (const tag of options.locales ?? [])
-    {
-        if (!isLanguageTag(tag))
-        {
-            throw new Error(`kit prerender: "${ tag }" is not a language tag - alphanumeric segments joined by hyphens, `
-                + 'such as "en" or "zh-Hant".');
-        }
-    }
+    const config = localeConfig(options);
+    validatePageLocales(config, 'kit prerender');
+    const supported = config?.supported ?? [];
+    const first = supported[0];
+    const defaultLocale = first !== undefined && config?.default !== undefined
+        ? resolveLocale([config.default], supported, first)
+        : first;
+    const prefix = (config?.routing ?? options.routing) === 'prefix';
+    const origin = publicOrigin(options.origin);
     const indexPath = join(options.clientDir, 'index.html');
     const shellPath = join(options.clientDir, 'shell.html');
     if (!existsSync(indexPath))
@@ -118,19 +123,20 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
     // In a normal build dist/ is fresh from vite, so exactly one file carries prior content.
     const emitted: Array<{ file: string; previous: string | null }> = [];
 
-    // The same shell-hash identity the runtime mount computes, so build-emitted handoffs
+    // The same deployment identity the runtime mount computes, so build-emitted handoffs
     // and runtime pages agree on the deployment they belong to.
-    const buildStamp = createHash('sha256').update(shell).digest('hex').slice(0, 16);
+    const buildStamp = pageBuildId(shell, origin, prefix ? supported : []);
 
-    async function renderAndWrite(path: string, revalidate?: number, locale?: string): Promise<void>
+    async function renderAndWrite(path: string, revalidate?: number, fileLocale?: string): Promise<void>
     {
         // A page WITH a revalidation window is ISR: its prerendered seed file is served
         // verbatim later, so it carries `at` and heals by age like any ISR copy. A page
         // WITHOUT one is build-static by contract and adopts fresh forever.
-        const alternates = options.routing === 'prefix' ? alternatesOf(options.locales ?? [], hrefPathOf(path), '') : [];
+        const alternates = prefix ? alternatesOf(supported, hrefPathOf(path), '', origin) : [];
         // Under prefix routing each language's file lives at its own prefixed url, so it is
         // rendered under that base: stamped for the client router, anchors already prefixed.
-        const base = options.routing === 'prefix' && locale !== undefined ? `/${ locale }` : undefined;
+        const base = prefix && fileLocale !== undefined ? `/${ fileLocale }` : undefined;
+        const locale = fileLocale ?? defaultLocale;
         const reasons: unknown[] = [];
         const result = await options.renderer(path, shell, {
             onError: (error: unknown): void => void reasons.push(error),
@@ -187,7 +193,7 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
             throw new Error(`kit prerender: "${ path }" rendered for "${ base }" carries no data-azeroth-base stamp - `
                 + 'the renderer must apply the base it is given (createPageRenderer does).');
         }
-        const file = resolve(options.clientDir, prerenderFileFor(path, locale));
+        const file = resolve(options.clientDir, prerenderFileFor(path, fileLocale));
         const root = resolve(options.clientDir);
         if (!file.startsWith(root.endsWith(sep) ? root : `${ root }${ sep }`))
         {
@@ -209,13 +215,13 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
     setBuildContext(true);
     try
     {
-        await generate(options, renderAndWrite, written);
+        await generate(options, supported, renderAndWrite, written);
     }
     catch (failure)
     {
         // Undo this pass, leaving the client build exactly as vite left it. The next
         // successful build regenerates every page; nothing half-generated ships.
-        for (const entry of emitted)
+        for (const entry of emitted.reverse())
         {
             if (entry.previous === null)
             {
@@ -233,6 +239,18 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
         setBuildContext(false);
     }
     return written;
+}
+
+/** Accept the original list API as well as the mount's complete locale configuration. */
+function localeConfig(options: PrerenderOptions): KitOptionsBase['locales']
+{
+    const locales = options.locales;
+    if (Array.isArray(locales))
+    {
+        return { supported: locales as readonly string[] };
+    }
+    // Array.isArray narrows mutable arrays but leaves readonly arrays in its false branch.
+    return locales as KitOptionsBase['locales'];
 }
 
 /**
@@ -257,6 +275,7 @@ function readPrevious(file: string): string | null
 /** @internal The page walk itself; `prerender` wraps it so a throw can roll back what it wrote. */
 async function generate(
     options: PrerenderOptions,
+    supported: readonly string[],
     renderAndWrite: (path: string, revalidate?: number, locale?: string) => Promise<void>,
     written: string[]
 ): Promise<void>
@@ -264,7 +283,7 @@ async function generate(
     // `undefined` FIRST and always: the unsuffixed file is what a host without negotiation serves,
     // what an older mount looks for, and what replaces vite own index.html at the root - so it is
     // written whether or not the site is multilingual. The language-suffixed copies join it.
-    const buildLocales: ReadonlyArray<string | undefined> = [undefined, ...(options.locales ?? [])];
+    const buildLocales: ReadonlyArray<string | undefined> = [undefined, ...new Set(supported)];
 
     // A foreign guarded chain can win the url of an unguarded static page, and a file written
     // for it would be served without the guard. The declaration check below is the first line;

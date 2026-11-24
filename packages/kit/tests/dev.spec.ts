@@ -516,6 +516,29 @@ describe('an ISR page through the session', () =>
 
 describe('locale prefixes', () =>
 {
+    it('loads the entry locale and origin ahead of legacy devPages options', async () =>
+    {
+        const root = copyFixture();
+        writeFileSync(join(root, 'src', 'entry.locale.ts'), [
+            'export { routes, renderPage } from "./entry.server.ts";',
+            'export const locales = { supported: ["en", "fa"], default: "FA-ir", routing: "prefix" };',
+            'export const origin = "https://studio.test";'
+        ].join('\n'));
+        const session = await open({
+            root, entry: 'src/entry.locale.ts',
+            pages: { locales: { supported: ['en'] }, origin: 'https://old.test' }
+        });
+        const bare = await get(session, '/about');
+        expect(bare.status).toBe(302);
+        expect(bare.headers.get('location')).toBe('/fa/about');
+        const translated = await get(session, '/fa/about');
+        expect(translated.status).toBe(200);
+        const html = await translated.text();
+        expect(html).toContain('lang="fa"');
+        expect(html).toContain('href="https://studio.test/en/about"');
+        await closeSession(session);
+    });
+
     it('a locale-prefixed static page keeps its redirect and renders live in the reader\'s language', async () =>
     {
         const session = await open({

@@ -208,8 +208,9 @@ session.attach(served.server);          // the HMR socket rides this server
 // session.close() from your shutdown handler
 ```
 
-The entry module exports `routes` and `renderPage` - the two names the prerender bin and a
-production mount already read - and the session reloads it, re-reads `index.html`, re-runs
+The entry module exports `routes` and `renderPage`. Its optional `locales` and `origin` exports
+take precedence over the corresponding `devPages({ pages })` options. The session reloads
+the entry, re-reads `index.html`, re-runs
 `transformIndexHtml` over it and re-mounts the pages on the first request after a change. The
 mount runs with `shell` (that transformed html) in place of `clientDir`, which is the one thing
 `mountPages` needs different without a built client. A first build that fails answers an html
@@ -244,9 +245,9 @@ answers 403 for the client script, your modules and the stylesheet.
   from. A `revalidate` page renders as a production cache miss on every request: shared and
   anonymous, buffered, `public, max-age=0, must-revalidate`, `x-azeroth-cache: miss`, nothing
   kept. `cache` is ignored.
-- Under `routing: 'prefix'` a `render: 'static'` page without `revalidate` renders per request, so
-  its hreflang hrefs are absolute, built from the request; production serves root-relative ones
-  from the file, and an ISR page is root-relative in both modes.
+- Under `routing: 'prefix'`, a configured `origin` supplies alternate links in both modes. With
+  no configured origin, an ordinary static page uses the request origin during development and
+  root-relative links in the production artifact. ISR uses root-relative links in both modes.
 - An ISR page's shared render reaches the api registered on the session's App, which the session
   lends to the pages App it builds. In production an ISR page reaches only the api registered on
   the App `mountPages` is given, so a server that registers the api on an App enclosing the pages
@@ -493,13 +494,13 @@ background regeneration does not, because it has no waiting client at all.
 
 ### A deploy makes a shared cache go cold
 
-Every entry is stamped with a **build identity** - the client shell's content hash - and an entry
-from a different build is treated as stale, because its HTML references content-hashed assets the
-new build deleted. That is the correct call for correctness, and it has an operational
-consequence worth planning for: during a rolling deploy, instances on the new build reject every
-entry the old build wrote, so a shared `FilePageCache` (or your own `PageCache`) goes **fully
-cold** and every cached page regenerates once. Size the origin for that spike, or warm the cache
-after a deploy.
+Each cache entry records a **build identity** derived from the raw client shell, the normalized
+public `origin` when configured, and the ordered language prefixes when prefix routing is active.
+Changing any of these inputs invalidates entries that may contain old asset URLs, router bases
+or alternate links. With no configured origin or active prefixes, the identity is the shell's
+content hash. During a rolling deploy, instances with a new identity reject entries produced by
+the old build. A shared `FilePageCache` (or your own `PageCache`) goes cold and regenerates each
+page on demand. Size the origin for that spike, or warm the cache after a deploy.
 
 The same mechanism means two applications pointed at one cache directory cannot serve each
 other's HTML - their shells hash differently, so each rejects the other's entries. They will,
@@ -567,15 +568,13 @@ file (hashed builds do) or lower `cacheControl` when images mutate.
 
 ## Languages - `locales`
 
-Declare the languages the site publishes and every page is served in the reader's own, with its
-`<html lang>` and `<html dir>`, its message catalogue, and what it varies on told to every cache in
-front of it:
+Declare the published languages in the application's SSR entry, next to `routes` and
+`renderPage`. The fullstack template, development session and `azeroth build` read these exports.
 
 ```ts
-mountPages(app, {
-    routes, clientDir, renderer,
-    locales: { supported: ['en', 'fa'], default: 'fa', acceptLanguage: false }
-});
+// application/src/entry.server.ts
+export const locales = { supported: ['en', 'fa'], default: 'fa', routing: 'prefix' } as const;
+export const origin = 'https://example.com';
 ```
 
 `supported` and `default` are the `LocaleConfig` every handler can negotiate with; `cookie: false`
@@ -585,14 +584,16 @@ language its own url with `hreflang` between them, which is what a site with sea
 ambitions and a CDN wants. The full story - negotiation order, catalogues, the two routing modes
 and what each tells a shared cache - is the [i18n guide](../azerothjs/docs/i18n.md).
 
-Under `routing: 'prefix'` a prerendered page is served from its file for every spelling of its
-url, and the prerender pass writes the page's hreflang set into each artifact when it is told the
-mode (`prerender({ ..., locales, routing: 'prefix' })`). An ISR page (`render: 'static'` with
-`revalidate`) carries the same root-relative set on every runtime render, a miss or a
-regeneration, spelled from the page's canonical url (one spelling per page: no trailing slash,
-and the query sorted by name), so every spelling that shares its cached copy carries the set its
-file does. A page rendered per request (`render: 'server'`) carries absolute hrefs built from the
-request.
+Custom production servers pass the exported `locales` and optional `origin` to `mountPages` with
+the routes and renderer. Programmatic builds can pass the same options to `prerender`. A build
+writes a file for each supported locale and an unsuffixed file in the resolved default language.
+Under prefix routing each suffixed document carries its own URL base. The unsuffixed document
+belongs to the bare URL.
+
+Set `origin` to the public HTTP or HTTPS origin to emit absolute `hreflang` links in prerendered,
+live and regenerated pages. Omit credentials, path, query and fragment. With no configured origin,
+shared output uses root-relative links, and a live render uses its request origin. ISR builds
+the links from the canonical path and sorted query.
 
 The prefix reaches the client the way the language does. Every response that lives under one
 carries `<html data-azeroth-base="/fa">`, the render is pinned to it, and a router created with no

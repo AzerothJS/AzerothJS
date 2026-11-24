@@ -43,6 +43,7 @@ import { isAbsoluteAppPath, joinBase } from 'azerothjs/internal';
 import { alternatesOf, hrefPathOf } from './alternates.ts';
 import type { DocumentContext, PageRenderer, PageResult } from './ssr.ts';
 import { threwUnderGuard } from './ssr.ts';
+import { documentElement } from './document-shell.ts';
 import { mergeVary } from './vary.ts';
 
 /** The frame this module loaded in: the fallback for a mount that runs inside a request. */
@@ -58,7 +59,7 @@ export interface PageEntry
     createdAt: number;
 
     /**
-     * Which build produced this HTML - the client shell's content hash.
+     * Identifies the raw shell and any configured origin or language prefixes that shaped its HTML.
      *
      * A persistent cache outlives the deploy that filled it, and the HTML it holds names the
      * previous build's content-hashed assets, which the new build deleted. Age cannot detect
@@ -292,17 +293,15 @@ export class FilePageCache implements PageCache
 /**
  * The kit's failure seam; `phase` names which machinery failed.
  *
- * `render` is a LOADER that rejected while serving a request. The page still renders and the
- * status is a real 500, so unlike a thrown fault it never reaches the app's error path - this
- * is the only place it is reported, and an operator who ignores it sees a 500 with no cause.
+ * `render` includes rejected loaders that produce a 500 page, invalid prefix stamps and
+ * the first unsuffixed-file fallback for a route pattern and reader language.
  */
 export type KitErrorObserver = (error: unknown, context: { path: string; phase: 'revalidate' | 'image' | 'stream' | 'render' }) => void;
 
 /** Whether a document's html open tag carries the base stamp, judged on the head of its bytes. */
 export function carriesBaseStamp(html: string): boolean
 {
-    const tag = /<html\b[^>]*>/i.exec(html);
-    return tag !== null && /\sdata-azeroth-base\s*=/i.test(tag[0]);
+    return Boolean(documentElement(html)?.attributes.find(attr => attr.name === 'data-azeroth-base')?.value);
 }
 
 /**
@@ -438,18 +437,20 @@ export interface IsrRegistration
     artifactPath: (pathname: string) => string | null;
 
     /**
-     * The language prefixes of a prefix-routed site. Each render builds its root-relative
+     * The language prefixes of a prefix-routed site. Each render builds its
      * hreflang set from them, the same set the prerendered file carries.
      */
     prefixes?: readonly string[];
+
+    /** Explicit deployment origin for shared alternates. A visitor's host is never used here. */
+    origin?: string;
 
     /** How many keys this registration remembers a failed regeneration for. Default 1000. */
     holdCeiling?: number;
 
     /**
-     * Identity of the build being served - the client shell's content hash, computed once at
-     * mount. A cached copy stamped with a different one came from a previous deploy and names
-     * assets that no longer exist, so it is discarded on read.
+     * Identity of the build being served, computed once at mount. Discard a different build's
+     * copy on read so the shared cache follows changes to the shell and locale configuration.
      */
     buildId: Promise<string>;
 }
@@ -607,7 +608,7 @@ export function registerIsr(registration: IsrRegistration): void
     {
         // Built from the canonical path and the sorted query, so every spelling of a page and its
         // seed file carry one set.
-        const alternates = alternatesOf(registration.prefixes ?? [], target.canonical, canonicalSearch(target.url.slice(target.pathname.length)));
+        const alternates = alternatesOf(registration.prefixes ?? [], target.canonical, canonicalSearch(target.url.slice(target.pathname.length)), registration.origin);
         return {
             handoffMeta: { build: buildValue, at: Date.now() },
             ...(target.locale !== undefined ? { locale: target.locale } : {}),

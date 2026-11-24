@@ -39,7 +39,7 @@ import type { ConnectMiddleware } from '@azerothjs/http/node';
 import { assertOneRuntime } from 'azerothjs/internal';
 
 import { mountPages } from '../index.ts';
-import type { KitOptions, PageRoute } from '../index.ts';
+import type { KitOptions, PageServerEntry } from '../index.ts';
 import type { PageRenderer } from '../ssr.ts';
 import { SSR_SOURCE_ENTRY } from './entry.ts';
 
@@ -470,7 +470,7 @@ export async function devPages(options: DevPagesOptions): Promise<DevSession>
             const shell = await server.transformIndexHtml(
                 '/',
                 await readFile(resolvePath(server.config.root, 'index.html'), 'utf8'));
-            const entry = await server.ssrLoadModule(entryPath()) as Partial<{ routes: PageRoute[]; renderPage: PageRenderer }>;
+            const entry = await server.ssrLoadModule(entryPath()) as Partial<PageServerEntry>;
             if (!Array.isArray(entry.routes) || typeof entry.renderPage !== 'function')
             {
                 throw new Error(`@azerothjs/kit/dev: "${ entryPath() }" must export "routes" (the page table) and `
@@ -481,7 +481,14 @@ export async function devPages(options: DevPagesOptions): Promise<DevSession>
             const inner = new App(innerOptions);
             // The api is registered on the session's own App, so an ISR page's shared render reaches it there.
             lendApiRegistration(inner, app);
-            const mount = { ...options.pages, routes: entry.routes, renderer: readable(entry.renderPage), shell };
+            const mount = {
+                ...options.pages,
+                ...(entry.locales !== undefined ? { locales: entry.locales } : {}),
+                ...(entry.origin !== undefined ? { origin: entry.origin } : {}),
+                routes: entry.routes,
+                renderer: readable(entry.renderPage),
+                shell
+            };
             bootFrame(() => mountPages(inner, mount));
             current = inner;
             return inner;

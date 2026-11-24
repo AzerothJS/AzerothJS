@@ -24,7 +24,7 @@
  * story is the router's loaders (matchAndLoad) - assembly, not invention.
  */
 
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { open, readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -33,8 +33,9 @@ import type { NavigateTarget, Route } from 'azerothjs';
 import { negotiateLocale } from 'azerothjs';
 import type { LocaleConfig, NegotiatedLocale } from 'azerothjs';
 import { alternatesOf } from './alternates.ts';
+import { pageBuildId, publicOrigin, validatePageLocales } from './page-config.ts';
 import { mergeVary } from './vary.ts';
-import { acceptRedirectTarget, assertOneRuntime, evaluateGuards, evaluateGuardsForPattern, flattenRoutesFor, guardedMatch, isAbsoluteAppPath, isExternalUrl, isLanguageTag, isRedirect, joinBase, stripBasePrefix, targetToFullPath } from 'azerothjs/internal';
+import { acceptRedirectTarget, assertOneRuntime, evaluateGuards, evaluateGuardsForPattern, flattenRoutesFor, guardedMatch, isAbsoluteAppPath, isExternalUrl, isRedirect, joinBase, stripBasePrefix, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
 import { attachApiBridge, html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, RadixRouter, UnauthorizedError } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
@@ -120,6 +121,9 @@ export interface PageActionContext
 /** Everything {@link mountPages} needs except the client it serves. */
 export interface KitOptionsBase
 {
+    /** Canonical public HTTP(S) origin for alternate-language links, including shared artifacts. */
+    origin?: string;
+
     /** The route table - the same one the client router mounts. */
     routes: PageRoute[];
 
@@ -181,9 +185,9 @@ export interface KitOptionsBase
 
     /**
      * Hears background failures (a failed ISR regeneration, a broken image transform) -
-     * work with no request to answer - plus one POLICY notice: the first time an ISR
-     * registration meets a URL matching a guarded route chain, it reports (once, phase
-     * 'revalidate') that those URLs render live and are never cached. Default:
+     * work with no request to answer. An ISR registration reports a guarded route once
+     * in phase 'revalidate'. A static-only mount reports an unsuffixed language fallback
+     * once per route pattern and requested language in phase 'render'. Default:
      * console.error; kit carries no logger dep.
      */
     onError?: KitErrorObserver;
@@ -211,6 +215,12 @@ export interface KitOptionsBase
      * installs.
      */
     csrf?: CsrfOptions;
+}
+
+/** The exports shared by an application's development, prerender and production SSR entry. */
+export interface PageServerEntry extends Pick<KitOptionsBase, 'routes' | 'locales' | 'origin'>
+{
+    renderPage: PageRenderer;
 }
 
 /**
@@ -260,6 +270,38 @@ function observerFor(options: KitOptions): KitErrorObserver
     {
         console.error(`kit ${ context.phase } failed for ${ context.path }:`, error);
     });
+}
+
+/** Reports when a static-only site actually serves its plain file for a missing translation. */
+function fallbackNoticeFor(pattern: string, options: KitOptions): (context: RequestContext, locale: string) => void
+{
+    const reported = new Set<string>();
+    return (context, locale) =>
+    {
+        if (!reported.has(locale))
+        {
+            reported.add(locale);
+            observerFor(options)(new Error(`kit: missing "${ locale }" artifact for "${ pattern }"; served the unsuffixed file.`),
+                { path: context.url.pathname, phase: 'render' });
+        }
+    };
+}
+
+/** A missing artifact allows the page's next representation to answer. Other file errors propagate. */
+async function findStatic(handler: Handler, context: RequestContext): Promise<Response | undefined>
+{
+    try
+    {
+        return await handler(context);
+    }
+    catch (error)
+    {
+        if (error instanceof NotFoundError)
+        {
+            return undefined;
+        }
+        throw error;
+    }
 }
 
 /**
@@ -398,6 +440,12 @@ function loadShell(clientDir: string): Promise<string>
  */
 export function mountPages(app: App, options: KitOptions): void
 {
+    validatePageLocales(options.locales, 'kit mountPages');
+    const origin = publicOrigin(options.origin);
+    if (origin !== undefined)
+    {
+        options = { ...options, origin };
+    }
     if (options.renderer !== undefined)
     {
         assertOneRuntime('kit mountPages', options.renderer);
@@ -423,25 +471,12 @@ export function mountPages(app: App, options: KitOptions): void
         ? rawShellPromise
         : rawShellPromise.then((shell) => shell.replace('</head>', () => `${ manifestScript(manifest) }</head>`));
 
-    // Which build this process serves, hashed ONCE from the RAW shell - before any manifest
-    // injection, so the prerender pass (which hashes the same file at build time) and this
-    // mount agree on the id. A persistent page cache outlives the deploy that filled it, and
-    // the HTML it holds names the previous build's content-hashed assets - files the new
-    // build deleted - so ISR discards any entry stamped with a different id. The shell is
-    // the right thing to hash because it CARRIES those asset URLs: it changes exactly when
-    // they do.
+    // Prerender and mount identify the deployment from the same raw shell, before manifest
+    // injection, and the configuration used for alternate URLs and router bases. A persistent
+    // ISR cache must discard documents naming assets or locales from the previous deploy.
     const buildIdPromise = rawShellPromise
-        .then((shell) => createHash('sha256').update(shell).digest('hex').slice(0, 16))
+        .then((shell) => pageBuildId(shell, options.origin, localePrefixes(options)))
         .catch(() => randomUUID());
-
-    for (const tag of [...localesOf(options), ...(options.locales?.default !== undefined ? [options.locales.default] : [])])
-    {
-        if (!isLanguageTag(tag))
-        {
-            throw new Error(`kit mountPages: "${ tag }" is not a language tag - alphanumeric segments joined by hyphens, `
-                + 'such as "en" or "zh-Hant".');
-        }
-    }
 
     const report = observerFor(options);
     // `staticFiles` resolves its root when it is built, so under `shell` it is not built at all:
@@ -607,7 +642,8 @@ export function mountPages(app: App, options: KitOptions): void
                     vary: (_request: Request, pathname: string) => varyFor(options, pathname),
                     strip: (pathname: string) => splitLocalePath(pathname, options).path,
                     artifactPath: (pathname: string) => artifactPathOf(splitLocalePath(pathname, options).path),
-                    prefixes: localePrefixes(options)
+                    prefixes: localePrefixes(options),
+                    ...(options.origin !== undefined ? { origin: options.origin } : {})
                 });
             }
             registerLocaleRedirect(app, page.path, options);
@@ -669,35 +705,32 @@ export function mountPages(app: App, options: KitOptions): void
             }
             else
             {
-                // One handler that picks this reader's file, falling back to the unsuffixed one
-                // so a build that predates the locale config still serves.
+                // A translated file keeps its own ETag. Decide how to recover only on a miss.
                 const servers = new Map<string, Handler>(localized.map((tag) =>
                     [tag, staticFiles(clientDirOf(options), { index: prerenderFileFor(page.path, tag), param: '__none' })]));
                 const fallback = staticFiles(clientDirOf(options), { index: plain, param: '__none' });
+                const reportFallback = fallbackNoticeFor(page.path, options);
                 const staticHandler = async (context: RequestContext): Promise<Response> =>
                 {
                     const prefixed = splitLocalePath(context.url.pathname, options).locale !== undefined;
                     const tag = localeFor(context.request, options, context.url.pathname);
                     const server = tag === undefined ? undefined : servers.get(tag);
-                    try
+                    const file = server === undefined ? undefined : await findStatic(server, context);
+                    if (file !== undefined)
                     {
-                        const served = withVary(await (server ?? fallback)(context), context, options);
-                        return prefixed && tag !== undefined ? await stamped(served, prerenderFileFor(page.path, tag), context) : served;
+                        const served = withVary(file, context, options);
+                        return prefixed ? stamped(served, prerenderFileFor(page.path, tag), context) : served;
                     }
-                    catch (error)
+                    if (prefixed || options.renderer !== undefined)
                     {
-                        if (!(error instanceof NotFoundError) || server === undefined)
-                        {
-                            throw error;
-                        }
-                        // A prefixed url never takes the unsuffixed file: it carries no stamp and
-                        // unprefixed anchors. The live render (or the shell) answers instead.
-                        if (prefixed)
-                        {
-                            return renderOrShell(context, defaultMode, options, await shellPromise, buildIdPromise);
-                        }
-                        return withVary(await fallback(context), context, options);
+                        return renderOrShell(context, defaultMode, options, await shellPromise, buildIdPromise);
                     }
+                    const response = await fallback(context);
+                    if (tag !== undefined)
+                    {
+                        reportFallback(context, tag);
+                    }
+                    return withVary(response, context, options);
                 };
                 for (const mounted of mountPaths(page.path))
                 {
@@ -1195,8 +1228,7 @@ function artifactPathOf(remainder: string): string | null
 function alternatesFor(context: RequestContext, options: KitOptions): Array<{ hreflang: string; href: string }>
 {
     const { path } = splitLocalePath(context.url.pathname, options);
-    return alternatesOf(localePrefixes(options), path, context.url.search)
-        .map((alternate) => ({ ...alternate, href: `${ context.url.origin }${ alternate.href }` }));
+    return alternatesOf(localePrefixes(options), path, context.url.search, options.origin ?? context.url.origin);
 }
 
 /** @internal The app path this request renders, with any language prefix removed. */
@@ -1601,15 +1633,17 @@ function registerStaticFirst(
 ): void
 {
     const dynamicMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
+    const reportFallback = fallbackNoticeFor(path, options);
     // Only the file named exactly so: a case, 8.3 or stream alias of another page's file is not
     // one.
-    const serve = async (context: RequestContext, file: string): Promise<Response> =>
+    const serve = async (context: RequestContext, file: string): Promise<Response | undefined> =>
     {
         if (await aliased(file))
         {
-            throw new NotFoundError();
+            return undefined;
         }
-        return withVary(await assets({ ...context, params: { path: file } }), context, options);
+        const response = await findStatic(assets, { ...context, params: { path: file } });
+        return response === undefined ? undefined : withVary(response, context, options);
     };
     app.get(path, gated(async (context) =>
     {
@@ -1626,31 +1660,22 @@ function registerStaticFirst(
             if (tag !== undefined)
             {
                 const file = prerenderFileFor(artifact, tag);
-                try
+                const served = await serve(context, file);
+                if (served !== undefined)
                 {
-                    const served = await serve(context, file);
-                    return prefix === undefined ? served : await stamped(served, file, context);
-                }
-                catch (error)
-                {
-                    if (!(error instanceof NotFoundError))
-                    {
-                        throw error;
-                    }
+                    return prefix === undefined ? served : stamped(served, file, context);
                 }
             }
-            if (prefix === undefined)
+            if (prefix === undefined && (tag === undefined || options.renderer === undefined))
             {
-                try
+                const response = await serve(context, prerenderFileFor(artifact));
+                if (response !== undefined)
                 {
-                    return await serve(context, prerenderFileFor(artifact));
-                }
-                catch (error)
-                {
-                    if (!(error instanceof NotFoundError))
+                    if (tag !== undefined)
                     {
-                        throw error;
+                        reportFallback(context, tag);
                     }
+                    return response;
                 }
             }
         }

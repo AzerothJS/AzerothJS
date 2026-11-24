@@ -7,7 +7,7 @@
 // The build writes them side by side and the mount serves the reader's own; the unsuffixed file
 // is still written, because it is what a host with no negotiation serves and what replaces vite's
 // index.html at the root.
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, vi } from 'vitest';
 import { h, useLocale } from 'azerothjs';
 import { resetHead } from 'azerothjs/internal';
 import { App } from '@azerothjs/http';
@@ -116,11 +116,19 @@ describe('a static site in more than one language', () =>
         expect(existsSync(join(dir, 'about', 'index.fa.html'))).toBe(false);
 
         const server = new App();
-        mountPages(server, { routes, clientDir: dir, locales: { supported: ['en', 'fa'] } });
-        const response = await server.handle(new Request('http://local/about', { headers: { 'accept-language': 'fa' } }));
-        // Serves rather than 404s: a missing translation of a page is not a missing page.
-        expect(response.status).toBe(200);
-        expect(await response.text()).toContain('id="seen"');
+        const onError = vi.fn();
+        mountPages(server, { routes, clientDir: dir, locales: { supported: ['en', 'fa'] }, onError });
+        const responses = await Promise.all([1, 2].map(() =>
+            server.handle(new Request('http://local/about', { headers: { 'accept-language': 'fa' } }))));
+        for (const response of responses)
+        {
+            expect(response.status).toBe(200);
+            expect(response.headers.get('vary')).toBe('accept-language, cookie');
+            expect(await response.text()).toContain('>en</p>');
+        }
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(onError).toHaveBeenCalledWith(expect.any(Error), { path: '/about', phase: 'render' });
+        expect(String(onError.mock.calls[0]?.[0])).toContain('fa');
     });
 
     it('leaves a single-language build byte-identical', async () =>
@@ -135,6 +143,33 @@ describe('a static site in more than one language', () =>
         }
         // No stray language files, so nothing about the layout changed for a site with one.
         expect(existsSync(join(one, 'about', 'index.en.html'))).toBe(false);
+    });
+
+    it('renders a missing language live at a literal route even when the unsuffixed file has a matching ETag', async () =>
+    {
+        const dir = clientDir();
+        const renderer = createPageRenderer(() => Page(), routes);
+        await prerender({ routes, clientDir: dir, renderer });
+        const staticOnly = new App();
+        mountPages(staticOnly, { routes, clientDir: dir });
+        const plain = await staticOnly.handle(new Request('http://local/about'));
+        const tag = plain.headers.get('etag')!;
+        expect(tag).toBeTruthy();
+        expect(await plain.text()).toContain('>en</p>');
+
+        const app = new App();
+        const onError = vi.fn();
+        mountPages(app, { routes, clientDir: dir, renderer, locales: { supported: ['en', 'fa'] }, onError });
+        const persian = await app.handle(new Request('http://local/about', {
+            headers: { cookie: 'locale=fa', 'accept-language': 'en', 'if-none-match': tag }
+        }));
+        expect(persian.status).toBe(200);
+        expect(persian.headers.get('vary')).toBe('accept-language, cookie');
+        const body = await persian.text();
+        expect(body).toContain('lang="fa"');
+        expect(body).toContain('dir="rtl"');
+        expect(body).toContain('>fa</p>');
+        expect(onError).not.toHaveBeenCalled();
     });
 });
 
@@ -194,7 +229,7 @@ describe('an enumerated static page tells a shared cache what it varies on', () 
         expect(live.response.headers.get('vary')).toBe('accept-language, cookie');
     });
 
-    it('on the unsuffixed fallback too, which is the live path for every missing translation', async () =>
+    it('on a live render when the requested translation is missing', async () =>
     {
         resetHead();
         const dir = clientDir();
@@ -205,8 +240,35 @@ describe('an enumerated static page tells a shared cache what it varies on', () 
 
         const { response, html } = await served(dir, '/post/hello', 'fa');
         expect(response.status).toBe(200);
-        expect(html).toContain(marker);
+        expect(html).not.toContain(marker);
+        expect(html).toContain('lang="fa"');
+        expect(html).toContain('>fa</p>');
         expect(response.headers.get('vary')).toBe('accept-language, cookie');
+    });
+
+    it('bounds rendererless fallback notices by route and language, including conditional requests', async () =>
+    {
+        const dir = clientDir();
+        const enumerated = [{ ...posts[0]!, staticParams: () => Promise.resolve([{ slug: 'one' }, { slug: 'two' }]) }];
+        await prerender({ routes: enumerated, clientDir: dir, renderer: createPageRenderer(() => Page(), enumerated) });
+        const app = new App();
+        const onError = vi.fn();
+        mountPages(app, { routes: enumerated, clientDir: dir, locales: { supported: ['en', 'fa', 'de'] }, onError });
+        const get = (slug: string, locale: string, headers: Record<string, string> = {}) =>
+            app.handle(new Request(`http://local/post/${ slug }`, { headers: { 'accept-language': locale, ...headers } }));
+        const shell = await get('unlisted', 'fa');
+        expect(shell.status).toBe(200);
+        expect(await shell.text()).toContain('lang="fa"');
+        expect(onError).not.toHaveBeenCalled();
+        const one = await get('one', 'fa');
+        expect(await one.text()).toContain('>en</p>');
+        const conditional = await get('one', 'fa', { 'if-none-match': one.headers.get('etag')! });
+        expect(conditional.status).toBe(304);
+        expect(conditional.headers.get('vary')).toBe('accept-language, cookie');
+        expect(await (await get('two', 'fa')).text()).toContain('>en</p>');
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(await (await get('two', 'de')).text()).toContain('>en</p>');
+        expect(onError).toHaveBeenCalledTimes(2);
     });
 });
 

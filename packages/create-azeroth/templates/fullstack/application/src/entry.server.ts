@@ -1,6 +1,6 @@
 // The SSR bundle's entry - the same App the browser runs, built into one self-contained
-// file. The two exports are the contract with the server AND the prerenderer; renaming
-// either breaks both.
+// file. The server and prerenderer read routes and renderPage. For a multilingual site,
+// also export locales (supported tags, default and routing) and optionally a public origin.
 import { createPageRenderer } from '@azerothjs/kit/ssr';
 
 import App from './App.azeroth';

@@ -5,7 +5,7 @@ import { csrfCookie, pipeline, requestId, securityHeaders, rateLimit, logRequest
 import type { ErrorObserver } from '@azerothjs/http';
 import { serve, handleShutdownSignals } from '@azerothjs/http/node';
 import { imageHandler } from '@azerothjs/kit';
-import type { PageRenderer, PageRoute } from '@azerothjs/kit';
+import type { PageServerEntry } from '@azerothjs/kit';
 import { SSR_SOURCE_ENTRY } from '@azerothjs/kit/dev/entry';
 import { createLogger, teeSink, terminalSink } from '@azerothjs/logger';
 import { fileSink } from '@azerothjs/logger/node';
@@ -47,10 +47,9 @@ if (isProduction && !existsSync(config.ssrEntry))
     log.error('no SSR bundle on disk - run `azeroth build` first, or start the dev session with `azeroth dev`', { ssrEntry: config.ssrEntry, env: config.env });
 }
 
-// Production: the self-contained SSR bundle carries routes + renderer. Dev builds nothing -
-// the session below loads the same two exports from source, through vite.
+// The built entry and vite's development entry share routes, renderer and locale configuration.
 const ssr = isProduction
-    ? await import(pathToFileURL(config.ssrEntry).href) as { routes: PageRoute[]; renderPage: PageRenderer }
+    ? await import(pathToFileURL(config.ssrEntry).href) as PageServerEntry
     : undefined;
 
 const dev = !isProduction;
@@ -84,7 +83,14 @@ const app = session?.app ?? buildApp({
     dev,
     observe,
     onError,
-    pages: ssr === undefined ? undefined : { routes: ssr.routes, clientDir: config.clientDir, renderer: ssr.renderPage, manifest: manifestOf(api), images: true, csrf }
+    pages: ssr === undefined ? undefined : {
+        routes: ssr.routes,
+        clientDir: config.clientDir,
+        renderer: ssr.renderPage,
+        ...(ssr.locales !== undefined ? { locales: ssr.locales } : {}),
+        ...(ssr.origin !== undefined ? { origin: ssr.origin } : {}),
+        manifest: manifestOf(api), images: true, csrf
+    }
 });
 
 const handler = pipeline(

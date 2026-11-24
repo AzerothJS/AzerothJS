@@ -16,8 +16,8 @@ import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
 import { prerender } from './prerender.ts';
-import type { PageRoute } from './index.ts';
-import type { PageRenderer } from './ssr.ts';
+import type { PageServerEntry } from './index.ts';
+import { validatePageLocales } from './page-config.ts';
 
 const { values } = parseArgs({
     options: {
@@ -27,20 +27,20 @@ const { values } = parseArgs({
 });
 
 const entryUrl = pathToFileURL(resolve(values.entry)).href;
-const module = await import(entryUrl) as {
-    renderPage?: PageRenderer;
-    routes?: PageRoute[];
-};
+const module = await import(entryUrl) as Partial<PageServerEntry>;
 if (typeof module.renderPage !== 'function' || !Array.isArray(module.routes))
 {
     console.error(`azeroth-kit-prerender: ${ values.entry } must export \`renderPage\` (createPageRenderer) and \`routes\`.`);
     process.exit(1);
 }
 
+validatePageLocales(module.locales, 'azeroth-kit-prerender');
 const written = await prerender({
     routes: module.routes,
     clientDir: resolve(values.client),
-    renderer: module.renderPage
+    renderer: module.renderPage,
+    ...(module.locales !== undefined ? { locales: module.locales } : {}),
+    ...(module.origin !== undefined ? { origin: module.origin } : {})
 });
 console.log(written.length === 0
     ? 'kit prerender: no render: \'static\' pages - shell preserved.'
