@@ -658,9 +658,9 @@ describe('the runtime contract of the branch emit', () =>
 
 describe('component identity inside a branch hole', () =>
 {
-    it('a component set up in a sole branch hole rebuilds like one in a plain hole', () =>
+    it('a setup read preserves the editor while its own text updates in either hole', () =>
     {
-        const expected = { seq: 'out > in > out > in', setups: 4, input: 'connected=false value=typed focused=false' };
+        const expected = { seq: 'out > in > out > in', setups: 1, input: 'connected=true value=typed focused=true' };
         const pick = ({ seq, setups, input }: Run): Partial<Run> => ({ seq, setups, input });
         expect(pick(renderRun('fieldPlain'))).toEqual(expected);
         expect(pick(renderRun('fieldWrap'))).toEqual(expected);

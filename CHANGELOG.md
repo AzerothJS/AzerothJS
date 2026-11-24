@@ -12,6 +12,12 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- A component inside a reactive hole keeps its input, selection and focus when a prop
+  sampled during setup changes. An `ErrorBoundary` also keeps the active child or
+  fallback on such a write. A copied prop now keeps its initial value for that mount.
+  Read the prop in markup for live display, or validate it in an effect to enter
+  recovery on a later change. To reseed an editor, change its row key or remove and
+  reinsert it. A failed boundary's `reset()` retries with the latest values.
 - Text and attributes inside an arrow child now follow changing component props and
   reactive declarations. A row parameter shadows a component declaration with the same
   name in text, attributes and handlers. Changes to the arrow child's own reads update
@@ -310,8 +316,7 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   threw `ReferenceError: <name> is not defined` at mount and in a server render; its `let=` names
   reach it. `<Show when={ user }>{ props.children }</Show>` and a hole whose value holds another
   hole (a list of Shows that hold a hole, `<Card><>{ x }</></Card>`) hydrate in place instead of
-  falling back to a client render. A component built inside a sole branch hole rebuilds when a
-  signal it reads during setup changes, as it already does in a hole outside a branch. The server
+  falling back to a client render. The server
   markup of a branch whose sole hole or `fallback` is anything but a bare name in markup position
   or an arrow gains one `<!--[-->` and `<!--]-->` pair, so re-prerender cached pages: a page
   rendered by 2.1.0 still hydrates, through a client render with a development warning.

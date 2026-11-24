@@ -50,8 +50,21 @@ A compiled component's reactive state lives in a `createRoot` scope tied to the 
 cleanups so nothing leaks when a node is removed - the same teardown contract `render()` and the test
 helpers use.
 
-`ErrorBoundary` runs its child in a scoped error handler; a throw during render (or in an effect)
-swaps in the fallback instead of crashing the tree, and the fallback receives a `reset` to retry.
+A setup read such as `state draft = props.name` takes a snapshot for this instance. An editor in
+a layout's children or inside an `ErrorBoundary` keeps its draft when the name changes. Read
+`props.name` in markup or in a `derived` value consumed by markup to display the current name.
+To start a fresh editor, remove and reinsert its branch, or change the identity in a keyed row:
+
+```azeroth
+<For each={ [revision] } key={ version => version }>
+    <div><Editor name={ name } /></div>
+</For>
+```
+
+`ErrorBoundary` catches a throw during child construction or in a later owned effect or memo.
+Its fallback receives a `reset` callback to retry construction with the current values. To validate
+later prop changes, perform the check in an effect. An ordinary read during child or fallback
+setup does not subscribe the boundary to that prop.
 
 The **co-range** helpers are framework infrastructure, not app-facing API. A control-flow component
 marks its position with a comment-marker range (`createCoMarkers`), appends/clears content within it

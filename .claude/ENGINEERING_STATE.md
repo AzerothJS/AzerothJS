@@ -2,13 +2,13 @@
 
 ## Current framework handoff, 2026-11-24
 
-**Compiler unit 9 complete.** A-213, A-214 and A-287 close tracker entry 40. A host render callback retains its lexical scope and tracks its own bindings. A joined or indexed collection updates with its inputs. A cached document using the older SSR hole layout can recover on its first hydration with the new compiler. The [implementation decision](decisions/compiler-arrow-bindings.md) records compatibility, measurements, review and verification. The implementation commit is available with `git log -1 -- .claude/decisions/compiler-arrow-bindings.md`.
+**Runtime unit 11 complete.** A-259 and A-263 shared an accidental subscription during construction. A mounted editor keeps its setup snapshot and draft while its live markup updates. A failed error boundary retries against current inputs, and a fallback that throws releases the work it started. The [implementation decision](decisions/component-construction.md) records the compatibility change and evidence. Find the implementation commit with `git log -1 -- .claude/decisions/component-construction.md`.
 
-**Verification.** The baseline failed 94 of the 132 new tests and passed 38 controls. The final source passed all 132 and all 7,525 tests in the passing repository run, with two skipped. All 15 packages passed the clean consumer smoke test. A packed application passed hydrated SSR, client-only render and old-HTML recovery in Chromium, Firefox and WebKit. Registered Playwright QA separately confirmed both render modes. A-171, A-181 and A-215 retain their separate scope.
+**Verification.** Of the 27 new tests, 16 failed on `04fc843` and 11 passed as controls. Selectively restoring each of the three defects broke seven, five and four cases. The final repository run passed 7,552 tests in 443 files, with two skipped. All 15 packages passed the clean consumer smoke test. The packed fullstack application retained identity, focus, draft and caret in Chromium, Firefox and WebKit across SSR hydration and client-only render. Registered Playwright QA independently confirmed both modes.
 
-**Next action.** Start unit 11, A-259 and A-263. Reproduce a setup read inside an error boundary and a component scope, including a retained input and a genuine error/reset control. Decide how construction and refresh should subscribe before changing either owner. The roadmap puts this unit before A-288 and unit 10.
+**Next action.** Begin A-288. Reproduce the two-resource streamed seed swap on this runtime, then revise the [stream seed design](STREAM-SEEDS.md) with the current request, cancellation and hydration behavior before implementation. Unit 10, including the separate Show and Switch issue A-121, follows A-288.
 
-**Previous work.** `b945b60` completed [rendered route ownership](decisions/rendered-route-ownership.md), following the reachability audit in `f36e53b`. Unit 8 (`758a3a4`) completed [guarded route hydration](decisions/router-boot.md). The original roadmap and tracker remain local to this checkout.
+**Previous work.** Compiler unit 9 (`04fc843`) fixed [lexical bindings in render callbacks](decisions/compiler-arrow-bindings.md). `b945b60` completed [rendered route ownership](decisions/rendered-route-ownership.md) after unit 8 (`758a3a4`). The original roadmap and tracker remain local to this checkout.
 
 ## Bootstrap history
 

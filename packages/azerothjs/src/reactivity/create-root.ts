@@ -18,6 +18,7 @@
 import type { DisposeFn } from './types.ts';
 import { assertFunction } from './validate.ts';
 import { currentCleanups, setCurrentCleanups } from './graph.ts';
+import { withTrackingFrame } from './untrack.ts';
 import { currentErrorHandler, setCurrentErrorHandler } from './catch-error.ts';
 import { dtRegister, dtDispose, dtEnterOwner, dtExitOwner, dtEnabled } from './devtools.ts';
 
@@ -143,8 +144,8 @@ export function drainOwner(owner: Owner): void
  * it. Nobody has to hold a disposer, because a component invocation has no call site that
  * could.
  *
- * Descendants are unaffected - they run while this owner is active, so their context reads
- * walk up through it and resolve exactly as before.
+ * Setup reads take a snapshot. A hole or memo constructing this instance tracks its own
+ * selector, and bindings and computations created by the component track their own reads.
  *
  * @internal Emitted by the compiler; part of the runtime contract.
  */
@@ -174,7 +175,7 @@ export function componentScope<T>(fn: () => T): T
     setCurrentCleanups(null);
     try
     {
-        return fn();
+        return withTrackingFrame(null, fn);
     }
     finally
     {

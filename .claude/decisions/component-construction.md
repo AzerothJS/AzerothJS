@@ -1,0 +1,33 @@
+# Component construction and error recovery
+
+Unit 11 covers A-259 and A-263. At `04fc843`, a parent writing a name could replace a focused editor and erase its draft. The compiler emits `componentScope(body)`. That function changes the owner and cleanup list while a caller's effect or memo is still collecting dependencies. Separately, the DOM implementation of `ErrorBoundary` reads its error signal and invokes the active factory in the same effect. Even a hand-written child or fallback can subscribe that effect by sampling an unrelated value.
+
+## Decision
+
+Read a component's setup once per mounted instance. Its markup, effects and memos collect their own dependencies. Run the body of `componentScope` in the existing empty tracking frame and restore the caller's frame on return or throw. Preserve the attached owner, context, error handler and disposal order. A parent hole still tracks its own expression. A root opened by a reactive computation still participates in that computation's tracking.
+
+Make the captured error the sole input of the boundary swap. Construct and resolve the selected branch, including returned thunks, with tracking suspended. Children run under the existing scoped error handler. A fallback failure propagates to an enclosing handler. A synchronous construction error or a later owned computation error enters recovery. Resetting a failed boundary constructs fresh children. A healthy reset has no effect. DOM removal and owner disposal continue to run on real swaps.
+
+String rendering keeps its synchronous try/catch. Hydration keeps its one local boundary rebuild and normal adoption elsewhere. There is no compiler output, wire format, package dependency or public API change. Existing v5 compiled modules call the same runtime function. The tracking frame is synchronous and restored before asynchronous work. This change adds no scheduling, network access or seed protocol. Stream seed identity and delayed delivery remain A-288.
+
+## Compatibility
+
+A copied prop or state initializer is a snapshot. Updating the prop alone no longer refreshes that snapshot or reaches a setup-only throw. Read the prop in markup or in a derived value consumed by markup for live display. To validate each change under a boundary, read it in an owned effect or memo. For a fresh instance, remove and reinsert the child with an actual branch change, or render one keyed row with `each={ [revision] }` and `key={ version => version }`. A new key disposes the old row and constructs another. This is also the migration for setup copies in A-121. Its separate Show and Switch selection defect stays open.
+
+Changing every `createRoot` would suppress legitimate parent and renderer reads. A compiler-only fix would miss manual boundaries and require consumers to rebuild. Changing every reactive hole would suppress its actual selector. Existing scope and tracking mechanisms handle the two ownership boundaries without any of those changes. Router scopes retain context and independent route selectors. HMR keeps its existing explicit root replacement.
+
+## Independent design review
+
+Independent refutation found a second failure at the same owner. A fallback can create an observer, then throw before the swap effect returns its disposer. The observer survived both replacement by an outer boundary and final unmount. Give each run a branch-local teardown. On a construction or placement exception escaping the branch, immediately dispose and clear its range before propagating the failure, including when a global handler consumes it. If rollback also throws, report both errors. On a successful build return the same teardown to the swap effect, whose cleanup already runs before a retry and at disposal.
+
+The SSR serializer already evaluates live markup thunks untracked. An eager compiled setup read inside a memo that calls `renderToString` now also takes a snapshot. That memo can explicitly read its inputs before calling the renderer to produce fresh HTML. Raw server boundary factories retain the serializer's existing synchronous behavior.
+
+## Verification on 2026-11-24
+
+- On `04fc843`, the four existing runtime and compiler suites passed all 164 tests. The revised A12 assertion exposed four editor setups across three writes. The corrected runtime performs one setup and preserves the focused input through the same four text states.
+- Of the 27 new regression cases, 16 failed on the original runtime and 11 passed as controls. Restoring caller tracking only for component bodies broke seven cases. Restoring it only in the boundary broke five. Removing rollback broke four. The corrected tree passed all 27. [Runtime cases](../../packages/azerothjs/tests/component/boundary-construction.spec.ts) and [compiler and resource cases](../../packages/compiler/tests/component-construction.spec.ts).
+- A first pending resource in a children hole previously started a second request and stayed on its fallback after the first result. The fixed component displays the first result after one request. With a delivered stream seed, hydration adopts the input and result with one server fetch and zero client fetches. Matching multiple out-of-order seeds remains the next unit.
+- The independent reviewer ran 315 boundary, branch, router, context and compiler tests. A public-API probe retried a partial fallback from inside the global error handler. The fresh observer stopped at unmount and both branches cleaned up once.
+- A production fullstack scaffold installed six local package tarballs. Before the fix, writes replaced the layout, protected and recovery inputs in both hydrated SSR and client-only render in Chromium 151, Firefox 153 and WebKit 26.5. On the corrected runtime all three inputs retained their identity, draft, focus and selection at offsets 2–6. Live labels updated. Retry and an explicit removal and reinsertion constructed fresh inputs. All 12 HTTP responses succeeded across the six final workflows, with zero console, page or request errors.
+- The registered Playwright agent separately verified both modes in Chromium 157 on the final runtime tarball (`46a3dc70280b26611ef7affe4590a05fcea4d9a6a74ed7a3d5ec8abec97f60d5`). All 242 installed runtime distribution files matched the archive. Four HTTP requests succeeded and the console was clear. The QA browser closed and all fixture listeners were released.
+- On Windows with Node 24.22.3 and npm 11.18.0, `npm run verify` passed build, lint, type checking, publish metadata and all 443 test files. Vitest reported 7,552 passed and two skipped. `npm run smoke` installed all 15 packages into a clean consumer and verified 134 runtime exports, 43 compiler exports, six executables and 631 shipped files.

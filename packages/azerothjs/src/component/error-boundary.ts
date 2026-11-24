@@ -22,10 +22,9 @@
  * so a thrown null/undefined is distinguishable from "no error", at zero runtime cost.
  */
 
-import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
 import type { MountNode } from './types.ts';
-import { createSignal, createEffect, createRoot, catchError, isStringMode, isHydrating, runInMode } from '../reactivity/index.ts';
+import { createSignal, createEffect, createRoot, catchError, isStringMode, isHydrating, runInMode, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { createCoMarkers, appendToCo, clearCo, resolveMountNode } from './co-range.ts';
 
@@ -147,8 +146,6 @@ export function ErrorBoundary(props: ErrorBoundaryProps): MountNode
 
     const [error, setError] = createSignal<ErrorState | null>(null);
 
-    let branchDispose: DisposeFn | null = null;
-
     /**
      * Clears the captured error and re-mounts `children()`.
      *
@@ -163,71 +160,50 @@ export function ErrorBoundary(props: ErrorBoundaryProps): MountNode
 
     createEffect(() =>
     {
-        // Tear the previous branch down before drawing the next.
-        teardownBranch();
-
         const captured = error();
-
-        if (captured === null)
+        // Only the captured error selects a branch. Its setup, including any returned
+        // thunks, can sample signals without subscribing this swap effect.
+        return untrack(() => createRoot((dispose) =>
         {
-            // Render children. Errors route to setError, which re-runs this
-            // effect - this time taking the fallback branch.
-            createRoot((dispose) =>
+            function teardownBranch(): void
             {
-                branchDispose = dispose;
-                catchError(
-                    () =>
-                    {
-                        appendToCo(target, resolveMountNode(props.children()));
-                    },
-                    (err) =>
-                    {
-                        // The set is allowed to be re-entrant
-                        // here: it triggers our own subscriber
-                        // synchronously, which tears the half-
-                        // constructed children down (nothing was
-                        // appended to the container if the throw
-                        // happened during construction) and
-                        // mounts the fallback. The repeated
-                        // teardownBranch on the next re-run is a
-                        // benign no-op. The loop CONVERGES (error
-                        // null -> caught -> fallback branch, which
-                        // does not re-throw into this handler), so
-                        // the syntactic self-write rule's warning
-                        // does not apply.
-                        // eslint-disable-next-line azeroth/no-self-write-in-effect -- convergent by design; see above
-                        setError({ value: err });
-                    }
-                );
-            });
-        }
-        else
-        {
-            // Render fallback. NOT wrapped in catchError - see the file
-            // header for the rationale (avoid loops).
-            createRoot((dispose) =>
-            {
-                branchDispose = dispose;
-                appendToCo(target, resolveMountNode(props.fallback(captured.value, reset)));
-            });
-        }
+                try
+                {
+                    dispose();
+                }
+                finally
+                {
+                    clearCo(target);
+                }
+            }
 
-        return teardownBranch;
+            try
+            {
+                if (captured === null)
+                {
+                    catchError(() => appendToCo(target, resolveMountNode(props.children())), err => setError({ value: err }));
+                }
+                else
+                {
+                    appendToCo(target, resolveMountNode(props.fallback(captured.value, reset)));
+                }
+            }
+            catch (error)
+            {
+                // A failed fallback never returns a disposer to the swap effect.
+                try
+                {
+                    teardownBranch();
+                }
+                catch (cleanupError)
+                {
+                    throw new AggregateError([error, cleanupError], 'ErrorBoundary construction and cleanup both failed', { cause: cleanupError });
+                }
+                throw error;
+            }
+            return teardownBranch;
+        }));
     });
-
-    function teardownBranch(): void
-    {
-        if (branchDispose)
-        {
-            branchDispose();
-            branchDispose = null;
-        }
-
-        // Remove the branch's nodes one by one (so Portal's MutationObserver
-        // can detect their removal) and run destroy hooks on each. clearCo
-        // never touches the markers themselves.
-        clearCo(target);
-    }
 
     return fragment;
 }
