@@ -902,13 +902,13 @@ describe('a route outlet whose server markers cannot be joined', () =>
     // The last claimed node the join gets sits outside both sections, has no parent or is missing.
     const SPLIT = 'the server markers sit in different table sections';
     const NONE = 'the slot claimed no server node in the page';
-    const strays: Array<[string, () => ChildNode | null, string]> = [
-        ['sits outside both table sections', () => document.createElement('div').appendChild(document.createComment('/azc')), SPLIT],
-        ['has no parent', () => document.createComment('/azc'), NONE],
-        ['is missing', () => null, NONE]
+    const strays: Array<[string, () => ChildNode | null, string, string]> = [
+        ['sits outside both table sections', () => document.createElement('div').appendChild(document.createComment('/azc')), SPLIT, 'parent <div>, stopped at comment'],
+        ['has no parent', () => document.createComment('/azc'), NONE, 'parent <table>, stopped at comment'],
+        ['is missing', () => null, NONE, 'parent <table>, stopped at end of children']
     ];
 
-    for (const [where, stray, reason] of strays)
+    for (const [where, stray, reason, location] of strays)
     {
         it(`falls back without leaving the adopted page running when the last claimed node ${ where }`, async () =>
         {
@@ -958,7 +958,7 @@ describe('a route outlet whose server markers cannot be joined', () =>
                 perChange.push(runs - before);
             }
             expect({ fallbacks, perChange, text: container.textContent }).toEqual({
-                fallbacks: [`[azeroth hydrate] slot hole: ${ reason } - falling back to full client render.`],
+                fallbacks: [`[azeroth hydrate] slot hole: ${ reason } (${ location }) - falling back to full client render.`],
                 perChange: [1, 1, 0, 0],
                 text: 'q'
             });

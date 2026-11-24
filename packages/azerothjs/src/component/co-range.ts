@@ -77,8 +77,7 @@ export function adoptCoRange(cursor: HydrationCursor, expected?: string): { targ
     if (expected !== undefined && start.data !== `azc:${ expected }`)
     {
         throw new HydrationMismatchError(
-            `expected an 'azc:${ expected }' range, found '${ start.data }' - `
-            + 'the server markup predates this runtime (version skew); falling back to a client render');
+            `expected an 'azc:${ expected }' range (possible server/runtime version skew)`, cursor.parent, start);
     }
     const { content, end } = cursor.takeCoBalanced();
 

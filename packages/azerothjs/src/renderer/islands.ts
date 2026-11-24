@@ -136,7 +136,7 @@ function hydrateIslandRoot(component: () => HTMLElement, anchor: HTMLElement): v
                 const root = component() as unknown;
                 if (!isHydrationNode(root))
                 {
-                    throw new HydrationMismatchError('island component did not produce a hydratable node');
+                    throw new HydrationMismatchError('island component did not produce a hydratable node', parent, anchor);
                 }
 
                 // A cursor over exactly the anchor: the descriptor claims the island's
@@ -158,10 +158,7 @@ function hydrateIslandRoot(component: () => HTMLElement, anchor: HTMLElement): v
             throw error;
         }
 
-        if (DEV)
-        {
-            console.warn(`${ error.message } - island replaced with a fresh client render.`);
-        }
+        console.warn(`${ error.message } - island replaced with a fresh client render.`);
 
         const partialDispose = containerDisposers.get(anchor);
         if (partialDispose)

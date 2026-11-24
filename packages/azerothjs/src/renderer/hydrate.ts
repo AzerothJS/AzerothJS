@@ -28,9 +28,9 @@ import { hydrateChild } from './h.ts';
  * Adopts the server-rendered DOM in `container`, attaching listeners and effects to the
  * existing nodes rather than clearing and rebuilding them.
  *
- * The client tree must match the server's structurally. A mismatch is not fatal - it warns
- * in development, disposes the partial mount and falls back to a clean {@link render} - but
- * it silently costs the no-flash benefit, so keep SSR and client rendering the same tree for
+ * The client tree must match the server's structurally. A mismatch warns in every build,
+ * disposes the partial mount and falls back to a clean {@link render}. Replacing the DOM
+ * costs the page's focus and unsaved input, so keep SSR and client rendering the same tree for
  * the same inputs. That fallback also covers a root component that produces no hydratable
  * node, and it fires for a deferred mismatch, such as a route still waiting on a lazy chunk,
  * exactly as it does for a synchronous one.
@@ -68,10 +68,7 @@ export function hydrate(component: () => MountNode, container: HTMLElement): voi
             throw error;
         }
 
-        if (DEV)
-        {
-            console.warn(`${ error.message } - falling back to full client render.`);
-        }
+        console.warn(`${ error.message } - falling back to full client render.`);
 
         const partialDispose = containerDisposers.get(container);
         if (partialDispose)

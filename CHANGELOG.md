@@ -228,6 +228,13 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- Hydrating a form now preserves drafts typed before startup when a label includes
+  adjacent static text, a constant expression, an empty string or an array of strings.
+  The browser adopts the existing text nodes. Server output stays byte-compatible.
+- A structural mismatch now warns in production as well as development. The warning
+  names the parent and the node where adoption stopped, and distinguishes a full
+  client render from replacement of a single island.
+
 - Refreshing a record in a compiled `Show`, a winning `Match`, or a selected fallback
   now preserves the mounted editor, focus, caret and draft. A genuine branch change
   replaces it. Code that relied on accidental remounts to refresh a setup snapshot or

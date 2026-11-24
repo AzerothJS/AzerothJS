@@ -1303,7 +1303,8 @@ function driveHoleRange(parent: Node, openAnchor: ChildNode | null, closeAnchor:
                     // repair. (The legitimate hydrated slot-hole arrives pre-seeded via
                     // adoptedSlot, which clears firstRun before this effect exists.)
                     throw new HydrationMismatchError(
-                        'reactive hole: the client resolved a route slot where the server serialized an ordinary hole (condition flipped across the render boundary)');
+                        'reactive hole: the client resolved a route slot where the server serialized an ordinary hole (condition flipped across the render boundary)',
+                        host, openAnchor);
                 }
                 if (placedSlot !== null && placedSlot.handle === value)
                 {
@@ -1517,7 +1518,7 @@ function createHydrationNode(tag: string, props: Props, children: Child[]): Hydr
             {
                 if (served.nodeType !== 3 && served.nodeType !== 8)
                 {
-                    throw new HydrationMismatchError(`<${ tag }> holds text only, found <${ served.nodeName.toLowerCase() }>`);
+                    throw new HydrationMismatchError(`<${ tag }> holds text only`, el, served);
                 }
             }
             driveText(el, children);
@@ -1559,7 +1560,7 @@ function createHydrationNode(tag: string, props: Props, children: Child[]): Hydr
  *   - array -> adopt each item in order
  *   - {@link HydrationNode} -> delegate to its `hydrate`
  *   - function (reactive hole) -> {@link adoptReactiveHole}
- *   - string / number -> consume the existing text node
+ *   - string / number -> adopt the parsed static text run
  *
  * @param child - The child to adopt
  * @param cursor - The cursor over the parent's children
@@ -1625,7 +1626,13 @@ export function hydrateChild(child: Child, cursor: HydrationCursorType): void
         return;
     }
 
-    // Static text: the server already rendered it; just consume the node.
+    if (typeof child !== 'object')
+    {
+        cursor.takeStaticText(child);
+        return;
+    }
+
+    // Opaque values keep their own claim; adjacent text cannot stand in for a missing node.
     cursor.takeText();
 }
 
@@ -1642,12 +1649,12 @@ function peeksSlotRange(cursor: HydrationCursorType): boolean
  *
  * @internal
  */
-function markerHost(marker: ChildNode | null): ParentNode
+function markerHost(marker: ChildNode | null, cursor: HydrationCursorType): ParentNode
 {
     const host = marker?.parentNode;
     if (host === null || host === undefined)
     {
-        throw new HydrationMismatchError('reactive hole: the server marker has no parent');
+        throw new HydrationMismatchError('reactive hole: the server marker has no parent', cursor.parent, marker);
     }
     return host;
 }
@@ -1809,13 +1816,13 @@ function adoptSlotHole(child: () => unknown, cursor: HydrationCursorType): void
     if (!isSlotHandle(resolved))
     {
         // The peek said slot, the resolution disagrees: SSR/CSR diverged.
-        throw new HydrationMismatchError('slot hole: the serialized value was a route slot, the client value is not');
+        throw new HydrationMismatchError('slot hole: the serialized value was a route slot, the client value is not', cursor.parent, cursor.peek());
     }
     // The server emits no [ ] anchors around a slot-hole, so the hole brings its own bounds. The
     // cursor walks a snapshot of its nodes, so the inserts do not disturb the rest of the walk.
     const at = cursor.peek();
     const open = document.createTextNode('');
-    markerHost(at).insertBefore(open, at);
+    markerHost(at, cursor).insertBefore(open, at);
     // The adoption runs in its OWN root so the hole can dispose the placement on a
     // later handle -> non-handle transition (the slot's machinery registers its
     // teardown on the current owner).
@@ -1840,7 +1847,7 @@ function adoptSlotHole(child: () => unknown, cursor: HydrationCursorType): void
             // Tearing down a split range can throw, and the mismatch is the error to report.
         }
         const reason = split ? 'the server markers sit in different table sections' : 'the slot claimed no server node in the page';
-        throw new HydrationMismatchError(`slot hole: ${ reason }`);
+        throw new HydrationMismatchError(`slot hole: ${ reason }`, cursor.parent, last);
     }
     // Right after the slot's end marker: at the end of a nested range the cursor has no next node.
     const close = document.createTextNode('');
@@ -1861,10 +1868,10 @@ function adoptReactiveHole(child: () => unknown, cursor: HydrationCursorType): v
 {
     const openAnchor = cursor.takeOpenAnchor();
     const { content, closeAnchor } = cursor.takeUntilCloseAnchor();
-    const host = markerHost(closeAnchor);
+    const host = markerHost(closeAnchor, cursor);
     if (!joinTableRange(openAnchor, host))
     {
-        throw new HydrationMismatchError('reactive hole: the server markers sit in different table sections');
+        throw new HydrationMismatchError('reactive hole: the server markers sit in different table sections', cursor.parent, openAnchor);
     }
     driveHoleRange(cursor.parent, openAnchor, closeAnchor, content, child, true);
 }

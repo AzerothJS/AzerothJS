@@ -97,9 +97,16 @@ use `innerHTML` in a hydrated tree.
 
 ### Hydration mismatch
 
-If the server and client trees diverge structurally, `hydrate()` throws a
-`HydrationMismatchError`, warns in development, and falls back to a clean client
-render, so the app always boots.
+When the browser parses server HTML, adjacent static strings can become one text
+node, and empty strings can leave no node. Hydration adopts those shapes in place,
+preserving a draft typed before startup.
+
+If the trees differ structurally, `hydrate()` reports the mismatched parent and
+the node where adoption stopped, then renders the container again on the client.
+For example, a missing closing marker can report `unterminated reactive-hole
+anchor (parent <section>, stopped at end of children)`. The warning appears in
+the console in development and production, including for a deferred route.
+`hydrateIslands()` reports an island replacement and rebuilds only that island.
 
 ## Components
 

@@ -82,9 +82,12 @@ export function hydrationNode(hydrate: (cursor: HydrationCursor) => void): Hydra
  */
 export class HydrationMismatchError extends Error
 {
-    constructor(message: string)
+    constructor(message: string, parent?: Node | null, stoppedAt: Node | null = null)
     {
-        super(`[azeroth hydrate] ${ message }`);
+        // A table cursor can span nodes inside the tbody that the parser inserted.
+        const host = (stoppedAt && nodeProperty(stoppedAt, 'parentNode')) ?? parent;
+        const location = host ? ` (parent ${ describe(host) }, stopped at ${ describe(stoppedAt) })` : '';
+        super(`[azeroth hydrate] ${ message }${ location }`);
         this.name = 'HydrationMismatchError';
     }
 }
@@ -136,6 +139,7 @@ export class HydrationCursor
     readonly #nodes: ChildNode[];
 
     #index: number = 0;
+    #staticTextEnd = -1;
 
     /**
      * @param parent - The node whose children are adopted, and the target for live DOM
@@ -166,7 +170,7 @@ export class HydrationCursor
     public peekElement(): HTMLElement | null
     {
         const node = this.peek();
-        return node !== null && node.nodeType === 1 ? node as HTMLElement : null;
+        return node !== null && nodeProperty(node, 'nodeType') === 1 ? node as HTMLElement : null;
     }
 
     /**
@@ -185,7 +189,7 @@ export class HydrationCursor
         if (expectedTag !== undefined && expectedTag.toLowerCase() !== 'tbody')
         {
             const at = this.#nodes[this.#index];
-            if (at && at.nodeType === 1 && (at as HTMLElement).tagName === 'TBODY')
+            if (at && nodeProperty(at, 'nodeType') === 1 && elementTagName(at as Element) === 'TBODY')
             {
                 impliedBodies.add(at);
                 this.#nodes.splice(this.#index, 1, ...Array.from(at.childNodes));
@@ -194,16 +198,16 @@ export class HydrationCursor
 
         const node = this.#nodes[this.#index];
 
-        if (!node || node.nodeType !== 1)
+        if (!node || nodeProperty(node, 'nodeType') !== 1)
         {
-            throw new HydrationMismatchError(`expected <${ expectedTag ?? 'element' }>, found ${ describe(node) }`);
+            throw new HydrationMismatchError(`expected <${ expectedTag ?? 'element' }>`, this.parent, node);
         }
 
         const el = node as HTMLElement;
 
-        if (expectedTag !== undefined && el.tagName.toLowerCase() !== expectedTag.toLowerCase())
+        if (expectedTag !== undefined && elementTagName(el).toLowerCase() !== expectedTag.toLowerCase())
         {
-            throw new HydrationMismatchError(`expected <${ expectedTag }>, found <${ el.tagName.toLowerCase() }>`);
+            throw new HydrationMismatchError(`expected <${ expectedTag }>`, this.parent, el);
         }
 
         this.#index++;
@@ -221,11 +225,27 @@ export class HydrationCursor
 
         if (!node || node.nodeType !== 3)
         {
-            throw new HydrationMismatchError(`expected text node, found ${ describe(node) }`);
+            throw new HydrationMismatchError('expected text node', this.parent, node);
         }
 
         this.#index++;
         return node as Text;
+    }
+
+    /**
+     * Adopts escaped static children as the HTML parser served them. Adjacent values can
+     * share one Text node, and an empty string can produce none. Prefer an available
+     * Text node so a DOM with explicitly split text retains the same nodes.
+     */
+    public takeStaticText(value: string | number): void
+    {
+        if (this.peek()?.nodeType !== 3 && (value === '' || this.#index === this.#staticTextEnd))
+        {
+            return;
+        }
+
+        this.takeText();
+        this.#staticTextEnd = this.#index;
     }
 
     /**
@@ -240,7 +260,7 @@ export class HydrationCursor
 
         if (!node || node.nodeType !== 8 || (node as Comment).data !== '[')
         {
-            throw new HydrationMismatchError(`expected reactive-hole open anchor, found ${ describe(node) }`);
+            throw new HydrationMismatchError('expected reactive-hole open anchor', this.parent, node);
         }
 
         this.#index++;
@@ -290,7 +310,7 @@ export class HydrationCursor
             this.#index++;
         }
 
-        throw new HydrationMismatchError('unterminated reactive-hole anchor');
+        throw new HydrationMismatchError('unterminated reactive-hole anchor', this.parent);
     }
 
     /**
@@ -306,7 +326,7 @@ export class HydrationCursor
 
         if (!node || node.nodeType !== 8 || !(node as Comment).data.startsWith('azc:'))
         {
-            throw new HydrationMismatchError(`expected control-flow open anchor, found ${ describe(node) }`);
+            throw new HydrationMismatchError('expected control-flow open anchor', this.parent, node);
         }
 
         this.#index++;
@@ -361,7 +381,7 @@ export class HydrationCursor
             this.#index++;
         }
 
-        throw new HydrationMismatchError('unterminated control-flow anchor');
+        throw new HydrationMismatchError('unterminated control-flow anchor', this.parent);
     }
 
     /**
@@ -377,33 +397,65 @@ export class HydrationCursor
         if (this.#index < this.#nodes.length)
         {
             const extra = this.#nodes.length - this.#index;
-            throw new HydrationMismatchError(`${ context }: server rendered ${ extra } unexpected extra node(s), starting with ${ describe(this.#nodes[this.#index]) }`);
+            throw new HydrationMismatchError(`${ context }: server rendered ${ extra } unexpected extra node(s)`, this.parent, this.peek());
         }
     }
 }
 
+// A standalone cursor can receive a DOM from a caller in a process with no global
+// Node or Element. Read the base DOM property below any custom-element override.
+function standaloneProperty<T extends Node, K extends keyof T>(node: T, key: K): T[K]
+{
+    let declaringPrototype = node;
+    for (let proto = Object.getPrototypeOf(node) as T | null; proto; proto = Object.getPrototypeOf(proto) as T | null)
+    {
+        if (Object.hasOwn(proto, key))
+        {
+            declaringPrototype = proto;
+        }
+    }
+    return Reflect.get(declaringPrototype, key, node);
+}
+
+// Named form controls can hide DOM properties. Custom elements can also override them.
+function nodeProperty<K extends 'parentNode' | 'nodeType'>(node: Node, key: K): Node[K]
+{
+    return typeof Node === 'undefined' ? standaloneProperty(node, key) : Reflect.get(Node.prototype, key, node);
+}
+
+function elementTagName(el: Element): string
+{
+    return typeof Element === 'undefined' ? standaloneProperty(el, 'tagName') : Reflect.get(Element.prototype, 'tagName', el);
+}
+
 /** A short label for a node in mismatch messages: `<div>`, `text node`, `comment "["`. */
-function describe(node: ChildNode | null | undefined): string
+function describe(node: Node | null): string
 {
     if (!node)
     {
         return 'end of children';
     }
 
-    if (node.nodeType === 1)
+    const type = nodeProperty(node, 'nodeType');
+    if (type === 1)
     {
-        return `<${ (node as HTMLElement).tagName.toLowerCase() }>`;
+        return `<${ elementTagName(node as Element).toLowerCase() }>`;
     }
 
-    if (node.nodeType === 3)
+    if (type === 3)
     {
         return 'text node';
     }
 
-    if (node.nodeType === 8)
+    if (type === 8)
     {
-        return `comment "${ (node as Comment).data }"`;
+        const marker = (node as Comment).data;
+        if (marker === '[' || marker === ']')
+        {
+            return `comment "${ marker }"`;
+        }
+        return 'comment';
     }
 
-    return `node type ${ node.nodeType }`;
+    return `node type ${ type }`;
 }

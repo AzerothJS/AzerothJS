@@ -317,7 +317,7 @@ describe('hydration adopts what the parser served', () =>
         const container = served('<div><svg><title><tspan>x</tspan></title></svg></div>');
 
         hydrate(view, container);
-        expect(String(warn.mock.calls[0]?.[0])).toMatch(/<title> holds text only, found <tspan>/);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('<title> holds text only (parent <title>, stopped at <tspan>)'));
     });
 
     it('adopts a textarea whose value was served as its text', () =>
