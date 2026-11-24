@@ -168,6 +168,10 @@ hydrate(() => App(), root);                // client over server HTML: adopt, do
 Conditional, list, async, relocated, and error rendering are components, used inside `.azeroth`
 markup: `Show`, `For`, `Switch`/`Match`, `Dynamic`, `Suspense`, `Portal`, and `ErrorBoundary`.
 
+For a markup-valued condition, `<Show when={ props.badge } let={ badge }>{ badge }</Show>`
+constructs and displays the same badge. See [slots and children](./docs/component.md#slots-and-children)
+for named props, children builders and deliberate reuse.
+
 ```azeroth
 <Show when={ user() } let={ user } fallback={ <a href="/login">Sign in</a> }>
     <p>Welcome, { user.name }</p>

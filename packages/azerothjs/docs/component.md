@@ -72,6 +72,35 @@ marks its position with a comment-marker range (`createCoMarkers`), appends/clea
 in this package - rather than the renderer - because they need `destroyComponent`, and the renderer
 depends on `component`, not the reverse.
 
+## Slots and children
+
+A component can receive markup in a named prop, for example
+`<Frame badge={ <Badge/> }/>`. Each read of `props.badge` constructs the markup.
+Testing `props.badge !== undefined` and then displaying `{ props.badge }` constructs two
+badges. Both can run effects and start requests even though only one appears on screen.
+
+Use the value supplied by `Show` to test and display a slot in one evaluation:
+
+```azeroth
+component Frame(props: { badge?: Child })
+{
+    <section>
+        <Show when={ props.badge } let={ badge }>{ badge }</Show>
+    </section>
+}
+```
+
+Import the `Child` type from `azerothjs`. For nested markup such as
+`<Frame><Badge/></Frame>`, the compiler supplies a children builder. Each placement
+of `{ props.children }` builds it again. Testing `props.children !== undefined`
+checks whether the builder exists without calling it. Passing `props.children` itself
+as a `when` condition invokes the builder to determine truthiness. Use `let=` to
+display that result.
+
+For repeated reads of the same named slot, `derived badge = props.badge;` caches its
+value between dependency changes. The derived value is evaluated at construction, so
+its component can be alive while the branch that would display it is hidden.
+
 ## Components
 
 | File | Role |

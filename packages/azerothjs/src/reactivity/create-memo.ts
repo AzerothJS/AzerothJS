@@ -37,6 +37,7 @@ import {
     setCurrentCleanups
 } from './graph.ts';
 import { attachSubscriberProbe } from './create-signal.ts';
+import { routeAsyncError } from './create-effect.ts';
 import { currentOwner, registerDisposer, setCurrentOwner, drainOwner } from './create-root.ts';
 import type { Owner } from './create-root.ts';
 import { currentErrorHandler, setCurrentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
@@ -93,6 +94,17 @@ const DIRTY = 2;
  * @see {@link createEffect} for side effects.
  */
 export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Getter<T>
+{
+    return buildMemo(compute, options, false);
+}
+
+/** @internal An eager setup read must reach its caller if construction fails. Later reads use the usual handlers. */
+export function createSetupMemo<T>(compute: () => T): Getter<T>
+{
+    return buildMemo(compute, undefined, true);
+}
+
+function buildMemo<T>(compute: () => T, options: SignalOptions<T> | undefined, throwOnFirstError: boolean): Getter<T>
 {
     assertFunction(compute, 'createMemo', 'Pass the derivation as a function: createMemo(() => a() + b()).');
 
@@ -236,6 +248,11 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
         catch (err)
         {
             failed = true;
+            if (throwOnFirstError && !hasValue)
+            {
+                // The eager pull below disposes this unfinished computation before rethrowing.
+                throw err;
+            }
             if (node.errorHandler)
             {
                 node.errorHandler(err);
@@ -297,7 +314,29 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
     }
     catch (err)
     {
-        dispose();
+        if (!throwOnFirstError)
+        {
+            dispose();
+            throw err;
+        }
+        // Setup never returned its getter. Give the whole failed run to its owner:
+        // drainOwner isolates throwing callbacks and drains the remaining work.
+        // Reverse the cleanup list for the owner's stack to retain registration order.
+        for (let i = cleanups.length - 1; i >= 0; i--)
+        {
+            owner.disposers.push(cleanups[i] as CleanupFn);
+        }
+        cleanups = [];
+        try
+        {
+            dispose();
+        }
+        catch (cleanupError)
+        {
+            // Construction failed first. Deliver that error to the caller and the
+            // independent cleanup failure to the handler that owned this computation.
+            queueMicrotask(() => routeAsyncError(cleanupError, node.errorHandler, options?.name, 'memo'));
+        }
         throw err;
     }
 
@@ -326,16 +365,15 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
             }
             owner.disposed = true;
             drainOwner(owner);
-            owner.context = null;
         }
         finally
         {
+            owner.context = null;
             setTrackingFrame(teardownFrame);
             setCurrentCleanups(teardownCleanups);
+            unlinkAll(node);
+            dtDispose(devtoolsId);
         }
-
-        unlinkAll(node);
-        dtDispose(devtoolsId);
     }
 
     const getter: Getter<T> = (): T =>

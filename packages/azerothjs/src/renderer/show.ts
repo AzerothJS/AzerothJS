@@ -17,6 +17,7 @@
 
 import { withHydrationRoots } from './adopt-roots.ts';
 import { createHydrationEffect } from '../reactivity/create-effect.ts';
+import { createSetupMemo } from '../reactivity/create-memo.ts';
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
 import { createMemo, createRoot, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
@@ -164,18 +165,21 @@ export function driveShow<W>(props: ShowProps<W>, target: CoTarget, hydrateFirst
         // effect can lose the race against the truthy memo below and hand the branch a stale seed. A memo
         // recomputes AT THE READ, from the same `when` state the truthiness decision observed, so a mounted
         // branch cannot observe the seed no matter where or when this Show was constructed.
-        let lastTruthy = untrack(() => resolveReactive(props.when)) as W;
+        // A markup-valued condition constructs a subtree on each evaluation. Both
+        // consumers must observe the same instance, including on the initial read.
+        const when = createSetupMemo(() => resolveReactive(props.when) as W);
+        let lastTruthy = untrack(when);
 
         const narrowed = createMemo<W>(() =>
         {
-            const current = resolveReactive(props.when);
+            const current = when();
 
             if (current)
             {
-                lastTruthy = current as W;
+                lastTruthy = current;
             }
 
-            return current ? current as W : lastTruthy;
+            return current || lastTruthy;
         });
 
         valueAccessor = narrowed as () => NonNullable<W>;
@@ -183,7 +187,7 @@ export function driveShow<W>(props: ShowProps<W>, target: CoTarget, hydrateFirst
         // The swap is driven by TRUTHINESS (a memo): a `when` change that stays truthy does not bump the
         // boolean, so the branch is NOT rebuilt - only a truthy<->falsy flip rebuilds. Value changes reach
         // the branch through `valueAccessor` instead, with no rebuild (no lost focus/scroll/DOM state).
-        const truthy = createMemo(() => Boolean(resolveReactive(props.when)));
+        const truthy = createMemo(() => Boolean(when()));
         readTruthy = truthy;
     }
     else

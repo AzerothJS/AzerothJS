@@ -225,6 +225,11 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- A `Show` whose child receives the condition value now evaluates `when` once per
+  sample on client render and hydration. Using a markup prop or children with
+  `let=` previously mounted two extra invisible components and could start duplicate
+  requests. Explicitly reading a markup prop twice still constructs two instances.
+
 - Streamed widgets now hydrate with the data their own Suspense boundary awaited.
   A lazy widget before an eager sibling could show the sibling's data, write it
   into a shared cache, or throw during startup when the two values had different

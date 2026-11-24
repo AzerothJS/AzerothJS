@@ -32,6 +32,10 @@ export interface Props
  * function (reactive hole, wired to an effect), null/undefined/false (skipped, for conditional
  * rendering), or a (recursively) nested array of children.
  *
+ * In compiled components, reading a markup-valued prop builds its subtree. Placing
+ * `props.children` invokes its builder. Use a Show's `let=` value to display the
+ * same subtree that its condition evaluated.
+ *
  * @example
  * h('div', {},
  *   'Static text', 42, h('span', {}, 'Nested'),

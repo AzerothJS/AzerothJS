@@ -37,7 +37,7 @@ import { HydrationMismatchError } from './hydration.ts';
 import { currentOwner, registerDisposer, setCurrentOwner, drainOwner } from './create-root.ts';
 import type { Owner } from './create-root.ts';
 import { DEV } from './dev.ts';
-import { currentErrorHandler, setCurrentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
+import { currentErrorHandler, setCurrentErrorHandler, uncaughtErrorHandler, type UncaughtErrorContext } from './catch-error.ts';
 import { assertFunction } from './validate.ts';
 import { dtRegister, dtRun, dtDispose, dtEnabled } from './devtools.ts';
 
@@ -64,7 +64,8 @@ const MAX_SELF_RERUNS = 1000;
 export function routeAsyncError(
     error: unknown,
     handler: ((error: unknown) => void) | null,
-    name: string | undefined
+    name: string | undefined,
+    source: UncaughtErrorContext['source'] = 'effect'
 ): void
 {
     if (handler)
@@ -74,7 +75,7 @@ export function routeAsyncError(
     }
     if (uncaughtErrorHandler)
     {
-        uncaughtErrorHandler(error, { source: 'effect', name });
+        uncaughtErrorHandler(error, { source, name });
         return;
     }
     queueMicrotask(() =>
