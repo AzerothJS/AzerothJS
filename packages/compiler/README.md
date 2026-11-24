@@ -62,7 +62,8 @@ export default defineConfig({ plugins: [azeroth()] });
 
 1. **parser** - splits the source into `component` declarations and pass-through (opaque) regions, and
    parses each component body into items (`props`/`state`/`derived`/`effect`/markup output). Inner
-   JS/TS is left as source spans.
+   JS/TS is left as source spans. The parser, balanced-expression scanner and keyword lowering
+   share the lexical context that distinguishes division, regex literals and markup.
 2. **analyze** - for each component, finds the reactive sources and the dependency set every
    expression reads, using the TypeScript parser for scope-correct read collection.
 3. **lower** - turns the markup output plus analysis into a target-independent **Render Plan IR**: a
@@ -96,6 +97,9 @@ The supported entry point is the Vite plugin; the lower-level pieces are exporte
 - `findMarkupStart` and the scanner helpers (`skipString`, `skipTemplate`, `skipBalanced`,
   `skipRegex`, `isIdentStart`, `isIdentPart`, `isWhitespace`, comment skippers) - markup-region
   scanning over arbitrary JS/TS.
+- `createMarkupSearch(source, start, end, expression?)` returns a search function for
+  successive regions. Call it first with `start`, then with the end returned by
+  `parseMarkup`. It remembers the preceding markup operand across a division or comparison.
 - `walkComponentTags(node, visit)` - visit the component tags in a markup tree.
 - Source-map helpers (`vlqEncode`, `buildLineStarts`, `locationFor`, `encodeMappings`) and the markup
   AST types (`Span`, `MarkupElement`, ...).

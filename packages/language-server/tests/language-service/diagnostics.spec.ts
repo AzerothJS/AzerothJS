@@ -10,6 +10,8 @@ import { describe, it, expect } from 'vitest';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { AzerothLanguageService } from '../../src/language-service/index.ts';
+import { generateHtmlSource } from '../../src/language-service/html-source.ts';
+import { classifyPosition, collectMarkupNodes, constructRegion } from '../../src/language-service/markup-model.ts';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const tsconfig = path.join(fixtures, 'tsconfig.json');
@@ -22,6 +24,45 @@ function diagnose(name: string, source: string)
     service.didOpen(uri, source);
     return service.getDiagnostics(uri);
 }
+
+describe('markup after division in editor buffers', () =>
+{
+    it('keeps the later tag in diagnostics, HTML projection and editing', () =>
+    {
+        const service = new AzerothLanguageService(fixtures, tsconfig);
+        const uri = pathToFileURL(path.join(fixtures, 'Measure.azeroth')).href;
+        const prefix = 'function Measure(){return 12;} const half = <Measure/> / 2; const badge = ';
+        const source = prefix + '<b>{half}</b>;';
+        service.didOpen(uri, source);
+        try
+        {
+            const open = prefix.length + 1;
+            const close = source.indexOf('</b>') + 2;
+            const value = source.indexOf('{half}') + 1;
+            expect(generateHtmlSource(source).slice(prefix.length)).toBe('<b>{    }</b> ');
+            expect(constructRegion(source, value)).toEqual({ start: value, end: value + 4, expression: true });
+            expect(service.getDiagnostics(uri).map(d => d.code)).toContain('azeroth/interpolation-spacing');
+            expect(service.getLinkedEditingRanges(uri, { line: 0, character: open })?.map(r => r.start.character)).toEqual([open, close]);
+
+            const partial = prefix + '<section>';
+            service.didChange(uri, partial);
+            expect(service.getAutoCloseTag(uri, { line: 0, character: partial.length })).toBe('$0</section>');
+        }
+        finally
+        {
+            service.didClose(uri);
+        }
+    });
+
+    it('uses expression grammar for a comparison and successive markup values in a hole', () =>
+    {
+        const source = 'component App(props) { <div>{ {} <props.limit ? [<Count/> / 2, <b title="x"/>] : [] }</div> }';
+        expect(classifyPosition(source, source.indexOf('?'))).toEqual({ kind: 'expression' });
+        expect(classifyPosition(source, source.indexOf('title') + 2)).toEqual({ kind: 'attributeName', tag: 'b', partial: 'ti' });
+        expect(collectMarkupNodes(source).flatMap(node => node.kind === 'element' ? [node.tag] : [])).toEqual(['div', 'Count', 'b']);
+        expect(generateHtmlSource(source)).toContain('<b title="x"/>');
+    });
+});
 
 describe('LSP diagnostics: destructured parameter scope', () =>
 {

@@ -29,20 +29,21 @@
  * @internal Compiler codegen-support stage; not part of the package's public API.
  */
 
+import * as ts from 'typescript';
+import { maskMarkupOperand } from './code-walker.ts';
 import type { ReactiveSources } from './dep.ts';
 import type { BodyItem, StateDecl, DerivedDecl, DeferredDecl, EffectBlock, WatchBlock, WrapperBlock } from './ast.ts';
 
-import { step, tryParseConstruct, skipTrivia, identifierCharAt } from './parser.ts';
-import { parseDeclarationSlice } from './ts-slice.ts';
+import { createCodeWalker, tryParseConstruct, skipTrivia } from './parser.ts';
+import { parseDeclarationSlice, parseExpressionSlice, parseStatementsSlice } from './ts-slice.ts';
 import { rewriteStatements, rewriteReactive, setterName } from './rewrite.ts';
 import { MARKER_MEMO, MARKER_SIGNAL, MARKER_DEFERRED } from './markers.ts';
-import { RUNTIME_FN, LOWERABLE } from './keyword-spec.ts';
-import { isWhitespace, isIdentStart, findMarkupStart, skipRegex } from './scanner.ts';
+import { RUNTIME_FN, LOWERABLE, LOWERABLE_WORDS } from './keyword-spec.ts';
 
 /**
  * Splits `[start, end)` of `source` at TOP-LEVEL commas - skipping nested ()/[]/{}, strings,
  * templates, comments, and regex literals (the same lexical model the rewriter itself uses via
- * {@link step}) - returning the trimmed span of each non-empty part. THE one comma splitter:
+ * {@link createCodeWalker}) - returning the trimmed span of each non-empty part. THE one comma splitter:
  * codegen splits a `watch` dependency list through the string form below, and the projection
  * splits the SAME list as mapped spans; sharing the scan is what keeps the runtime and the
  * types agreeing on where each dependency starts and ends.
@@ -53,16 +54,15 @@ export function splitTopLevelCommaSpans(source: string, start: number, end: numb
     let depth = 0;
     let segStart = start;
     let i = start;
-    let prevChar = '';
-    let prevWord = '';
+    const walk = createCodeWalker(source, start, end, true);
 
     const push = (from: number, to: number): void =>
     {
-        while (from < to && isWhitespace(source[from]))
+        while (from < to && ts.isWhiteSpaceLike(source.charCodeAt(from)))
         {
             from++;
         }
-        while (to > from && isWhitespace(source[to - 1]))
+        while (to > from && ts.isWhiteSpaceLike(source.charCodeAt(to - 1)))
         {
             to--;
         }
@@ -74,33 +74,21 @@ export function splitTopLevelCommaSpans(source: string, start: number, end: numb
 
     while (i < end)
     {
-        const ch = source[i];
-        if (ch === '(' || ch === '[' || ch === '{')
+        const token = walk(i);
+        if (token.kind === 'open')
         {
             depth++;
-            i++;
-            prevChar = ch;
-            continue;
         }
-        if (ch === ')' || ch === ']' || ch === '}')
+        else if (token.kind === 'close')
         {
             depth--;
-            i++;
-            prevChar = ch;
-            continue;
         }
-        if (ch === ',' && depth === 0)
+        else if (token.kind === 'punct' && token.text === ',' && depth === 0)
         {
             push(segStart, i);
-            i++;
-            segStart = i;
-            prevChar = ',';
-            continue;
+            segStart = token.next;
         }
-        const s = step(source, i, prevChar, prevWord);
-        i = s.next;
-        prevChar = s.prevChar;
-        prevWord = s.prevWord;
+        i = token.next;
     }
     push(segStart, end);
     return spans;
@@ -146,38 +134,14 @@ function wordLeadsObject(word: string, member: boolean, lineBreak: boolean, scop
         && (word !== 'of' || scope.forHead === true);
 }
 
-/** Words after which a `!` is a prefix negation, not a non-null assertion. */
-const PREFIX_WORDS: ReadonlySet<string> = new Set([...OBJECT_AFTER_WORD, 'case', 'void', 'else', 'do']);
-
-/**
- * Whether the regex literal `code[from, to)` has its closing `/`. An open one ran to its line
- * end: scanned again with a space after it, it runs past the space too.
- */
-function regexCloses(code: string, from: number, to: number): boolean
-{
-    const text = code.slice(from, to);
-    return skipRegex(`${ text } `, 0) <= text.length;
-}
-
-/**
- * Whether the regex literal that ends at `to` closes on the first `/` of a `//`: its closing
- * `/` ends it, and one `/` follows that neither a `/` nor a `*` follows.
- */
-function closesOnCommentHalf(code: string, to: number): boolean
-{
-    return code[to - 1] === '/'
-        && code[to] === '/' && code[to + 1] !== '/' && code[to + 1] !== '*';
-}
-
 /** What an open bracket holds: statements, object members, class members, or an expression list. */
 interface Scope
 {
     kind: 'block' | 'object' | 'class' | 'list';
+    open: number;
     ternaries: number;
     /** A `for (` or `for await (` head. */
     forHead?: boolean;
-    /** An `if (`, `while (` or `for (` head, whose closing `)` ends no operand. */
-    head?: boolean;
 }
 
 /** Whether the `?` at `i` opens a conditional rather than `??` or `?.`. */
@@ -187,9 +151,63 @@ function opensConditional(code: string, i: number): boolean
 }
 
 /**
+ * Confirms statement ownership when a keyword-shaped token at an authored boundary falls
+ * outside the structural walker's idea of a block. An ordinary member, parameter or the
+ * unbraced body of a control statement cannot supply this evidence. Parse at most once per
+ * candidate-bearing slice and use the existing expression wrapper to preserve its grammar.
+ */
+function statementListPositions(code: string, expression: boolean): Map<number, number>
+{
+    // An apostrophe in markup text is not a TS quote. Represent each complete markup
+    // region as one operand and preserve every subsequent offset and line terminator.
+    if (code.includes('<'))
+    {
+        const walk = createCodeWalker(code, 0, code.length, expression, true);
+        const parts: string[] = [];
+        let from = 0;
+        for (let i = 0; i < code.length;)
+        {
+            const token = walk(i);
+            if (token.kind === 'markup')
+            {
+                parts.push(code.slice(from, i), maskMarkupOperand(code, i, token.next));
+                from = token.next;
+            }
+            i = token.next;
+        }
+        if (parts.length > 0)
+        {
+            parts.push(code.slice(from));
+            code = parts.join('');
+        }
+    }
+    const { sourceFile, mapPos } = expression ? parseExpressionSlice(code, 0) : parseStatementsSlice(code, 0);
+    const positions = new Map<number, number>();
+    const pending: ts.Node[] = [sourceFile];
+    while (pending.length > 0)
+    {
+        const node = pending.pop() as ts.Node;
+        if (ts.isExpressionStatement(node))
+        {
+            const owner = node.parent;
+            if (ts.isBlock(owner) || ts.isModuleBlock(owner) || ts.isSourceFile(owner) || ts.isCaseOrDefaultClause(owner))
+            {
+                const list = ts.isCaseOrDefaultClause(owner) ? owner.parent : owner;
+                positions.set(mapPos(node.getStart(sourceFile)), ts.isSourceFile(list) ? -1 : mapPos(list.getStart(sourceFile)));
+            }
+        }
+        ts.forEachChild(node, child =>
+        {
+            pending.push(child);
+        });
+    }
+    return positions;
+}
+
+/**
  * Finds every reactive keyword construct at a statement position, at ANY nesting depth, in `code`.
  * Descends into bodies (the scan continues past just the keyword) so a keyword nested inside an effect
- * body or an arrow block is found too. Strings/templates/comments/regex are skipped via {@link step}.
+ * body or an arrow block is found too. Strings/templates/comments/regex are skipped via {@link createCodeWalker}.
  * Object and class members are not statements; `expression` starts the scan in expression position.
  */
 export function findConstructs(code: string, expression = false): BodyItem[]
@@ -199,23 +217,17 @@ export function findConstructs(code: string, expression = false): BodyItem[]
     let prevChar = expression ? '(' : '';
     let prevWord = '';
     let atStmtStart = !expression;
-    // What ended the last significant token: a postfix `++`, `--` or `!`, a literal (a regex
-    // reports `/`), a member name, or a line break since. Each ends an expression before a `{`.
+    const walk = createCodeWalker(code, 0, code.length, expression, true);
+    let statementPositions: Map<number, number> | undefined;
+    // Declaration initializers can contain statements before their trailing `with` clause.
+    let optionEnds: Map<number, number> | undefined;
+    let opaqueUntil = 0;
     let postfix = false;
     let literal = false;
     let member = false;
     let lineBreak = false;
-    // Whether the last significant token ended an operand, so a `!` after it is postfix.
-    let operand = false;
-    // Whether the last token followed an operand on its line: a `++` or `--` it starts is postfix.
-    let pairAfterOperand = false;
-    // Whether the last token closed an `if`, `while` or `for` head: a statement starts after it.
-    let headClosed = false;
-    // Whether the last token completed a spread `...`.
-    let spread = false;
-    // Whether the last token was the `await` of a `for await` head.
     let forAwait = false;
-    const scopes: Scope[] = [{ kind: expression ? 'list' : 'block', ternaries: 0 }];
+    const scopes: Scope[] = [{ kind: expression ? 'list' : 'block', open: -1, ternaries: 0 }];
     // The depth whose next `{` is a class body, and whether the last `:` was a case or label colon.
     let classDepth = -1;
     let classAngles = 0;
@@ -223,49 +235,42 @@ export function findConstructs(code: string, expression = false): BodyItem[]
 
     while (i < code.length)
     {
-        if (atStmtStart)
+        const scope = scopes[scopes.length - 1] as Scope;
+        const s = walk(i);
+        opaqueUntil = optionEnds?.get(i) ?? opaqueUntil;
+        if (i >= opaqueUntil && s.kind === 'identifier' && (atStmtStart ||
+            (LOWERABLE_WORDS.has(s.text) && (prevChar === '{' || prevChar === '}' || prevChar === ';'))))
         {
-            const p = skipTrivia(code, i);
-            // A `<` is left to the token scan, which tells a generic arrow from markup.
-            if (p < code.length && code[p] !== '<')
+            const construct = tryParseConstruct(code, i, code.length);
+            if (construct !== null && LOWERABLE.has(construct.kind))
             {
-                const c = tryParseConstruct(code, p, code.length);
-                if (c !== null && LOWERABLE.has(c.kind))
+                // A wrong scope must not let a recognizable Allman block ship as a bare
+                // name followed by an ordinary block. The authored boundary above rules
+                // out ASI-only starts. A TypeScript statement index separates method names
+                // and class fields from real statement-list entries at the same boundary.
+                if (!atStmtStart)
                 {
-                    out.push(c);
-                    // Descend past the keyword's first char so constructs nested in the body/initializer
-                    // are found on later iterations (they get their own, non-overlapping edits); the
-                    // construct itself won't re-match mid-identifier.
-                    i = p + 1;
-                    prevChar = '';
-                    prevWord = '';
-                    atStmtStart = false;
-                    continue;
+                    statementPositions ??= statementListPositions(code, expression);
+                }
+                if (atStmtStart || statementPositions?.get(i) === scope.open)
+                {
+                    out.push(construct);
+                    // The emission owns an effect's complete header and a declaration's
+                    // options. Walk their tokens for context, but never place a second edit
+                    // inside those spans. The initializer and the effect body remain open.
+                    if (construct.kind === 'watch' || construct.kind === 'effect')
+                    {
+                        opaqueUntil = construct.bodyStart - 1;
+                    }
+                    else if ('optionsStart' in construct && construct.optionsStart !== null && construct.optionsEnd !== null)
+                    {
+                        optionEnds ??= new Map<number, number>();
+                        optionEnds.set(construct.optionsStart, construct.optionsEnd);
+                    }
                 }
             }
         }
-
-        const scope = scopes[scopes.length - 1] as Scope;
-        // A `/` that opens no comment divides after a postfix operator, a literal, a member name
-        // or a value named `of`.
-        const slash = code[i] === '/' && code[i + 1] !== '/' && code[i + 1] !== '*';
-        const divide = slash && (postfix || literal || member || (prevWord === 'of' && scope.forHead !== true));
-        // It opens a regex after a statement head, a spread or a word that leads an expression.
-        const regex = slash && (headClosed || spread || wordLeadsObject(prevWord, member, false, scope));
-        // Where an operand may start, a `<` the markup scan reads as a generic arrow's type
-        // parameters is an operator.
-        const generic = code[i] === '<' && !operand && isIdentStart(code[i + 1]) && findMarkupStart(code, i) !== i;
-        const operator = divide || generic;
-        let s = step(code, i, operator ? ')' : regex ? '(' : prevChar, operator || regex ? '' : prevWord);
-        // A regex that does not close on its line, or that closes on the first `/` of a `//`,
-        // was no regex: its `/` divides.
-        if (slash && s.kind === 'literal' && (!regexCloses(code, i, s.next) || closesOnCommentHalf(code, s.next)))
-        {
-            s = step(code, i, ')', '');
-        }
-        // A word after `.` or `#`, or one that ends a non-ASCII name, is a name and no keyword.
-        const named = s.kind === 'identifier'
-            && ((prevChar === '.' && !spread) || prevChar === '#' || identifierCharAt(code, i - 1));
+        const named = s.member;
         if (s.kind === 'open')
         {
             let kind: Scope['kind'] = 'list';
@@ -281,10 +286,8 @@ export function findConstructs(code: string, expression = false): BodyItem[]
                     classDepth = -1;
                 }
             }
-            const head = s.text === '(' && !member
-                && (prevWord === 'if' || prevWord === 'while' || prevWord === 'for' || forAwait);
-            const forHead = head && (prevWord === 'for' || forAwait);
-            scopes.push({ kind, ternaries: 0, forHead, head });
+            const forHead = s.text === '(' && !member && (prevWord === 'for' || forAwait);
+            scopes.push({ kind, open: i, ternaries: 0, forHead });
             atStmtStart = kind === 'block';
         }
         else if (s.kind === 'close')
@@ -328,10 +331,9 @@ export function findConstructs(code: string, expression = false): BodyItem[]
             else if (s.kind === 'identifier' && s.text === 'class' && !named
                 && (scope.kind !== 'class' || prevChar === ':' || OBJECT_AFTER_CHAR.has(prevChar)))
             {
-                // In a class body `class` is a member name unless an initializer leads to it. A
-                // non-ASCII character right after the word makes it the start of a longer name.
+                // In a class body `class` is a member name unless an initializer leads to it.
                 const at = skipTrivia(code, s.next);
-                if (code[at] === '{' || isIdentStart(code[at]) || (at > s.next && identifierCharAt(code, at)))
+                if (code[at] === '{' || ts.isIdentifierStart(code.codePointAt(at) ?? 0, ts.ScriptTarget.Latest))
                 {
                     classDepth = scopes.length;
                     classAngles = 0;
@@ -364,25 +366,15 @@ export function findConstructs(code: string, expression = false): BodyItem[]
         }
         else
         {
-            // A `!` right after a line break starts a statement: it is a prefix and no operand.
-            postfix = s.text === '+' || s.text === '-' ? code[i - 1] === s.text && pairAfterOperand
-                : s.text === '!' && operand && !lineBreak;
-            pairAfterOperand = operand && !lineBreak;
-            forAwait = s.kind === 'identifier' && s.text === 'await' && prevWord === 'for'
-                && !member;
+            postfix = s.postfix;
+            forAwait = s.kind === 'identifier' && s.text === 'await' && prevWord === 'for' && !member;
             literal = s.kind === 'literal';
             member = named;
-            headClosed = s.kind === 'close' && scope.head === true;
-            spread = s.text === '.' && code[i - 1] === '.' && code[i - 2] === '.';
-            // A value named `of` is an operand; in a `for (...)` head the word is the operator.
-            operand = literal || (s.kind === 'close' && s.text !== '}' && !headClosed)
-                || (s.text === '!' && postfix) || identifierCharAt(code, i)
-                || (s.kind === 'identifier' && (member || !PREFIX_WORDS.has(s.text) || (s.text === 'of' && scope.forHead !== true)));
             lineBreak = false;
+            prevChar = s.prevChar;
+            prevWord = s.prevWord;
         }
         i = s.next;
-        prevChar = s.prevChar;
-        prevWord = s.prevWord;
     }
     return out;
 }

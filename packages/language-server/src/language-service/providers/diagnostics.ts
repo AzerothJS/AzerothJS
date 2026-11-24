@@ -20,7 +20,7 @@
 //      markup so the editor flags exactly what the azeroth-tsc gate flags.
 
 import ts from 'typescript';
-import { findMarkupStart, parseModule, parseMarkup, CompileError, lintMarkup, diagnoseModule, isRefTypeFailure } from '@azerothjs/compiler';
+import { createMarkupSearch, parseModule, parseMarkup, CompileError, lintMarkup, diagnoseModule, isRefTypeFailure } from '@azerothjs/compiler';
 import {
     DiagnosticSeverity,
     type Diagnostic,
@@ -171,10 +171,11 @@ function markupDiagnostics(ctx: RequestContext): { errors: Diagnostic[]; warning
 {
     const errors: Diagnostic[] = [];
     const warnings: Diagnostic[] = [];
+    const nextMarkup = createMarkupSearch(ctx.source, 0, ctx.source.length);
     let i = 0;
     for (;;)
     {
-        const start = findMarkupStart(ctx.source, i);
+        const start = nextMarkup(i);
         if (start === -1)
         {
             break;

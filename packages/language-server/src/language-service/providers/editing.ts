@@ -17,7 +17,7 @@
 // parser (to understand structure), so a `<` inside an attribute expression
 // like `title={a < b}` is never mistaken for a tag.
 
-import { findMarkupStart, skipBalanced, skipString, isIdentStart, isIdentPart, isWhitespace, parseMarkup, VOID_ELEMENTS } from '@azerothjs/compiler';
+import { createMarkupSearch, skipBalanced, skipString, isIdentStart, isIdentPart, isWhitespace, parseMarkup, VOID_ELEMENTS } from '@azerothjs/compiler';
 import type { MarkupElement } from '@azerothjs/compiler';
 import { collectMarkupNodes } from '../markup-model.ts';
 import type { Range } from '../protocol.ts';
@@ -40,10 +40,11 @@ export function getAutoCloseTag(ctx: RequestContext, offset: number): string | n
 
     // Find the markup region the caret is in, then walk its tags forward to the
     // one whose opening tag ends exactly at the caret.
+    const nextMarkup = createMarkupSearch(source, 0, source.length);
     let i = 0;
     for (;;)
     {
-        const start = findMarkupStart(source, i);
+        const start = nextMarkup(i);
         if (start === -1 || start >= offset)
         {
             return null;

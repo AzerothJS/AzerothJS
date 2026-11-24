@@ -32,7 +32,7 @@ import type { ComponentDecl } from './ast.ts';
 import type { RenderPlan } from './ir.ts';
 import { renderSources, type Dep, type ReactiveSources } from './dep.ts';
 
-import { findMarkupStart } from './scanner.ts';
+import { createMarkupSearch } from './scanner.ts';
 import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import { lowerMarkup, renderClone, componentChildren } from './lower.ts';
 import { attributeMarkupContext, markupBindingName } from './markup-util.ts';
@@ -292,14 +292,14 @@ function collectRowForms(
             // A <For> inside an expression hole compiles through the same emitter and its row
             // fields wire through the same name-keyed registry - leaving it unregistered made
             // the row sugar position-dependent: valid-looking binds emitted raw, dead code.
-            collectEmbeddedRowForms(source, child.start + 1, child.end - 1, arrayForms, rowForms);
+            collectEmbeddedRowForms(source, child.start + 1, child.end - 1, arrayForms, rowForms, true);
         }
     }
     for (const attr of node.kind === 'element' ? node.attributes : [])
     {
         if (!attr.spread && attr.name !== null && attr.value.kind === 'expression')
         {
-            collectEmbeddedRowForms(source, source.indexOf('{', attr.start) + 1, attr.end - 1, arrayForms, rowForms);
+            collectEmbeddedRowForms(source, source.indexOf('{', attr.start) + 1, attr.end - 1, arrayForms, rowForms, true);
         }
     }
 }
@@ -310,13 +310,15 @@ function collectEmbeddedRowForms(
     start: number,
     end: number,
     arrayForms: ReadonlyMap<string, ReadonlySet<string>>,
-    rowForms: Map<string, ReadonlySet<string>>
+    rowForms: Map<string, ReadonlySet<string>>,
+    expression = false
 ): void
 {
     let pos = start;
+    const search = createMarkupSearch(source, start, end, expression);
     for (;;)
     {
-        const at = findMarkupStart(source, pos);
+        const at = search(pos);
         if (at === -1 || at >= end)
         {
             return;
@@ -601,9 +603,10 @@ const projectMarkup = (code: string, holeDepth = 0, anchor = 0, namespace?: Mark
 {
     let out = '';
     let j = 0;
+    const search = createMarkupSearch(code, j, code.length, true);
     for (;;)
     {
-        const start = findMarkupStart(code, j);
+        const start = search(j);
         if (start === -1)
         {
             return out + code.slice(j);

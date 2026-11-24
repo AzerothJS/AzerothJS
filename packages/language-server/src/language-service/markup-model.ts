@@ -11,14 +11,14 @@
 // expression position (`{ ... }` hole or `attr={ ... }`) is plain TypeScript
 // that the type bridge answers.
 //
-// It reuses the compiler's scanner (findMarkupStart) and parser (parseMarkup)
+// It reuses the compiler's scanner (createMarkupSearch) and parser (parseMarkup)
 // to locate and descend markup - including markup nested inside expression
 // holes, which it re-scans recursively the same way the compiler does. Parsing
 // is wrapped in try/catch because an editor buffer is constantly half-typed
 // (`<div clas`); when the region under the caret doesn't parse yet, a resilient
 // local scan still classifies it so completion keeps working as you type.
 
-import { findMarkupStart, skipBalanced, skipString, skipTemplate, isIdentPart, isWhitespace, parseModule, parseMarkup, CompileError } from '@azerothjs/compiler';
+import { createMarkupSearch, skipString, skipTemplate, isIdentPart, isWhitespace, parseModule, parseMarkup, CompileError } from '@azerothjs/compiler';
 import type { MarkupElement, MarkupFragment, MarkupChild } from '@azerothjs/compiler';
 
 /** The syntactic role of a caret position, used to pick a completion strategy. */
@@ -133,11 +133,12 @@ function tagNameBeingTyped(source: string, offset: number): { partial: string; c
  */
 function classifyInRange(source: string, lo: number, hi: number, offset: number, base: 'script' | 'expression'): PositionContext
 {
+    const nextMarkup = createMarkupSearch(source, lo, hi, base === 'expression');
     let i = lo;
     for (;;)
     {
-        const m = findMarkupStart(source, i);
-        if (m === -1 || m >= hi || m > offset)
+        const m = nextMarkup(i);
+        if (m === -1 || m > offset)
         {
             return { kind: base };
         }
@@ -359,7 +360,7 @@ function openTagEnd(source: string, node: MarkupElement): number
 export function collectMarkupNodes(source: string): (MarkupElement | MarkupFragment)[]
 {
     const nodes: (MarkupElement | MarkupFragment)[] = [];
-    collectInRange(source, 0, source.length, nodes);
+    collectInRange(source, 0, source.length, nodes, false);
     return nodes;
 }
 
@@ -370,13 +371,14 @@ export function collectMarkupNodes(source: string): (MarkupElement | MarkupFragm
  * inside of an attribute or child expression's braces - and find markup nested
  * within it. A parse failure ends the scan for this range instead of throwing.
  */
-function collectInRange(source: string, lo: number, hi: number, out: (MarkupElement | MarkupFragment)[]): void
+function collectInRange(source: string, lo: number, hi: number, out: (MarkupElement | MarkupFragment)[], expression: boolean): void
 {
+    const nextMarkup = createMarkupSearch(source, lo, hi, expression);
     let i = lo;
     for (;;)
     {
-        const m = findMarkupStart(source, i);
-        if (m === -1 || m >= hi)
+        const m = nextMarkup(i);
+        if (m === -1)
         {
             return;
         }
@@ -412,7 +414,7 @@ function collectNode(source: string, node: MarkupElement | MarkupFragment, out: 
                 const brace = source.indexOf('{', attr.start);
                 if (brace !== -1)
                 {
-                    collectInRange(source, brace + 1, skipBalanced(source, brace) - 1, out);
+                    collectInRange(source, brace + 1, attr.end - 1, out, true);
                 }
             }
         }
@@ -421,7 +423,7 @@ function collectNode(source: string, node: MarkupElement | MarkupFragment, out: 
     {
         if (child.kind === 'expression')
         {
-            collectInRange(source, child.start + 1, child.end - 1, out);
+            collectInRange(source, child.start + 1, child.end - 1, out, true);
         }
         else if (child.kind === 'element' || child.kind === 'fragment')
         {
@@ -495,7 +497,7 @@ export function constructRegion(source: string, offset: number): ConstructRegion
     {
         return region;
     }
-    return expressionRegion(source, region.start, region.end, offset) ?? region;
+    return expressionRegion(source, region.start, region.end, offset, region.expression) ?? region;
 }
 
 /** Whether the parser reads a `form` declaration at `offset`, a statement of a component body. */
@@ -513,13 +515,14 @@ export function startsFormDeclaration(source: string, offset: number): boolean
 }
 
 /** The innermost markup expression in `[lo, hi)` that holds `offset`, or null. */
-function expressionRegion(source: string, lo: number, hi: number, offset: number): ConstructRegion | null
+function expressionRegion(source: string, lo: number, hi: number, offset: number, expression: boolean): ConstructRegion | null
 {
+    const nextMarkup = createMarkupSearch(source, lo, hi, expression);
     let i = lo;
     for (;;)
     {
-        const m = findMarkupStart(source, i);
-        if (m === -1 || m >= hi || m > offset)
+        const m = nextMarkup(i);
+        if (m === -1 || m > offset)
         {
             return null;
         }
@@ -544,7 +547,7 @@ function expressionRegion(source: string, lo: number, hi: number, offset: number
 function nodeExpressionRegion(source: string, node: MarkupElement | MarkupFragment, offset: number): ConstructRegion | null
 {
     const inner = (start: number, end: number): ConstructRegion =>
-        expressionRegion(source, start, end, offset) ?? { start, end, expression: true };
+        expressionRegion(source, start, end, offset, true) ?? { start, end, expression: true };
     if (node.kind === 'element')
     {
         for (const attr of node.attributes)

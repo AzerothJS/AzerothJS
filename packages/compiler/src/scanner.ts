@@ -12,8 +12,8 @@
  *      literals (with nested `${ ... }`), and regex literals - so a `<`, `{`, or `}` inside them is
  *      never mistaken for syntax.
  *   2. Decide whether a `<` (or `/`) sits in EXPRESSION position, which distinguishes markup from a
- *      less-than operator (and a regex from a divide). The previous significant token is tracked to
- *      make that call - the same trick hand-written markup transforms use.
+ *      less-than operator, and a regex from a divide. The shared structural cursor tracks the lexical
+ *      goal across tokens, delimiters and statement heads.
  *
  * These are pure functions over (src, index) -> nextIndex, shared with the parser (which also needs
  * balanced-brace capture for `{...}` holes and `(...)`/`[...]`).
@@ -25,6 +25,7 @@
  * @see {@link findMarkupStart}
  */
 
+import { codeWalker, type Step } from './code-walker.ts';
 import { VOID_ELEMENTS, contentModel, elementNamespace, hostChildContext, hostEventType, hostNamespaceForTag, isComponentTag, resolveMarkupContext, type MarkupContext } from 'azerothjs/semantics';
 
 /** Component prop values and spreads can supply renderable children in the incoming namespace. */
@@ -99,6 +100,15 @@ export function isWhitespace(ch: string | undefined): boolean
     return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '\v';
 }
 
+const codeWhitespace = /\s/u;
+const lineEnd = /[\r\n\u2028\u2029]/;
+
+/** JavaScript trivia, including Unicode separators. HTML keeps its own whitespace rules. */
+export function isCodeWhitespace(ch: string | undefined): boolean
+{
+    return ch !== undefined && codeWhitespace.test(ch);
+}
+
 /**
  * True for a character that can begin an identifier (letter, `_`, or `$`).
  *
@@ -141,7 +151,7 @@ export function isIdentPart(ch: string | undefined): boolean
 export function skipLineComment(src: string, i: number): number
 {
     i += 2;
-    while (i < src.length && src[i] !== '\n')
+    while (i < src.length && !lineEnd.test(src[i] as string))
     {
         i++;
     }
@@ -270,7 +280,7 @@ export function skipRegex(src: string, i: number): number
             i++;
             break;
         }
-        else if (ch === '\n')
+        else if (lineEnd.test(ch as string))
         {
             break; // unterminated - bail rather than run away
         }
@@ -384,7 +394,7 @@ export function rawTextEnd(src: string, start: number, tag: string): number
  * Attribute `{...}` expressions and quoted values are skipped whole. On malformed input it bails
  * as self-closing at end-of-input rather than looping.
  */
-function scanOpenTag(src: string, i: number, context?: MarkupContext): { end: number; selfClosing: boolean; tag: string; encoding?: string }
+function scanOpenTag(src: string, i: number, context?: MarkupContext, strict = false): { end: number; selfClosing: boolean; tag: string; encoding?: string }
 {
     i++; // past '<'
     if (src[i] === '>')
@@ -404,7 +414,7 @@ function scanOpenTag(src: string, i: number, context?: MarkupContext): { end: nu
     {
         if (i >= src.length)
         {
-            return { end: i, selfClosing: true, tag };
+            return { end: i, selfClosing: !strict, tag };
         }
         const ch = src[i];
         if (ch === '/' && src[i + 1] === '>')
@@ -422,6 +432,10 @@ function scanOpenTag(src: string, i: number, context?: MarkupContext): { end: nu
         }
         if (!isIdentStart(ch))
         {
+            if (strict && !isWhitespace(ch))
+            {
+                return { end: i, selfClosing: false, tag };
+            }
             i++;
             continue;
         }
@@ -457,6 +471,10 @@ function scanOpenTag(src: string, i: number, context?: MarkupContext): { end: nu
             }
             i = end;
         }
+        else if (strict)
+        {
+            return { end: i, selfClosing: false, tag };
+        }
     }
 }
 
@@ -464,8 +482,7 @@ function scanOpenTag(src: string, i: number, context?: MarkupContext): { end: nu
  * Given `i` at an opening bracket (`(`, `[`, or `{`), returns the index just
  * after the matching close, skipping strings, templates, comments, regex literals, and
  * embedded MARKUP regions so their contents (braces, apostrophes, slashes) don't count.
- * Regex-vs-divide and markup-vs-less-than are disambiguated by the previous significant
- * token, exactly as {@link findMarkupStart} does.
+ * Regex-vs-divide and markup-vs-less-than use the same lexical context as {@link findMarkupStart} does.
  *
  * @example
  * ```ts
@@ -477,146 +494,41 @@ export function skipBalanced(src: string, openIndex: number, context?: MarkupCon
 {
     const open = src[openIndex];
     const close = open === '(' ? ')' : open === '[' ? ']' : '}';
-    let depth = 0;
-    let i = openIndex;
-    let prevChar = '';
-    let prevWord = '';
-
+    const walk = markupWalker(src, openIndex + 1, src.length, true, i => skipMarkupRegion(src, i, context), true, context);
+    let depth = 1;
+    let i = openIndex + 1;
     while (i < src.length)
     {
-        const ch = src[i] ?? '';
-
-        if (ch === '/' && src[i + 1] === '/')
-        {
-            i = skipLineComment(src, i);
-            continue;
-        }
-        if (ch === '/' && src[i + 1] === '*')
-        {
-            i = skipBlockComment(src, i);
-            continue;
-        }
-        // A `/` in expression position starts a REGEX literal; consume it whole so an
-        // apostrophe, brace, or paren inside (`/'/g`, `/\{/`) cannot desync the scan.
-        if (ch === '/' && isExpressionPosition(prevChar, prevWord))
-        {
-            i = skipRegex(src, i);
-            prevChar = ')'; // a regex value has ended: a following `/` is division
-            prevWord = '';
-            continue;
-        }
-        if (ch === '"' || ch === '\'')
-        {
-            i = skipString(src, i);
-            prevChar = ')';
-            prevWord = '';
-            continue;
-        }
-        if (ch === '`')
-        {
-            i = skipTemplate(src, i, context);
-            prevChar = ')';
-            prevWord = '';
-            continue;
-        }
-        // A `<` in expression position begins MARKUP (unless it is a generic arrow's type
-        // parameters); skip the whole region so its text/tags never touch the brace depth.
-        if (ch === '<' && isExpressionPosition(prevChar, prevWord))
-        {
-            const next = src[i + 1];
-            if (next === '>' || isIdentStart(next))
-            {
-                if (next !== '>')
-                {
-                    const past = tryGenericArrow(src, i);
-                    if (past !== -1)
-                    {
-                        i = past; // only the `<...>` list; the arrow body still scans normally
-                        prevChar = '>';
-                        prevWord = '';
-                        continue;
-                    }
-                }
-                i = skipMarkupRegion(src, i, context);
-                prevChar = ')'; // a markup value has ended
-                prevWord = '';
-                continue;
-            }
-        }
-        if (ch === open)
+        const unit = walk(i);
+        if (unit.kind === 'open' && unit.text === open)
         {
             depth++;
-            i++;
-            prevChar = ch;
-            prevWord = '';
-            continue;
         }
-        if (ch === close)
+        else if (unit.kind === 'close' && unit.text === close && --depth === 0)
         {
-            depth--;
-            i++;
-            if (depth === 0)
-            {
-                return i;
-            }
-            prevChar = ch;
-            prevWord = '';
-            continue;
+            return unit.next;
         }
-        if (isWhitespace(ch))
-        {
-            i++; // whitespace does not change the previous significant token
-            continue;
-        }
-        if (isIdentStart(ch))
-        {
-            let j = i + 1;
-            while (j < src.length && isIdentPart(src[j] ?? ''))
-            {
-                j++;
-            }
-            prevWord = src.slice(i, j);
-            prevChar = src[j - 1] ?? '';
-            i = j;
-            continue;
-        }
-        prevChar = ch;
-        prevWord = '';
-        i++;
+        i = unit.next;
     }
-
-    return i; // unbalanced - caller treats as EOF
+    return i;
 }
 
-/** Keywords after which a `<` or `/` begins an expression (markup / regex). */
-const EXPR_KEYWORDS = new Set([
-    'return', 'typeof', 'instanceof', 'in', 'of', 'do', 'else',
-    'yield', 'await', 'case', 'delete', 'void', 'new'
-]);
-
-/**
- * Punctuators after which an expression (hence markup / regex) can start. `}` is here for the
- * block-then-render shape (`effect { ... } <div>...`): the markup after a reactive block must
- * read as markup, not as a less-than off the `}`.
- */
-const EXPR_CHARS = new Set([
-    '', '(', '{', '[', ',', ';', ':', '?', '=', '>', '<',
-    '&', '|', '!', '~', '+', '-', '*', '/', '%', '^', '\n', '}'
-]);
-
-/**
- * Whether a `<` / `/` at the current point is in expression position
- * (markup / regex) rather than a binary operator. Based on the previous
- * significant token: an identifier or literal that ends an expression means
- * binary; a punctuator/keyword that expects an operand means expression.
- */
-export function isExpressionPosition(prevChar: string, prevWord: string): boolean
+/** Share JS tokens and expression context while leaving markup consumption to its owner. */
+export function markupWalker(src: string, from: number, limit: number, expression: boolean,
+    readMarkup: (i: number) => number, genericArrows: boolean, context?: MarkupContext): (i: number) => Step
 {
-    if (prevWord !== '')
-    {
-        return EXPR_KEYWORDS.has(prevWord);
-    }
-    return EXPR_CHARS.has(prevChar);
+    return codeWalker(src, from, limit, expression, i => skipTemplate(src, i, context), readMarkup,
+        genericArrows ? i => tryGenericArrow(src, i) : undefined, i =>
+        {
+            // After an operand, `<name` may compare, whereas `<>` and a complete
+            // self-closing opener cannot. Keep both adjacent roots in malformed values.
+            if (src[i + 1] === '>')
+            {
+                return true;
+            }
+            const opening = scanOpenTag(src, i, context, true);
+            return opening.selfClosing;
+        });
 }
 
 /**
@@ -718,7 +630,7 @@ function tryGenericArrow(src: string, i: number): number
     }
 
     let k = afterAngles;
-    while (k < src.length && isWhitespace(src[k]))
+    while (k < src.length && isCodeWhitespace(src[k]))
     {
         k++;
     }
@@ -728,7 +640,7 @@ function tryGenericArrow(src: string, i: number): number
     }
 
     let m = skipBalanced(src, k);
-    while (m < src.length && isWhitespace(src[m]))
+    while (m < src.length && isCodeWhitespace(src[m]))
     {
         m++;
     }
@@ -741,20 +653,12 @@ function tryGenericArrow(src: string, i: number): number
 }
 
 /**
- * The next `<` that opens markup in EXPRESSION position, skipping every non-code span on the
- * way. This is how consumers step through a module's regions: start at 0, then pass the
- * previous region's end.
- *
- * Expression position is decided from the previous significant token, the way hand-written
- * markup transforms do it, and the skip helpers jump over strings, templates, comments and
- * regex so nothing inside those is ever mistaken for a tag.
- *
- * The detection is HEURISTIC rather than a real parse. It is tuned for the markup the language
- * accepts, and an exotic generic or operator combination could in principle misclassify.
+ * Finds the first markup opening in a fresh statement scan beginning at `from`.
+ * Use {@link createMarkupSearch} to visit successive regions with the same JS context.
  *
  * @param src - The module source.
- * @param from - Where to start scanning.
- * @returns The index of the next markup-opening `<`, or -1 when none remains.
+ * @param from - Where the statement scan begins.
+ * @returns The offset of the markup-opening `<`, or -1 when none remains.
  * @example
  * findMarkupStart('return <h1>Hi</h1>;', 0); // 7, the '<' of <h1>
  * findMarkupStart('a < b', 0);               // -1, a less-than operator
@@ -764,101 +668,30 @@ function tryGenericArrow(src: string, i: number): number
  */
 export function findMarkupStart(src: string, from: number): number
 {
-    let i = from;
-    let prevChar = '';
-    let prevWord = '';
+    return createMarkupSearch(src, from, src.length)(from);
+}
 
-    while (i < src.length)
+/**
+ * Creates a forward search over `[start, end)` for one source. Set `expression` for a
+ * markup hole or another expression span. Module and function bodies use statement grammar.
+ * Call the returned function with `start` first. For each offset it returns, parse the
+ * region with {@link parseMarkup} and pass its exclusive end to the same function.
+ * It returns -1 when the span contains no further markup.
+ */
+export function createMarkupSearch(src: string, start: number, end: number, expression = false): (from: number) => number
+{
+    const walk = markupWalker(src, start, end, expression, i => i + 1, true);
+    return from =>
     {
-        const ch = src[i];
-
-        if (ch === '/' && src[i + 1] === '/')
+        for (let i = from; i < end;)
         {
-            i = skipLineComment(src, i);
-            continue;
-        }
-        if (ch === '/' && src[i + 1] === '*')
-        {
-            i = skipBlockComment(src, i);
-            continue;
-        }
-        if (ch === '"' || ch === '\'')
-        {
-            i = skipString(src, i);
-            prevChar = '"';
-            prevWord = '';
-            continue;
-        }
-        if (ch === '`')
-        {
-            i = skipTemplate(src, i);
-            prevChar = '`';
-            prevWord = '';
-            continue;
-        }
-        if (ch === '/' && isExpressionPosition(prevChar, prevWord))
-        {
-            i = skipRegex(src, i);
-            prevChar = '/';
-            prevWord = '';
-            continue;
-        }
-        if (isWhitespace(ch))
-        {
-            if (ch === '\n')
+            const unit = walk(i);
+            if (unit.kind === 'markup')
             {
-                // A newline only matters for the very specific ASI
-                // cases; keep prevChar so `a\n< b` stays a compare.
-            }
-            i++;
-            continue;
-        }
-        if (ch === '<')
-        {
-            const next = src[i + 1];
-            if (isExpressionPosition(prevChar, prevWord) && (next === '>' || isIdentStart(next)))
-            {
-                // A `<Ident...` in expression position is ambiguous: markup, or
-                // a generic arrow's type-parameter list (`<T>(x) => x`). The
-                // `<>` fragment is never a generic arrow, so only probe when a
-                // name follows.
-                if (next !== '>')
-                {
-                    const past = tryGenericArrow(src, i);
-                    if (past !== -1)
-                    {
-                        // Skip only the `<...>` list; the arrow body after it is
-                        // ordinary code that may still contain markup.
-                        prevChar = '>';
-                        prevWord = '';
-                        i = past;
-                        continue;
-                    }
-                }
                 return i;
             }
-            prevChar = '<';
-            prevWord = '';
-            i++;
-            continue;
+            i = unit.next;
         }
-        if (isIdentStart(ch))
-        {
-            let j = i + 1;
-            while (j < src.length && isIdentPart(src[j] ?? ''))
-            {
-                j++;
-            }
-            prevWord = src.slice(i, j);
-            prevChar = src[j - 1] ?? '';
-            i = j;
-            continue;
-        }
-
-        prevChar = ch ?? '';
-        prevWord = '';
-        i++;
-    }
-
-    return -1;
+        return -1;
+    };
 }

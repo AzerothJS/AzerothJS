@@ -29,6 +29,7 @@ export { lintMarkup, lintSource, type LintWarning, type LintFix, type LintOption
 export { CompileError, parseMarkup } from './markup-parser.ts';
 export {
     findMarkupStart,
+    createMarkupSearch,
     isWhitespace,
     isIdentStart,
     isIdentPart,

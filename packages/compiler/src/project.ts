@@ -32,7 +32,7 @@
 import type { ComponentDecl, BodyItem } from './ast.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 
-import { findMarkupStart, skipString, skipTemplate, isWhitespace } from './scanner.ts';
+import { createMarkupSearch, isWhitespace } from './scanner.ts';
 import { CompileError, parseMarkup, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import {
     attributeMarkupContext,
@@ -245,23 +245,24 @@ export function generateVirtualCode(source: string): VirtualCode
         let pos = start;
         for (const c of top)
         {
-            emitMarkup(pos, c.start, kind);
+            emitMarkup(pos, c.start, kind, !statements && pos === start);
             emitConstruct(c);
             pos = c.end;
         }
-        emitMarkup(pos, end, kind);
+        emitMarkup(pos, end, kind, !statements && pos === start);
     };
 
     /**
      * Emits a slice that contains no reactive constructs: copies it verbatim, expanding any markup region
      * into `h()` / component-call expressions (the same recursion the runtime codegen performs).
      */
-    const emitMarkup = (start: number, end: number, kind: MappingKind): void =>
+    const emitMarkup = (start: number, end: number, kind: MappingKind, expression: boolean): void =>
     {
         let j = start;
+        const search = createMarkupSearch(source, start, end, expression);
         for (;;)
         {
-            const m = findMarkupStart(source, j);
+            const m = search(j);
             if (m === -1 || m >= end)
             {
                 builder.copy(j, end, kind);
@@ -337,8 +338,9 @@ export function generateVirtualCode(source: string): VirtualCode
         const tag = node.tag;
         if (attr.spread)
         {
+            const span = spreadSpan(source, attr);
             builder.emit('...');
-            emitCode(spreadSpan(source, attr).start, spreadSpan(source, attr).end, 'attribute');
+            emitCode(span.start, span.end, 'attribute');
             return;
         }
 
@@ -1277,50 +1279,13 @@ function attrExprSpan(source: string, attr: MarkupAttribute): Span
 /** Trimmed span of the argument of a `{...spread}` attribute. */
 function spreadSpan(source: string, attr: MarkupAttribute): Span
 {
-    const open = source.indexOf('{', attr.start);
-    const close = matchBrace(source, open);
-    const inner = trimSpan(source, open + 1, close - 1);
+    const inner = trimSpan(source, attr.start + 1, attr.end - 1);
     // Skip a leading `...` so the mapped span covers just the expression.
     if (source.startsWith('...', inner.start))
     {
         return trimSpan(source, inner.start + 3, inner.end);
     }
     return inner;
-}
-
-/** Index just past the `}` matching the `{` at `open` (bracket-depth aware, ignoring strings). */
-function matchBrace(source: string, open: number): number
-{
-    let depth = 0;
-    let i = open;
-    while (i < source.length)
-    {
-        const ch = source[i];
-        if (ch === '"' || ch === '\'')
-        {
-            i = skipString(source, i);
-            continue;
-        }
-        if (ch === '`')
-        {
-            i = skipTemplate(source, i);
-            continue;
-        }
-        if (ch === '{')
-        {
-            depth++;
-        }
-        else if (ch === '}')
-        {
-            depth--;
-            if (depth === 0)
-            {
-                return i + 1;
-            }
-        }
-        i++;
-    }
-    return source.length;
 }
 
 /** Narrows `[start, end)` to exclude surrounding whitespace. */

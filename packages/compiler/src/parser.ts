@@ -10,15 +10,15 @@
  * declarations and the module's `style` section, and parses each component body into items -
  * state/derived declarations, effect blocks, the markup output, and opaque statement runs.
  *
- * Everything is driven by ONE low-level routine, `step`, which advances past a single structural unit
+ * The structural cursor advances past one unit
  * (trivia, a string/template/regex/number literal, an identifier, a whole markup region, a bracket, or
  * any other punctuator) and reports its class. The module split, the markup-aware block delimiter, the
- * statement-terminator scan, and the body walker are all thin loops over `step`, so the
+ * statement-terminator scan, and the body walker share the cursor, so the
  * non-code-skipping rules live in exactly one place.
  *
  * The non-obvious correctness point is MARKUP. A component body interleaves JS and markup, so naive
  * brace/`;` scanning breaks on markup text like `<p>it's me</p>` (the `'` would start a JS string and
- * run past the brace). `step` consumes whole markup regions via the markup parser, so an apostrophe in
+ * run past the brace). The cursor consumes whole markup regions via the markup parser, so an apostrophe in
  * markup text is just text and the brace/terminator counters stay honest.
  *
  * Inner JS/TS is NOT parsed here - it is left as SPANS for the semantic pass to hand to TypeScript.
@@ -28,7 +28,7 @@
  *     `<TypeParams>` list and a `(<param>)` signature; a leading `export`/`export default` stays in the
  *     preceding opaque region.
  *   - `style { ... }` is recognized only where a module-level statement may begin, so `style` stays
- *     a legal identifier; its interior is scanned with CSS rules rather than `step`.
+ *     a legal identifier; its interior is scanned with CSS rules rather than the structural cursor.
  *   - Reactive declarations are recognized only at the body's top level and must be `;`-terminated
  *     (no ASI); `effect` must be brace-delimited.
  *   - A `<` that opens neither valid markup nor a generic arrow is treated as an operator.
@@ -40,138 +40,25 @@
 import type { Module, ModuleItem, ComponentDecl, StyleSection, BodyItem } from './ast.ts';
 
 import {
-    isWhitespace,
+    isCodeWhitespace,
+    markupWalker,
     isIdentStart,
     isIdentPart,
-    isExpressionPosition,
-    skipString,
-    skipTemplate,
     skipLineComment,
     skipBlockComment,
-    skipRegex,
     skipBalanced,
     scanTypeParams
 } from './scanner.ts';
 import { parseMarkup, CompileError } from './markup-parser.ts';
 import { DECLARATION_KEYWORDS, WRAPPER_FN } from './keyword-spec.ts';
 
-/** The class of a single structural unit produced by {@link step}. */
-export type StepKind = 'trivia' | 'literal' | 'identifier' | 'markup' | 'open' | 'close' | 'punct';
+import type { Step } from './code-walker.ts';
+export type { Step, StepKind } from './code-walker.ts';
 
-/** The result of advancing past one structural unit. */
-export interface Step
+/** Structural cursor using the committed markup parser and the shared JS lexical goal. */
+export function createCodeWalker(source: string, from = 0, limit: number = source.length, expression = false, allowGenericArrows = false): (i: number) => Step
 {
-    /** Index just past the unit. */
-    next: number;
-    /** Updated "previous significant char" (unchanged for trivia). */
-    prevChar: string;
-    /** Updated "previous significant word" (unchanged for trivia). */
-    prevWord: string;
-    kind: StepKind;
-    /** For identifier: the word. For open/close/punct: the single char. */
-    text: string;
-}
-
-/**
- * Advances past exactly one structural unit starting at `i`, using the previous
- * significant token (`prevChar`/`prevWord`) to disambiguate `/` (regex vs
- * divide) and `<` (markup vs operator). Whole markup regions are consumed via
- * the markup parser; a `<` that fails to parse as markup is returned as a
- * punctuator.
- *
- * @internal
- */
-export function step(source: string, i: number, prevChar: string, prevWord: string): Step
-{
-    const ch = source[i];
-    if (ch === undefined)
-    {
-        // Callers loop while i < source.length, so this is unreachable; a one-char
-        // "punct" step keeps the contract total for the indexed-access check.
-        return { next: i + 1, prevChar, prevWord, kind: 'punct', text: '' };
-    }
-
-    // Trivia (transparent: prev* unchanged).
-    if (isWhitespace(ch))
-    {
-        let j = i + 1;
-        while (j < source.length && isWhitespace(source[j]))
-        {
-            j++;
-        }
-        return { next: j, prevChar, prevWord, kind: 'trivia', text: '' };
-    }
-    if (ch === '/' && source[i + 1] === '/')
-    {
-        return { next: skipLineComment(source, i), prevChar, prevWord, kind: 'trivia', text: '' };
-    }
-    if (ch === '/' && source[i + 1] === '*')
-    {
-        return { next: skipBlockComment(source, i), prevChar, prevWord, kind: 'trivia', text: '' };
-    }
-
-    // Literals (operands).
-    if (ch === '"' || ch === '\'')
-    {
-        return { next: skipString(source, i), prevChar: ch, prevWord: '', kind: 'literal', text: '' };
-    }
-    if (ch === '`')
-    {
-        return { next: skipTemplate(source, i), prevChar: '`', prevWord: '', kind: 'literal', text: '' };
-    }
-    if (ch === '/' && isExpressionPosition(prevChar, prevWord))
-    {
-        return { next: skipRegex(source, i), prevChar: '/', prevWord: '', kind: 'literal', text: '' };
-    }
-    if (ch >= '0' && ch <= '9')
-    {
-        let j = i + 1;
-        while (j < source.length && (isIdentPart(source[j]) || source[j] === '.'))
-        {
-            j++;
-        }
-        return { next: j, prevChar: '0', prevWord: '', kind: 'literal', text: '' };
-    }
-
-    // Markup region (consumed whole) when a `<` opens a tag/fragment in expression position. A `}`
-    // also qualifies: in a component body, markup legitimately follows a brace-delimited block
-    // (`effect { ... } <p/>`), and `}<Tag` is never a meaningful less-than. This
-    // matters for brace counting - if such markup is NOT consumed whole, its `</tag>` close is
-    // mis-scanned as a regex (`<` operator, then `/.../`) that swallows the component's closing brace.
-    // A failed parse (e.g. a generic arrow) falls through. `isTagOrFragmentStart` gates the next char.
-    if (ch === '<' && (isExpressionPosition(prevChar, prevWord) || prevChar === '}') && isTagOrFragmentStart(source[i + 1]))
-    {
-        const end = tryConsumeMarkup(source, i);
-        if (end !== -1)
-        {
-            return { next: end, prevChar: '>', prevWord: '', kind: 'markup', text: '' };
-        }
-    }
-
-    // Identifier (operand).
-    if (isIdentStart(ch))
-    {
-        let j = i + 1;
-        while (j < source.length && isIdentPart(source[j]))
-        {
-            j++;
-        }
-        const word = source.slice(i, j);
-        return { next: j, prevChar: source[j - 1] ?? '', prevWord: word, kind: 'identifier', text: word };
-    }
-
-    // Brackets.
-    if (ch === '{' || ch === '(' || ch === '[')
-    {
-        return { next: i + 1, prevChar: ch, prevWord: '', kind: 'open', text: ch };
-    }
-    if (ch === '}' || ch === ')' || ch === ']')
-    {
-        return { next: i + 1, prevChar: ch, prevWord: '', kind: 'close', text: ch };
-    }
-
-    // Any other single operator/structural character.
-    return { next: i + 1, prevChar: ch, prevWord: '', kind: 'punct', text: ch };
+    return markupWalker(source, from, limit, expression, i => tryConsumeMarkup(source, i), allowGenericArrows);
 }
 
 /**
@@ -203,8 +90,7 @@ export function parseModule(source: string): Module
     const items: ModuleItem[] = [];
     let opaqueStart = 0;
     let depth = 0;
-    let prevChar = '';
-    let prevWord = '';
+    const walk = createCodeWalker(source);
     let i = 0;
 
     const flushOpaque = (end: number): void =>
@@ -222,7 +108,7 @@ export function parseModule(source: string): Module
 
     while (i < source.length)
     {
-        const s = step(source, i, prevChar, prevWord);
+        const s = walk(i);
 
         if (s.kind === 'identifier' && depth === 0 && s.text === 'component')
         {
@@ -233,8 +119,6 @@ export function parseModule(source: string): Module
                 items.push(component);
                 i = component.end;
                 opaqueStart = i;
-                prevChar = '}';
-                prevWord = '';
                 atStmtStart = true;
                 continue;
             }
@@ -249,8 +133,6 @@ export function parseModule(source: string): Module
                 items.push(section);
                 i = section.end;
                 opaqueStart = i;
-                prevChar = '}';
-                prevWord = '';
                 atStmtStart = true;
                 continue;
             }
@@ -271,8 +153,6 @@ export function parseModule(source: string): Module
             atStmtStart = s.kind === 'punct' && s.text === ';' && depth === 0;
         }
         i = s.next;
-        prevChar = s.prevChar;
-        prevWord = s.prevWord;
     }
 
     flushOpaque(source.length);
@@ -327,11 +207,11 @@ function tryParseComponent(source: string, keywordStart: number, keywordEnd: num
         const close = skipBalanced(source, cursor); // index just past the matching `)`
         let ps = cursor + 1;
         let pe = close - 1;
-        while (ps < pe && isWhitespace(source[ps]))
+        while (ps < pe && isCodeWhitespace(source[ps]))
         {
             ps++;
         }
-        while (pe > ps && isWhitespace(source[pe - 1]))
+        while (pe > ps && isCodeWhitespace(source[pe - 1]))
         {
             pe--;
         }
@@ -396,7 +276,7 @@ function tryParseStyleSection(source: string, keywordStart: number, keywordEnd: 
  * Given `open` at the section's `{`, returns the index just past the matching `}`, or -1 when
  * the section is never closed.
  *
- * CSS rules, deliberately - NOT the JS {@link step} scanner the rest of the parser runs on.
+ * CSS rules, deliberately - NOT the JS {@link createCodeWalker} scanner the rest of the parser runs on.
  * Handing a stylesheet to the JS scanner silently truncates real CSS: `url(//cdn/x.png)` reads
  * as a line comment that swallows the rest of the line, and the `/` in `calc(100%/3)` opens a
  * regex that runs to the next slash. So only the three things CSS actually has are skipped -
@@ -488,8 +368,7 @@ function parseComponentBody(source: string, bodyStart: number, bodyEnd: number):
     const items: BodyItem[] = [];
     let i = bodyStart;
     let depth = 0;
-    let prevChar = '';
-    let prevWord = '';
+    const walk = createCodeWalker(source, bodyStart, bodyEnd);
     let atStmtStart = true;
     let opaqueStart = bodyStart;
 
@@ -497,11 +376,11 @@ function parseComponentBody(source: string, bodyStart: number, bodyEnd: number):
     {
         let s = opaqueStart;
         let e = end;
-        while (s < e && isWhitespace(source[s]))
+        while (s < e && isCodeWhitespace(source[s]))
         {
             s++;
         }
-        while (e > s && isWhitespace(source[e - 1]))
+        while (e > s && isCodeWhitespace(source[e - 1]))
         {
             e--;
         }
@@ -526,14 +405,12 @@ function parseComponentBody(source: string, bodyStart: number, bodyEnd: number):
                     i = construct.end;
                     opaqueStart = i;
                     atStmtStart = true;
-                    prevChar = '}';
-                    prevWord = '';
                     continue;
                 }
             }
         }
 
-        const s = step(source, i, prevChar, prevWord);
+        const s = walk(i);
         if (s.kind === 'open')
         {
             depth++;
@@ -555,8 +432,6 @@ function parseComponentBody(source: string, bodyStart: number, bodyEnd: number):
             atStmtStart = s.kind === 'punct' && s.text === ';' && depth === 0;
         }
         i = s.next;
-        prevChar = s.prevChar;
-        prevWord = s.prevWord;
     }
 
     flushOpaque(bodyEnd);
@@ -567,7 +442,7 @@ function parseComponentBody(source: string, bodyStart: number, bodyEnd: number):
  * Scans for an optional `with { ... }` options clause between `from` and `limit` (a single statement's
  * span). Returns the value end (trimmed, just before `with`) and the options-object `{ ... }` span
  * (braces included), or null when there is no clause. Strings/templates/comments and nested brackets
- * are skipped via {@link step}, so a `with` inside the value (e.g. in a string) is not mistaken for it.
+ * are skipped via {@link createCodeWalker}, so a `with` inside the value (e.g. in a string) is not mistaken for it.
  *
  * @internal
  */
@@ -575,11 +450,10 @@ function scanWithClause(source: string, from: number, limit: number): { valueEnd
 {
     let i = from;
     let depth = 0;
-    let prevChar = '';
-    let prevWord = '';
+    const walk = createCodeWalker(source, from, limit, true);
     while (i < limit)
     {
-        const s = step(source, i, prevChar, prevWord);
+        const s = walk(i);
         if (depth === 0 && s.kind === 'identifier' && s.text === 'with')
         {
             const brace = skipTrivia(source, s.next);
@@ -587,7 +461,7 @@ function scanWithClause(source: string, from: number, limit: number): { valueEnd
             {
                 const end = blockEnd(source, brace);
                 let valueEnd = i;
-                while (valueEnd > from && isWhitespace(source[valueEnd - 1]))
+                while (valueEnd > from && isCodeWhitespace(source[valueEnd - 1]))
                 {
                     valueEnd--;
                 }
@@ -611,8 +485,6 @@ function scanWithClause(source: string, from: number, limit: number): { valueEnd
             break;
         }
         i = s.next;
-        prevChar = s.prevChar;
-        prevWord = s.prevWord;
     }
     return null;
 }
@@ -663,6 +535,10 @@ export function tryParseConstruct(source: string, p: number, limit: number): Bod
     while (j < limit && isIdentPart(source[j]))
     {
         j++;
+    }
+    if (identifierCharAt(source, j))
+    {
+        return null;
     }
     const word = source.slice(p, j);
 
@@ -863,13 +739,12 @@ function continues(source: string, at: number): boolean
 function blockEnd(source: string, open: number): number
 {
     let depth = 0;
-    let prevChar = '';
-    let prevWord = '';
+    const walk = createCodeWalker(source, open);
     let i = open;
 
     while (i < source.length)
     {
-        const s = step(source, i, prevChar, prevWord);
+        const s = walk(i);
         if (s.kind === 'open')
         {
             depth++;
@@ -883,8 +758,6 @@ function blockEnd(source: string, open: number): number
             }
         }
         i = s.next;
-        prevChar = s.prevChar;
-        prevWord = s.prevWord;
     }
 
     return i;
@@ -900,13 +773,12 @@ function blockEnd(source: string, open: number): number
 function statementEnd(source: string, from: number, limit: number): number
 {
     let depth = 0;
-    let prevChar = '';
-    let prevWord = '';
+    const walk = createCodeWalker(source, from, limit, true);
     let i = from;
 
     while (i < limit)
     {
-        const s = step(source, i, prevChar, prevWord);
+        const s = walk(i);
         if (s.kind === 'open')
         {
             depth++;
@@ -920,8 +792,6 @@ function statementEnd(source: string, from: number, limit: number): number
             return s.next;
         }
         i = s.next;
-        prevChar = s.prevChar;
-        prevWord = s.prevWord;
     }
 
     return limit;
@@ -972,7 +842,7 @@ export function skipTrivia(source: string, i: number): number
 {
     for (;;)
     {
-        while (i < source.length && isWhitespace(source[i]))
+        while (i < source.length && isCodeWhitespace(source[i]))
         {
             i++;
         }

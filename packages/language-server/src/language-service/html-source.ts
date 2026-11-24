@@ -17,10 +17,10 @@
 // (its braces kept), except for any markup nested in a hole, which is restored
 // so `{cond && <p class="x"/>}` still gets HTML intelligence on the `<p>`.
 //
-// Reuses the compiler's scanner (findMarkupStart) and parser (parseMarkup); a
+// Reuses the compiler's scanner (createMarkupSearch) and parser (parseMarkup); a
 // half-typed tail is copied verbatim so completion keeps working mid-edit.
 
-import { findMarkupStart, parseMarkup } from '@azerothjs/compiler';
+import { createMarkupSearch, parseMarkup } from '@azerothjs/compiler';
 import type { MarkupElement, MarkupFragment } from '@azerothjs/compiler';
 
 /**
@@ -66,13 +66,14 @@ export function generateHtmlSource(source: string): string
         }
     };
 
-    const copyRegions = (lo: number, hi: number): void =>
+    const copyRegions = (lo: number, hi: number, expression: boolean): void =>
     {
+        const nextMarkup = createMarkupSearch(source, lo, hi, expression);
         let i = lo;
         for (;;)
         {
-            const s = findMarkupStart(source, i);
-            if (s === -1 || s >= hi)
+            const s = nextMarkup(i);
+            if (s === -1)
             {
                 return;
             }
@@ -129,7 +130,7 @@ export function generateHtmlSource(source: string): string
             if (child.kind === 'expression')
             {
                 blank(child.start + 1, child.end - 1);
-                copyRegions(child.start + 1, child.end - 1);
+                copyRegions(child.start + 1, child.end - 1, true);
             }
             else if (child.kind === 'element' || child.kind === 'fragment')
             {
@@ -138,6 +139,6 @@ export function generateHtmlSource(source: string): string
         }
     };
 
-    copyRegions(0, source.length);
+    copyRegions(0, source.length, false);
     return chars.join('');
 }

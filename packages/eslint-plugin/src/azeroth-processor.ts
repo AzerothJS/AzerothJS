@@ -23,7 +23,7 @@
 
 import { packageVersion } from './version.ts';
 import type { Linter, Rule } from 'eslint';
-import { findMarkupStart, generateVirtualCode, diagnoseModule, lintSource, parseMarkup, parseModule, type CodeMapping } from '@azerothjs/compiler';
+import { createMarkupSearch, generateVirtualCode, diagnoseModule, lintSource, parseMarkup, parseModule, type CodeMapping } from '@azerothjs/compiler';
 import { registerDocument } from './project-pool.ts';
 
 /** What preprocess stashes for postprocess, keyed by the `.azeroth` file name. */
@@ -486,10 +486,11 @@ function markupSkeleton(source: string): string
         }
     };
 
+    const nextMarkup = createMarkupSearch(source, 0, source.length);
     let pos = 0;
     while (pos < source.length)
     {
-        const at = findMarkupStart(source, pos);
+        const at = nextMarkup(pos);
         if (at === -1)
         {
             break;

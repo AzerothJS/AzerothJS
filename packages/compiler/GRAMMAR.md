@@ -31,8 +31,8 @@ to (§6.5).
 
 The parser advances through source one *structural unit* at a time. Units:
 
-- **Trivia** - whitespace; `// line` and `/* block */` comments. Transparent: trivia
-  never changes disambiguation state.
+- **Trivia** includes JavaScript whitespace and comments. A line terminator can affect
+  postfix operators and statement boundaries. Whitespace inside markup follows §6.
 - **String literals** - `'...'` and `"..."` with `\` escapes.
 - **Template literals** - `` `...` `` including nested `${ ... }` substitutions. A
   substitution is scanned as verbatim TypeScript (its braces, strings, and regexes are
@@ -41,44 +41,45 @@ The parser advances through source one *structural unit* at a time. Units:
 - **Regular-expression literals** - `/.../flags`, recognized only in expression
   position (§3); with character-class and escape handling.
 - **Numeric literals** - a digit begins a number.
-- **Identifiers / words** - `[A-Za-z_$][A-Za-z0-9_$]*`. (ASCII-only in this train; Unicode
-  identifier characters inside opaque TypeScript are untouched, but *recognized
-  words* - keywords, component names, declaration names - are ASCII.)
+- **Identifiers / words** in ordinary TypeScript include Unicode identifier characters.
+  Component names, framework keywords and declared reactive names use the ASCII
+  spelling described in sections 4, 5 and 7. An operator word inside a longer
+  identifier is part of the name.
 - **Markup regions** - a `<` in expression position that parses as markup (§3, §6).
 - **Punctuators** - everything else, single characters; `(`/`[`/`{` and their
   closers additionally track nesting depth.
 
 ## 3. Expression-position disambiguation (normative)
 
-Two characters are ambiguous in a C-family grammar: `/` (divide vs regex) and `<`
-(less-than vs markup vs type parameters). Both are resolved by ONE rule keyed on the
-previous significant token.
+The module parser, markup expressions and keyword scanner distinguish the start of
+an expression from a position that already holds an operand. This decides whether
+`/` starts a regular expression and whether `<` can open markup.
 
-**Expression position** holds when the previous significant token is:
+### 3.1 Division and regular expressions
 
-- one of the keywords
-  `return typeof instanceof in of do else yield await case delete void new`, or
-- one of the punctuators
-  `( { [ } , ; : ? = > < & | ! ~ + - * / % ^` - or the start of input.
+A literal, a name, an ordinary call, an object literal and a postfix `!`, `++` or
+`--` can be followed by division. This includes member names such as `props.in`,
+the value `of`, and a regex literal immediately followed by division, as in
+`/re// 2`. A type assertion with type arguments also ends an operand, as in
+`size as Box<number> / 2`.
 
-`}` is included for the block-then-render shape: `effect { ... } <div>...` or
-`dispose { ... } <ul>...`, where the markup after a reactive block must read as markup.
-The only case this misclassifies - `{obj}<ident`, an object literal compared with `<` and
-no space - is nonsensical and does not occur in practice.
+An expression can start with a regex after `throw`, a spread, the operator in a
+`for … of` head, or the closing parenthesis of an `if`, `while` or `for` head.
+For example, `if (ok) /[}]/.test(text)` keeps the brace inside the regex, and
+`obj.if(ok) / 2` divides the result of a method call.
 
-After an identifier, a literal, or a closing `)`/`]`, the position is *operator position*:
-`/` is division, `<` is less-than. A newline does NOT create expression position (there is
-no ASI here): `const x = foo` then a newline then `<div>` reads the `<` as less-than. End
-the statement with `;` before markup, or put the markup in a hole / at the render position.
-
-### 3.1 The `/` rule
-
-In expression position, `/` (not followed by `/` or `*`) begins a regular-expression
-literal. In operator position it is division.
+A line break can separate an uninitialized typed declaration from a regex
+statement. After `let matched: boolean` the next line can start with
+`/class Word/.test(text)`. Division can also continue across a line break, as in
+`const result = value` followed by `/2/g`. A newline alone does not introduce a
+framework statement (§7).
 
 ### 3.2 The `<` rules
 
-A `<` in operator position is always the less-than operator.
+After an operand, `<` can compare values and `<<` can shift a value. For example,
+`obj.in <limit` compares a member and `1 <<flags.bit` shifts a number. After a
+completed statement block, markup can supply the component's render output. The
+existing line-break rule also permits markup on the line after a postfix update.
 
 A `<` in expression position, followed by `>` or an identifier-start character, is a
 **markup candidate**. It resolves in this order:
@@ -571,69 +572,26 @@ an object after a conditional whose first branch has a return type, as in
 `c ? (v: number): number => v : { }`; and an object after `>`, `>>`, `>>>` or `void`.
 Declare the class in a statement of its own, or put the object in parentheses.
 
-Where keyword statements are looked for, `/` and `<` are read more closely than section 3
-states. A `/` opens a regular expression right after the `)` that closes an `if`,
-`while` or `for` head, after `throw` or `export default`, and after the `...` of a
-spread. It divides after a regular expression, after a postfix `++`, `--` or `!`, after
-a member name and after a value named `of`; in a `for` head `of` is the operator and a
-regular expression may follow it. A `!` at the start of a line is a prefix. A regular
-expression closes on its line, so a `/` whose text does not is a division. So is one
-whose closing `/` would stand right before one `/` that neither a `/` nor a `*` follows:
-the first `/` of a `//` closes no regular expression. In
-`size as Box<number> / 2; // it's half` the first `/` divides and the comment stays a
-comment. A regular expression that is itself divided, with the `/` of the division right
-after its closing `/` as in `/re// 2`, falls under the same rule: its first `/` is read
-as a division, its text as code and the rest of its line as a comment. A `<` that rule 2
-of 3.2 reads as a generic arrow's type parameters is an operator. At a `;` the scan
-drops a parenthesis, a bracket, a conditional and a class header that the text before it
-left open; the `;` of a `for` head is exempt. A closer closes only its own kind: a `}`
-closes nothing where a parenthesis or a bracket is the innermost thing open, and a `)`
-or `]` closes the nearest of the two, through an object literal left open in it, and
-never a block or a class body. So after `let a: boolean` with no `;`, the `)` and `]` of
-`/[)]/` on the next line close its `[` and nothing around it. The module and body scans
-of sections 4 and 5 keep the rule of section 3.
+Keyword discovery uses the lexical rules in §3. Punctuation and words inside
+a regex do not affect the surrounding statement list. Inside the block below,
+`batch` groups both writes. Its opening brace may also appear on the keyword's line.
 
-Three readings go wrong where keyword statements are looked for, and they are known
-limits. A line break creates no expression position and a no-break space is a
-punctuator, not whitespace, so a regular expression that starts a statement on the line
-after `let a: boolean` with no `;`, or one that follows a no-break space, is read as a
-division and its text as code. A `>` creates expression position, so a division right
-after the `>` that closes a type argument list, as in `size as Box<number> / 2` after
-`as` or `satisfies`, is taken for the start of a regular expression. And a regular
-expression divided by a `/` right after its closing `/`, as in `/re// 2`, is read by the
-rule above as a division, code and a comment.
+```azeroth
+let matched: boolean
+/class Word/.test(text)
+{
+    batch
+    {
+        left = next;
+        right = next;
+    }
+}
+```
 
-More of the line can then be read wrongly. A `/` taken for the start of a regular
-expression is corrected by the two rules above when nothing closes it on its line, or
-when what would close it is the first `/` of a `//` as the second rule reads one.
-Otherwise it closes on a later `/` of the line, be that a second division, a `/` in a
-string or the `/*` of a block comment: the code between the two is read as its text, and
-the rest of that string or comment as code. So it goes after the cast in
-`if (size as Box<number> / 2 > 1) { rest = size / 4; }`, and at the closing `/` of a
-regular expression read as a division when its text ends in an operator character or in
-a word such as `throw`, as in `/\d+/.test(s) && paths.push('/items/' + s);`. Text read
-as code can change what the braces after it are taken for: when it does not balance, as
-`/[)}]/` does not, and when its statement ends with no `;` either, where a labeled block
-after `/a?b/` is read as an object literal and a block after `/class Foo/` as a class
-body. The comment that `/re// 2 / 3;` ends in holds its `;`, so the statement goes on
-into the next line.
-
-A keyword statement after such a line, in the same function, method or block and at
-times past its end, can then be left as written, and a method named like a keyword after
-it can be rewritten as that keyword, as in the four forms above. A declaration with its
-name on the keyword's line, or a block keyword with its `{` on the keyword's line, is
-not JavaScript, and the module does not parse. A block keyword with its `{` on the next
-line and no `with` clause is an expression, a line break and a block, and a declaration
-keyword with its name on the next line is an expression, a line break and, where that
-line is a statement by itself as `extra = k;` is, a statement: both are JavaScript, so
-the module builds and the keyword is a plain name at run time. The page throws that
-`batch` or `state` is not defined, or, in a module that lowers another `batch` or
-`untrack` and so imports the helper of that name, the block runs with no error, its
-writes not batched or its reads tracked. The editor reports the unknown name in both
-spellings; the build's type check does not. Write the `;` that `let a: boolean` lacks,
-put the regular expression in parentheses, which reads it right after a no-break space
-and before a glued `/` too, or put the cast in parentheses, as in
-`(size as Box<number>) / 2`.
+Only a keyword with the appropriate shape at an admitted statement position is
+lowered. An explicitly terminated name (`batch;`), an ordinary method such as
+`effect(value) { return value; }` on an object, and a name used as an unbraced
+control body retain their TypeScript meaning.
 
 Everything else - including `ref`, `class:`/`style:`/`bind:` directives and event
 names - is an ordinary identifier or a markup-layer attribute name.

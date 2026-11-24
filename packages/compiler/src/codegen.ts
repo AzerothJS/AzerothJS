@@ -31,7 +31,7 @@
  * @internal The compiler's codegen stage; not re-exported from the package's public index.
  */
 
-import { findMarkupStart } from './scanner.ts';
+import { createMarkupSearch } from './scanner.ts';
 import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import { isFactoryProp, isBranchPosition, bindWriteBack, canonicalHandlerName, contentModel, hostNamespaceForTag, neutralizeRawText, leadingNewlinePad, escapeCarriageReturns, VOID_ELEMENTS } from 'azerothjs/semantics';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
@@ -285,7 +285,7 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
             // applies here, so reads stay verbatim (NO_SOURCES). Regions with no markup are unchanged
             // and stay verbatim for clean source maps.
             const raw = source.slice(item.start, item.end);
-            const projected = projectMarkup(raw, emit, NO_SOURCES, item.start);
+            const projected = projectMarkup(raw, emit, NO_SOURCES, item.start, undefined, false);
             // A module-level "composable" (a plain function using the keywords) lowers here too.
             // Guard on a keyword token so keyword-free module code (imports, types, helpers) stays
             // byte-identical for clean source maps.
@@ -1311,7 +1311,7 @@ function rewriteExpr(source: string, expr: ReactiveExpr, sources: ReactiveSource
  */
 function rewriteBody(source: string, start: number, end: number, sources: ReactiveSources, emit: Emit): string
 {
-    const projected = projectMarkup(source.slice(start, end), emit, sources, start);
+    const projected = projectMarkup(source.slice(start, end), emit, sources, start, undefined, false);
     if (emit.raw)
     {
         return projected;
@@ -1722,13 +1722,14 @@ function hasFragment(node: TemplateNode): boolean
  * ONE unified emitter: each markup region is lowered to a RenderPlan and emitted
  * by {@link emitNode}. No separate markup->h() emitter.
  */
-function projectMarkup(code: string, emit: Emit, sources: ReactiveSources, base = 0, namespace?: MarkupContext): string
+function projectMarkup(code: string, emit: Emit, sources: ReactiveSources, base = 0, namespace?: MarkupContext, expression = true): string
 {
     let out = '';
     let j = 0;
+    const search = createMarkupSearch(code, j, code.length, expression);
     for (;;)
     {
-        const start = findMarkupStart(code, j);
+        const start = search(j);
         if (start === -1)
         {
             return out + code.slice(j);

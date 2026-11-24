@@ -80,6 +80,33 @@ function processorMessages(source: string, name: string): Linter.LintMessage[]
 
 describe('autofix structural safety', () =>
 {
+    it.each([
+        ['Badge', 'Other', false],
+        ['2', '3', true]
+    ] as const)('checks a fix for %s after a markup value is divided', (token, replacement, safe) =>
+    {
+        const source = 'const n = <Measure/> / 2; const v = <Badge/>;';
+        const filename = 'Measure.azeroth';
+        const block = azerothProcessor.preprocess!(source, filename)[0];
+        const virtual = typeof block === 'string' ? block : block!.text;
+        const start = virtual.lastIndexOf(token);
+        expect(start).toBeGreaterThanOrEqual(0);
+        const message: Linter.LintMessage = {
+            ruleId: 'test/replacement', severity: 1, message: 'Replace this token', line: 1, column: start + 1,
+            fix: { range: [start, start + token.length], text: replacement }
+        };
+        const mapped = azerothProcessor.postprocess!([[message]], filename).find(m => m.ruleId === message.ruleId);
+        expect(mapped?.column).toBe(source.indexOf(token) + 1);
+        if (safe)
+        {
+            expect(mapped?.fix).toEqual({ range: [source.indexOf(token), source.indexOf(token) + token.length], text: replacement });
+        }
+        else
+        {
+            expect(mapped?.fix).toBeUndefined();
+        }
+    });
+
     it('a BOM file survives --fix with its structure intact and its indent corrected', () =>
     {
         const raw = BOM + FIXTURE;

@@ -25,7 +25,7 @@ import type {
 import {
     attributeParsingContext,
     decodeEntities,
-    findMarkupStart,
+    createMarkupSearch,
     rawTextEnd,
     isIdentStart,
     isIdentPart,
@@ -689,7 +689,7 @@ class MarkupParser
  * node.tag;  // 'h1'
  * end;       // 11, just past '</h1>'
  *
- * @see {@link findMarkupStart}, which supplies `start`.
+ * @see {@link createMarkupSearch}, which supplies `start`.
  */
 export function parseMarkup(src: string, start: number, parentNamespace?: MarkupContext): { node: MarkupElement | MarkupFragment; end: number }
 {
@@ -720,9 +720,10 @@ export function blankMarkupRegions(source: string, start: number, end: number): 
 {
     let out = source.slice(start, end);
     let pos = start;
+    const search = createMarkupSearch(source, start, end);
     for (;;)
     {
-        const at = findMarkupStart(source, pos);
+        const at = search(pos);
         if (at === -1 || at >= end)
         {
             return out;

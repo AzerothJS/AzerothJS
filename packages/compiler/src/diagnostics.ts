@@ -68,7 +68,7 @@ import type { ComponentDecl, ModuleItem } from './ast.ts';
 import type { ReactiveAnalysis } from './analyze.ts';
 import type { ReactiveSources } from './dep.ts';
 
-import { parseModule, step, skipTrivia, declaredName } from './parser.ts';
+import { parseModule, createCodeWalker, skipTrivia, declaredName } from './parser.ts';
 import { annotationEncoding, blankMarkupRegions, CompileError, parseMarkup } from './markup-parser.ts';
 import { findConstructs } from './lower-reactive.ts';
 import { evalConstant } from './optimize.ts';
@@ -108,7 +108,7 @@ import {
 import { attributeMarkupContext, isRenderCallback, loneFunctionChild, markupBindingName, withoutSpacing } from './markup-util.ts';
 import { analyzeComponent } from './analyze.ts';
 import { parseStatementsSlice, parseExpressionSlice, parseDeclarationSlice } from './ts-slice.ts';
-import { findMarkupStart, isIdentStart, isIdentPart, isWhitespace, scanTypeParams, skipBalanced } from './scanner.ts';
+import { createMarkupSearch, findMarkupStart, isIdentStart, isIdentPart, isWhitespace, scanTypeParams, skipBalanced } from './scanner.ts';
 import { traverseReactive } from './walk.ts';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
 import { assignToDerivedMessage } from './rewrite.ts';
@@ -208,12 +208,11 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
 function diagnoseMalformedComponents(source: string, start: number, end: number, out: AzerothDiagnostic[]): void
 {
     let i = start;
-    let prevChar = '';
-    let prevWord = '';
+    const walk = createCodeWalker(source, start, end);
     while (i < end)
     {
-        const s = step(source, i, prevChar, prevWord);
-        if (s.kind === 'identifier' && s.text === 'component' && prevChar !== '.')
+        const s = walk(i);
+        if (s.kind === 'identifier' && s.text === 'component' && !s.member)
         {
             const reason = malformedComponentReason(source, s.next);
             if (reason !== null)
@@ -229,8 +228,6 @@ function diagnoseMalformedComponents(source: string, start: number, end: number,
             }
         }
         i = s.next;
-        prevChar = s.prevChar;
-        prevWord = s.prevWord;
     }
 }
 
@@ -589,7 +586,7 @@ const STYLE_BINDERS: ReadonlySet<string> = new Set(['const', 'let', 'var', 'func
 
 /**
  * Reports a `style { ... }` shape sitting in code the parser handed to TypeScript. Walks with
- * the parser's own {@link step}, so `style` in a string, a comment or markup never triggers,
+ * the parser's own {@link createCodeWalker}, so `style` in a string, a comment or markup never triggers,
  * and a property (`el.style`), a binding (`const style = ...`) or a member (`{ style: x }`) is
  * left alone - only the bare keyword followed by `{` is flagged, which is meaningless in every
  * TypeScript reading.
@@ -599,12 +596,12 @@ const STYLE_BINDERS: ReadonlySet<string> = new Set(['const', 'let', 'var', 'func
 function diagnoseMisplacedStyle(source: string, start: number, end: number, inComponent: boolean, out: AzerothDiagnostic[]): void
 {
     let i = start;
-    let prevChar = '';
+    const walk = createCodeWalker(source, start, end);
     let prevWord = '';
     while (i < end)
     {
-        const s = step(source, i, prevChar, prevWord);
-        if (s.kind === 'identifier' && s.text === 'style' && prevChar !== '.' && !STYLE_BINDERS.has(prevWord))
+        const s = walk(i);
+        if (s.kind === 'identifier' && s.text === 'style' && !s.member && !STYLE_BINDERS.has(prevWord))
         {
             const brace = skipTrivia(source, s.next);
             if (source[brace] === '{')
@@ -623,7 +620,6 @@ function diagnoseMisplacedStyle(source: string, start: number, end: number, inCo
             }
         }
         i = s.next;
-        prevChar = s.prevChar;
         prevWord = s.prevWord;
     }
 }
@@ -737,7 +733,7 @@ function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out:
         //      (`0 < div > ...`), so the markup is not seen as markup; instead the whole thing runs
         //      to the component body end with no `;`. An unterminated value-declaration is the
         //      tell: statementEnd only returns a non-`;` end when it hit the body limit.
-        const absorbedMarkup = findAbsorbedMarkup(source, decl.nameEnd, decl.valueEnd);
+        const absorbedMarkup = findAbsorbedMarkup(source, decl.nameEnd, decl.valueEnd, source[decl.end - 1] !== ';');
         if (absorbedMarkup !== -1)
         {
             const tag = source.slice(absorbedMarkup).match(/^<\/?[A-Za-z][\w-]*|^<>/)?.[0].length ?? 1;
@@ -916,18 +912,42 @@ function diagnoseDeclarationShape(
  * fragment start, so a `<` comparison operator (`a < b`) is never mistaken for markup; and markup
  * nested inside brackets (depth > 0) is skipped, leaving only the top-level absorbed case.
  */
-function findAbsorbedMarkup(source: string, from: number, to: number): number
+function findAbsorbedMarkup(source: string, from: number, to: number, unterminated: boolean): number
 {
     let i = from;
     let depth = 0;
-    let prevChar = '';
-    let prevWord = '';
+    const walk = createCodeWalker(source, from, to, true);
+    let afterBrace = false;
     while (i < to)
     {
-        const s = step(source, i, prevChar, prevWord);
+        const s = walk(i);
         if (s.kind === 'markup' && depth === 0)
         {
             return i;
+        }
+        // An unterminated declaration can absorb a return tree as comparison tokens.
+        // In `0 <div>{value()}<p>...</p></div>` the apparent object ends at the hole's
+        // brace. Recover the location only when a complete nested tag actually follows.
+        if (unterminated && depth === 0 && afterBrace && s.text === '<' && isIdentStart(source[i + 1]))
+        {
+            try
+            {
+                if (parseMarkup(source, i).end <= to)
+                {
+                    return i;
+                }
+            }
+            catch (error)
+            {
+                if (!(error instanceof CompileError))
+                {
+                    throw error;
+                }
+            }
+        }
+        if (s.kind !== 'trivia')
+        {
+            afterBrace = s.kind === 'close' && s.text === '}';
         }
         if (s.kind === 'open')
         {
@@ -938,8 +958,6 @@ function findAbsorbedMarkup(source: string, from: number, to: number): number
             depth--;
         }
         i = s.next;
-        prevChar = s.prevChar;
-        prevWord = s.prevWord;
     }
     return -1;
 }
@@ -954,11 +972,10 @@ function findAbsorbedDeclaration(source: string, from: number, to: number): numb
 {
     let i = from;
     let depth = 0;
-    let prevChar = '';
-    let prevWord = '';
+    const walk = createCodeWalker(source, from, to, true);
     while (i < to)
     {
-        const s = step(source, i, prevChar, prevWord);
+        const s = walk(i);
         if (s.kind === 'open')
         {
             depth++;
@@ -967,14 +984,12 @@ function findAbsorbedDeclaration(source: string, from: number, to: number): numb
         {
             depth--;
         }
-        else if (s.kind === 'identifier' && depth === 0 && prevChar !== '.' && DECLARATION_KEYWORDS.has(s.text)
+        else if (s.kind === 'identifier' && depth === 0 && !s.member && DECLARATION_KEYWORDS.has(s.text)
             && declaredName(source, s.next, to, s.text === 'form') !== null)
         {
             return i;
         }
         i = s.next;
-        prevChar = s.prevChar;
-        prevWord = s.prevWord;
     }
     return -1;
 }
@@ -1833,9 +1848,10 @@ function diagnoseBindTargets(
     };
 
     /** Scans a TS slice for embedded markup, resolving the scope surrounding each region. */
-    const scanEmbedded = (start: number, end: number, scope: BindScope): void =>
+    const scanEmbedded = (start: number, end: number, scope: BindScope, expression = false): void =>
     {
-        const first = findMarkupStart(source, start);
+        const search = createMarkupSearch(source, start, end, expression);
+        const first = search(start);
         // A read is poisoned by the REGISTRY, so any component that registers a row can carry one
         // - including in a slice with no markup at all. It is ALSO poisoned when the lexical row
         // exists but the registry is empty, which is exactly what a component whose only <For>
@@ -1864,7 +1880,7 @@ function diagnoseBindTargets(
         let pos = start;
         for (;;)
         {
-            const at = findMarkupStart(source, pos);
+            const at = pos === start ? first : search(pos);
             if (at === -1 || at >= end)
             {
                 return;
@@ -1954,7 +1970,7 @@ function diagnoseBindTargets(
                 {
                     // A render-function attribute can hold markup of its own; its binds answer
                     // to the scope of the function that carries them.
-                    scanEmbedded(source.indexOf('{', attr.start) + 1, attr.end - 1, inner);
+                    scanEmbedded(source.indexOf('{', attr.start) + 1, attr.end - 1, inner, true);
                     continue;
                 }
                 if (isFileInput && attr.name === 'bind:value')
@@ -2009,7 +2025,7 @@ function diagnoseBindTargets(
             }
             else if (child.kind === 'expression')
             {
-                scanEmbedded(child.start + 1, child.end - 1, inner);
+                scanEmbedded(child.start + 1, child.end - 1, inner, true);
             }
         }
     };
@@ -2578,9 +2594,10 @@ function diagnoseDerivedWrites(source: string, component: ComponentDecl, analysi
 function* embeddedMarkupExpressions(code: string): Generator<{ code: string; codeStart: number }>
 {
     let pos = 0;
+    const search = createMarkupSearch(code, pos, code.length);
     while (pos < code.length)
     {
-        const at = findMarkupStart(code, pos);
+        const at = search(pos);
         if (at === -1 || at >= code.length)
         {
             return;
@@ -2646,7 +2663,7 @@ function walkMarkupDeep(source: string, node: MarkupElement | MarkupFragment, vi
         {
             if (attr.value.kind === 'expression')
             {
-                walkEmbeddedMarkup(source, source.indexOf('{', attr.start) + 1, attr.end - 1, visit, syntax, attributeMarkupContext(node, attr));
+                walkEmbeddedMarkup(source, source.indexOf('{', attr.start) + 1, attr.end - 1, visit, syntax, attributeMarkupContext(node, attr), true);
             }
         }
     }
@@ -2658,7 +2675,7 @@ function walkMarkupDeep(source: string, node: MarkupElement | MarkupFragment, vi
         }
         else if (child.kind === 'expression')
         {
-            walkEmbeddedMarkup(source, child.start + 1, child.end - 1, visit, syntax, child.namespace);
+            walkEmbeddedMarkup(source, child.start + 1, child.end - 1, visit, syntax, child.namespace, true);
         }
     }
 }
@@ -2668,12 +2685,13 @@ function walkMarkupDeep(source: string, node: MarkupElement | MarkupFragment, vi
  * A committed parse error refers to an actual markup span. A speculative parse can
  * instead have encountered TypeScript, so keep looking for the next markup region.
  */
-function walkEmbeddedMarkup(source: string, start: number, end: number, visit: (el: MarkupElement) => void, syntax?: AzerothDiagnostic[], namespace?: MarkupContext): void
+function walkEmbeddedMarkup(source: string, start: number, end: number, visit: (el: MarkupElement) => void, syntax?: AzerothDiagnostic[], namespace?: MarkupContext, expression = false): void
 {
     let pos = start;
+    const search = createMarkupSearch(source, start, end, expression);
     while (pos < end)
     {
-        const at = findMarkupStart(source, pos);
+        const at = search(pos);
         if (at === -1 || at >= end)
         {
             return;

@@ -34,7 +34,7 @@
  */
 
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute } from './types.ts';
-import { findMarkupStart } from './scanner.ts';
+import { createMarkupSearch } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
 import { isBindingAttr } from 'azerothjs/semantics';
 import { loneFunctionChild } from './markup-util.ts';
@@ -518,9 +518,10 @@ export function lintSource(source: string, options?: LintOptions): LintWarning[]
 {
     const warnings: LintWarning[] = [];
     let i = 0;
+    const search = createMarkupSearch(source, i, source.length);
     for (;;)
     {
-        const start = findMarkupStart(source, i);
+        const start = search(i);
         if (start === -1)
         {
             break;

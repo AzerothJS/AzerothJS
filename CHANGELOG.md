@@ -12,6 +12,11 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- Division after a TypeScript non-null assertion, update operator or type argument
+  now preserves following markup and component declarations. Regex statements in
+  handlers preserve the following reactive block, including a `batch` whose opening
+  brace is on the next line. Editor projections also retain the complete spread
+  attribute when its expression contains a brace in a regex or comment.
 - Compiled tables with bare rows now keep reactive cells and controls working on
   client mounts and hydration fallback. Consecutive rows with a known table
   structure share a `tbody`. Use explicit sections when a direct expression can
