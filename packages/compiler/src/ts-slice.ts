@@ -444,7 +444,8 @@ export function parseComponentParam(paramText: string, base: number): ComponentP
  * @returns A map of local binding name -> the replacement expression.
  * @internal
  */
-export function parsePropsPattern(patternText: string): Map<string, string>
+export function parsePropsPattern(patternText: string, receiver = 'props',
+    defaultValue: (expr: ts.Expression) => string = expr => expr.getText()): Map<string, string>
 {
     const aliases = new Map<string, string>();
     const sf = parse(`const ${ patternText } = __props;`);
@@ -496,10 +497,10 @@ export function parsePropsPattern(patternText: string): Map<string, string>
                 continue; // array pattern or other - not aliased
             }
             const local = element.name.text;
-            const def = element.initializer !== undefined ? element.initializer.getText(sf) : null;
+            const def = element.initializer !== undefined ? defaultValue(element.initializer) : null;
             aliases.set(local, def !== null ? `(${ read } ?? ${ def })` : read);
         }
     };
-    walk(decl.name, 'props');
+    walk(decl.name, receiver);
     return aliases;
 }

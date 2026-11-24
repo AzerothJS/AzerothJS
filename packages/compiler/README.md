@@ -177,14 +177,20 @@ During a server render, a `cleanup` block or an `onCleanup` call outside an effe
 `dispose` / `onRootDispose` do run, at the end of the render, as does a cleanup inside a memo or a
 `derived` value, so their bodies must not need a DOM.
 
-How the compiler emits each dynamic `{expr}` decides whether it is reactive:
+On a host element, the compiler tracks reads of component props, state and derived values
+in dynamic text and attributes. The same rule applies inside a directly returned host
+element such as `() => <span>{ props.name }</span>`. A render callback's parameter
+shadows a component declaration with the same name in its markup and event handlers.
 
-- **On a host element**: an event handler (`onClick={...}`), a function literal, a bare reference, or an
-  array/object literal is passed through verbatim; any other expression is wrapped in a getter
-  `() => (expr)` so the runtime re-applies it when the signals it reads change.
-- **On a component tag**: every prop is passed as a getter-object entry
-  (`Child({ get name() { return expr } })`), read uniformly as `props.name`, so one prop contract
-  covers user, library, and built-in components.
+For expressions without a known component dependency, the compiler preserves a bare
+reference, a function value or a bare array or object literal. A computed expression such
+as `['pill', readTone()].join(' ')`, `labels[index()]` or `(() => readTone())()` is
+wrapped in a getter. Its text or attribute updates when the underlying signal changes.
+An event handler runs on its event.
+
+On a component tag, props are exposed through getter-object entries such as
+`Child({ get name() { return expr } })`. User, library and built-in components read
+them uniformly as `props.name`.
 
 For conditional classes and styles the canonical authoring form is the directive: `class:active={isActive}`
 toggles one class, `style:color={tone}` sets one property, and both merge with a static `class="..."` /

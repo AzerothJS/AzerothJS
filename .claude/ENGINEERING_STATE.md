@@ -1,14 +1,14 @@
 # Engineering handoff
 
-## Current framework handoff, 2026-11-21
+## Current framework handoff, 2026-11-24
 
-**Rendered route ownership complete.** A-315, A-316, A-311 and A-335 close together, including tracker entries 47 and 51. A routed component keeps its params and loader outcome during a cold hold or leave. A departing layout keeps its nested outlet. A retained layout can observe `useRenderedMatch()` to retry a failed outlet when the next route is ready. The [implementation and verification](decisions/rendered-route-ownership.md) follow the [audit on the previous runtime](decisions/rendered-route-audit.md). Use `git log -1 -- .claude/decisions/rendered-route-ownership.md` for the implementation commit.
+**Compiler unit 9 complete.** A-213, A-214 and A-287 close tracker entry 40. A host render callback retains its lexical scope and tracks its own bindings. A joined or indexed collection updates with its inputs. A cached document using the older SSR hole layout can recover on its first hydration with the new compiler. The [implementation decision](decisions/compiler-arrow-bindings.md) records compatibility, measurements, review and verification. The implementation commit is available with `git log -1 -- .claude/decisions/compiler-arrow-bindings.md`.
 
-**Verification.** The baseline failed 30 of the 35 new cases. The fix passed all 35 and the suite detected all 18 independently introduced regressions. The full repository gate passed 7,393 tests with two skipped across 439 files. Package smoke passed for all 15 packages. A packed public app passed seven workflows each in Chromium, Firefox and WebKit. The registered Playwright agent separately verified the cold read, outlet-boundary reset and named transition. The decision records the original WebSocket timeout and successful full rerun.
+**Verification.** The baseline failed 94 of the 132 new tests and passed 38 controls. The final source passed all 132 and all 7,525 tests in the passing repository run, with two skipped. All 15 packages passed the clean consumer smoke test. A packed application passed hydrated SSR, client-only render and old-HTML recovery in Chromium, Firefox and WebKit. Registered Playwright QA separately confirmed both render modes. A-171, A-181 and A-215 retain their separate scope.
 
-**Next action.** Start compiler unit 9, A-213, A-214 and A-287. Reproduce the frozen arrow child with a changing public input, then distinguish lexical alias shadowing and collection-prefix binding in compiled output. Pin the three cases before modifying lowering. Unit 9 precedes units 10 and 11.
+**Next action.** Start unit 11, A-259 and A-263. Reproduce a setup read inside an error boundary and a component scope, including a retained input and a genuine error/reset control. Decide how construction and refresh should subscribe before changing either owner. The roadmap puts this unit before A-288 and unit 10.
 
-**Previous work.** Unit 8 (`758a3a4`) closed A-163, A-304, A-178, A-180, A-177 and A-179, tracker entry 29. See the [guard and hydration decision](decisions/router-boot.md). `8196b48` completed unit 7, `18c3238` closed A-208, `72cd2ab` closed A-206 and A-207, and `54c148e` closed A-324 through A-326. A-288 and A-334 remain separate follow-ups. The original roadmap and tracker remain local to this checkout.
+**Previous work.** `b945b60` completed [rendered route ownership](decisions/rendered-route-ownership.md), following the reachability audit in `f36e53b`. Unit 8 (`758a3a4`) completed [guarded route hydration](decisions/router-boot.md). The original roadmap and tracker remain local to this checkout.
 
 ## Bootstrap history
 

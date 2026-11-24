@@ -1,18 +1,21 @@
 // Compiles a component through the REAL generateModule and returns the live component
 // function, with the emitted 'azerothjs/internal' import satisfied by the aliased runtime.
 // No mocks: the conformance suite must exercise the exact code a build would ship.
-import { generateModule } from '../../src/codegen.ts';
+import { generateModule, type GenerateOptions } from '../../src/codegen.ts';
+import { transpileModule, ModuleKind, ScriptTarget } from 'typescript';
 import * as internal from 'azerothjs/internal';
 
 const INTERNAL_IMPORT = /import \{([^}]+)\} from 'azerothjs\/internal';/;
 
 export type CompiledComponent = (props?: Record<string, unknown>) => unknown;
 
-export function compileComponent(source: string, name: string): CompiledComponent
+export function compileComponent(source: string, name: string, options?: GenerateOptions, typed = false): CompiledComponent
 {
-    const { code } = generateModule(source);
-    const body = code.replace(INTERNAL_IMPORT, 'const {$1} = __internal;');
-    if (body === code)
+    const { code } = generateModule(source, undefined, options);
+    // The public compiler emits TypeScript for the bundler. Typed fixtures also run its JS transform.
+    const executable = typed ? transpileModule(code, { compilerOptions: { module: ModuleKind.ESNext, target: ScriptTarget.ESNext } }).outputText : code;
+    const body = executable.replace(INTERNAL_IMPORT, 'const {$1} = __internal;');
+    if (body === executable)
     {
         throw new Error('executor: emitted module has no azerothjs/internal import to rewrite');
     }

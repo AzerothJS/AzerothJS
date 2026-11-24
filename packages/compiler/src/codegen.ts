@@ -35,7 +35,7 @@ import { findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import { isFactoryProp, isBranchPosition, bindWriteBack, canonicalHandlerName, contentModel, leadingNewlinePad, escapeCarriageReturns, VOID_ELEMENTS } from 'azerothjs/semantics';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
-import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isCollectionLiteral, objectKey, alreadyImports } from './markup-util.ts';
+import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isLiteralValue, objectKey, alreadyImports } from './markup-util.ts';
 import { buildLineStarts, locationFor, encodeMappings, type SourceMapV3, type RawSegment } from './sourcemap.ts';
 import type { MarkupElement, MarkupFragment, Span } from './types.ts';
 import { parseModule } from './parser.ts';
@@ -49,7 +49,7 @@ import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY, isFactoryItem, LOWERABLE_WORDS } fr
 import { setterName } from './rewrite.ts';
 import { MARKER_ROW } from './markers.ts';
 import { lowerStatements, lowerExpression, watchDepGetters } from './lower-reactive.ts';
-import type { ReactiveSources } from './dep.ts';
+import { renderSources, type ReactiveSources } from './dep.ts';
 import type { ComponentDecl } from './ast.ts';
 import { isReactive, type RenderPlan, type TemplateNode, type TemplateElement, type Binding, type TextBinding, type BindBinding, type EventBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren, type LetBinding, type PropEntry } from './ir.ts';
 
@@ -396,7 +396,7 @@ interface ComponentEmit { code: string; spans: { genOffset: number; sourceOffset
 /** Emits a single component as a factory function, with per-line source-map anchors. */
 function generateComponent(source: string, component: ComponentDecl, emit: Emit): ComponentEmit
 {
-    const analysis = analyzeComponent(source, component);
+    const analysis = analyzeComponent(source, component, emit.shadowed);
     const lowered = lowerComponent(source, component, analysis, emit.classes, emit.shadowed);
     const plan = lowered === null ? null : optimize(source, lowered);
     if (plan !== null)
@@ -554,7 +554,8 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
     // Wrapping here rather than at the call sites is what keeps this a single integration point:
     // every compiled component gets it, and no emitted call site changes shape.
     emit.used.add('componentScope');
-    const sig = `function ${ component.name }${ typeParams }(${ paramName } = {})\n{\n    return componentScope(() =>\n    {\n`;
+    const capture = Array.from(analysis.propCaptures ?? [], ([name, expr]) => `    const ${ name } = ${ expr };\n`).join('');
+    const sig = `function ${ component.name }${ typeParams }(${ paramName } = {})\n{\n${ capture }    return componentScope(() =>\n    {\n`;
 
     // One source-map anchor per emitted line, keyed to the construct's source offset (the signature
     // maps to the component declaration). Without this the whole body collapses onto one piece and a
@@ -1024,7 +1025,7 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
         const lets = binding.children.kind !== 'dynamic' ? binding.children.lets : undefined;
         const letChild = lets !== undefined && lets.length > 0 ? binding.children : null;
         const childSources = letChild !== null
-            ? { ...sources, rowItems: letNames(source, lets ?? [], sources.rowItems) }
+            ? letSources(source, lets ?? [], sources)
             : sources;
         const childValue = emitChildrenValue(source, binding.children, childSources, emit);
         // In RAW mode the rewrite is deferred to the enclosing pass, which walks plain text with
@@ -1056,7 +1057,7 @@ function emitChildrenValue(source: string, children: ComponentChildren, sources:
     if (children.kind === 'render')
     {
         // A clonable sub-plan (A1) -> a row factory that clones + wires the row;
-        // its bindings are reactive: true, so per-row signals update.
+        // Each binding has its own dependency analysis within the parameter scope.
         if ('template' in children.body)
         {
             // The captured param span already includes its parens when present
@@ -1073,7 +1074,8 @@ function emitChildrenValue(source: string, children: ComponentChildren, sources:
             {
                 return `${ param } => (${ emitNode(source, children.body.template, children.body, sources, emit) })`;
             }
-            return `${ param } => { ${ emitUnifiedBody(source, children.body, sources, emit) } }`;
+            const scoped = children.param === null ? sources : renderSources(sources, param);
+            return `${ param } => { ${ emitUnifiedBody(source, children.body, scoped, emit) } }`;
         }
         // Pass-through: the body span is the whole arrow (`(i) => ...`); emit verbatim.
         return rewriteExpr(source, children.body, sources, emit);
@@ -1111,18 +1113,20 @@ function letParamList(source: string, lets: readonly LetBinding[]): string
  * nesting composes so nested Fors see both rows. Each span is a
  * bare identifier (`let={ item }` -> `item`); diagnoseModule rejects anything else.
  */
-function letNames(source: string, lets: readonly LetBinding[], outer: ReadonlySet<string> | undefined): ReadonlySet<string>
+function letSources(source: string, lets: readonly LetBinding[], sources: ReactiveSources): ReactiveSources
 {
-    const names = new Set(outer ?? []);
+    const rowItems = new Set(sources.rowItems);
+    const locals = new Set(sources.locals);
     for (const entry of lets)
     {
         const lead = /^\s*([A-Za-z_$][\w$]*)/.exec(source.slice(entry.span.start, entry.span.end));
         if (lead?.[1] !== undefined)
         {
-            names.add(lead[1]);
+            rowItems.add(lead[1]);
+            locals.delete(lead[1]);
         }
     }
-    return names;
+    return { ...sources, rowItems, locals };
 }
 
 /**
@@ -1280,7 +1284,7 @@ function exprValue(source: string, expr: ReactiveExpr, sources: ReactiveSources,
         // so a reactive read stays fine-grained; h() calls the getter either way, so a static read
         // (a row param) is still correct. A function/collection literal is already the right shape.
         const t = rewritten.trim();
-        return isFunctionLiteral(t) || isCollectionLiteral(t) ? rewritten : `() => (${ rewritten })`;
+        return isLiteralValue(t) ? rewritten : `() => (${ rewritten })`;
     }
     // isReactive covers reads the dep analysis can SEE (component sources) plus the
     // explicit reactive flag. For the rest, fall back to a conservative reactivity heuristic so a

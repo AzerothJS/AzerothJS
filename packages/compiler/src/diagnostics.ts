@@ -69,7 +69,7 @@ import type { ReactiveAnalysis } from './analyze.ts';
 import type { ReactiveSources } from './dep.ts';
 
 import { parseModule, step, skipTrivia, declaredName } from './parser.ts';
-import { parseMarkup } from './markup-parser.ts';
+import { blankMarkupRegions, parseMarkup } from './markup-parser.ts';
 import { findConstructs } from './lower-reactive.ts';
 import { evalConstant } from './optimize.ts';
 import { arrayFormEachName } from './analyze.ts';
@@ -103,7 +103,7 @@ import {
     BUILTIN_SET,
     ONE_ELEMENT_COMPONENTS
 } from 'azerothjs/semantics';
-import { isFunctionLiteral, loneFunctionChild, withoutSpacing } from './markup-util.ts';
+import { isRenderCallback, loneFunctionChild, withoutSpacing } from './markup-util.ts';
 import { analyzeComponent } from './analyze.ts';
 import { parseStatementsSlice, parseExpressionSlice, parseDeclarationSlice } from './ts-slice.ts';
 import { findMarkupStart, isIdentStart, isIdentPart, isWhitespace, scanTypeParams, skipBalanced } from './scanner.ts';
@@ -983,7 +983,7 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
     const malformedSpans = diagnoseDeclarationSlips(source, component, out);
 
     // azeroth/constant-derived and azeroth/inert-effect
-    const analysis = analyzeComponent(source, component);
+    const analysis = analyzeComponent(source, component, shadowed);
 
     // A rest element in the props parameter (`{ a, ...rest }`) cannot be lowered: props are read
     // through per-key getters to stay reactive, and there is no single getter for "the remaining
@@ -2341,37 +2341,6 @@ function collectBoundNames(name: ts.BindingName, into: Set<string>): void
 }
 
 /**
- * Replaces every markup region in `source[start..end)` with `0` plus spaces, keeping all
- * offsets stable, so TypeScript can parse the surrounding statements cleanly. Markup is not TS;
- * an unblanked parse swallows whatever follows it.
- */
-function blankMarkupRegions(source: string, start: number, end: number): string
-{
-    let out = source.slice(start, end);
-    let pos = start;
-    for (;;)
-    {
-        const at = findMarkupStart(source, pos);
-        if (at === -1 || at >= end)
-        {
-            return out;
-        }
-        let regionEnd: number;
-        try
-        {
-            regionEnd = parseMarkup(source, at).end;
-        }
-        catch
-        {
-            return out;
-        }
-        const stop = Math.min(regionEnd, end);
-        out = out.slice(0, at - start) + '0' + ' '.repeat(stop - at - 1) + out.slice(stop - start);
-        pos = regionEnd;
-    }
-}
-
-/**
  * The scope surrounding position `pos` in a parsed slice: parameter names of every enclosing
  * function and variable names of every enclosing block, innermost winning. These SHADOW component
  * and module declarations, which is what keeps `(x) => <input bind:value={x} />` resolving to
@@ -2824,7 +2793,7 @@ function callbackChildRule(el: MarkupElement, out: AzerothDiagnostic[], shadowed
     const only = el.children.filter(child => !(child.kind === 'text' && child.value.trim() === ''));
     const solo = only[0];
     const takesParams = only.length === 1 && solo !== undefined && solo.kind === 'expression'
-        && isFunctionLiteral(solo.code.trim()) && !/^\(\s*\)/.test(solo.code.trim());
+        && isRenderCallback(solo.code);
     const child = names.length > 0 && lone !== undefined
         ? lone
         : takesParams && (el.tag !== 'For' || lone !== undefined) ? solo : undefined;

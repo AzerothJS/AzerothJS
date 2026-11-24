@@ -16,6 +16,9 @@
 /** The component's reactive sources, by name. */
 export interface ReactiveSources
 {
+    /** Ordinary parameters enclosing a detached render body. */
+    locals?: ReadonlySet<string>;
+
     /** `state` and `derived` declaration names. */
     names: ReadonlySet<string>;
 
@@ -82,3 +85,10 @@ export type Dep =
     | { kind: 'source'; name: string }
     /** A read of a props field (`props.name`), or the whole bag (`field: '*'`). */
     | { kind: 'prop'; field: string };
+
+/** Enter the simple identifier parameter list accepted for a detached host body. */
+export function renderSources(sources: ReactiveSources, parameters: string): ReactiveSources
+{
+    const names = parameters.match(/[A-Za-z_$][\w$]*/g);
+    return names === null ? sources : { ...sources, locals: new Set([...(sources.locals ?? []), ...names]) };
+}

@@ -12,7 +12,7 @@
  * emission mechanics:
  *   - wrapDynamic   - the reactivity-shape heuristic (wrap a computed expression in a getter; leave a
  *                     bare getter / fn-literal / collection verbatim);
- *   - isFunctionLiteral / isBareReference / isCollectionLiteral - the expression-shape predicates the
+ *   - isFunctionLiteral / isBareReference / isLiteralValue - the expression-shape predicates the
  *                     reactive-wrapping heuristic is built from (shared by codegen, the IR lowerer, and
  *                     the type projection so all three classify `{expr}` identically);
  *   - loneFunctionChild - the child the IR lowerer passes through as a tag's children function
@@ -29,6 +29,9 @@
  * package index.
  */
 
+import * as ts from 'typescript';
+import { blankMarkupRegions } from './markup-parser.ts';
+import { parseExpressionSlice } from './ts-slice.ts';
 import type {
     MarkupChild,
     MarkupElement,
@@ -37,23 +40,72 @@ import type {
 } from './types.ts';
 
 /**
- * True when `code` is an arrow/function literal - pass it through unwrapped.
- *
- * @example
- * ```ts
- * isFunctionLiteral('(item) => item.name'); // true
- * isFunctionLiteral('count() + 1');         // false
- * ```
+ * Classify the whole expression. Looking only at its opening token makes a join,
+ * index or immediately invoked function look like a value to pass through.
  */
+function literalKind(code: string): 'callback' | 'thunk' | 'collection' | undefined
+{
+    const text = code.trim();
+    // Most expressions are simple reads or calls. Avoid parsing those a second time.
+    if (!/^[([{</]/.test(text) && !/^(?:async|function)\b/.test(text) && !text.includes('=>'))
+    {
+        return undefined;
+    }
+    const input = text.includes('<') ? blankMarkupRegions(text, 0, text.length) : text;
+    const { sourceFile } = parseExpressionSlice(input, 0);
+    const statement = sourceFile.statements[0];
+    if (sourceFile.statements.length !== 1 || statement === undefined || !ts.isExpressionStatement(statement)
+        || !ts.isParenthesizedExpression(statement.expression))
+    {
+        return undefined;
+    }
+    let expr = statement.expression.expression;
+    while (ts.isParenthesizedExpression(expr) || ts.isAsExpression(expr) || ts.isSatisfiesExpression(expr)
+        || ts.isNonNullExpression(expr) || ts.isTypeAssertionExpression(expr))
+    {
+        expr = expr.expression;
+    }
+    if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr))
+    {
+        return expr.parameters.length > 0 ? 'callback' : 'thunk';
+    }
+    // Grouped collections have always requested a computed binding. Preserve that
+    // spelling, including on an expression with an erased TypeScript assertion.
+    if ((text.startsWith('[') && ts.isArrayLiteralExpression(expr))
+        || (text.startsWith('{') && ts.isObjectLiteralExpression(expr)))
+    {
+        return 'collection';
+    }
+    return undefined;
+}
+
+/** True for a function value, including a render callback containing markup. */
 export function isFunctionLiteral(code: string): boolean
 {
-    const t = code.trim();
-    if (/^async\s+function\b/.test(t) || /^function\b/.test(t))
+    if (!code.includes('=>') && !/\bfunction\b/.test(code))
     {
-        return true;
+        return false;
     }
-    // Arrow: `x => ...`, `(...) => ...`, `async x => ...`, `async (...) => ...`.
-    return /^(async\s+)?(\([^]*?\)|[A-Za-z_$][\w$]*)\s*=>/.test(t);
+    const kind = literalKind(code);
+    return kind === 'callback' || kind === 'thunk';
+}
+
+/** A callback with parameters receives contextual types from its component. */
+export function isRenderCallback(code: string): boolean
+{
+    return literalKind(code) === 'callback';
+}
+
+/** A comment-led hole can be a thunk inside a generated let= branch. */
+export function isDirectFunctionChild(code: string): boolean
+{
+    return /^\s*\/(?:\*|\/)/.test(code) ? isRenderCallback(code) : isFunctionLiteral(code);
+}
+
+/** Whole function and bare collection values pass through to the runtime. */
+export function isLiteralValue(code: string): boolean
+{
+    return literalKind(code) !== undefined;
 }
 
 /**
@@ -69,7 +121,7 @@ export function isFunctionLiteral(code: string): boolean
 export function loneFunctionChild(children: MarkupChild[]): MarkupExpression | undefined
 {
     const only = children[0];
-    return children.length === 1 && only?.kind === 'expression' && isFunctionLiteral(only.code) ? only : undefined;
+    return children.length === 1 && only?.kind === 'expression' && isDirectFunctionChild(only.code) ? only : undefined;
 }
 
 /**
@@ -101,21 +153,6 @@ export function isBareReference(code: string): boolean
 }
 
 /**
- * True when `code` is an array or object literal (`[...]` / `{...}`).
- *
- * @example
- * ```ts
- * isCollectionLiteral('[resource]'); // true
- * isCollectionLiteral('count()');    // false
- * ```
- */
-export function isCollectionLiteral(code: string): boolean
-{
-    const t = code.trim();
-    return t.startsWith('[') || t.startsWith('{');
-}
-
-/**
  * Decides how a dynamic `{expr}` is emitted. Passed through verbatim when it's
  * already the right shape for the runtime:
  *   - an event handler,
@@ -137,9 +174,8 @@ export function wrapDynamic(code: string, isEventHandler: boolean): string
     const compiled = code.trim();
     if (
         isEventHandler ||
-        isFunctionLiteral(compiled) ||
         isBareReference(compiled) ||
-        isCollectionLiteral(compiled)
+        isLiteralValue(compiled)
     )
     {
         return compiled;

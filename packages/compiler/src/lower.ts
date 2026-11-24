@@ -21,7 +21,7 @@
  * component's markup children form a self-contained nested plan with its own id space and bindings.
  *
  * A render-function child (`<For>{(i) => ...}</For>`) whose body is a single host element lowers into a
- * CLONABLE sub-plan (tryLowerRenderClone); other render bodies pass through as the arrow expression.
+ * CLONABLE sub-plan (renderClone); other render bodies pass through as the arrow expression.
  * Markup nested inside a hole expression (`{cond ? <a/> : <b/>}`, `{list.map(i => <li/>)}`) stays
  * inside that binding's expression and is compiled by codegen (lowerMarkup + emitNode) rather than
  * becoming template structure.
@@ -37,7 +37,7 @@
  */
 
 import { isWhitespace, findMarkupStart } from './scanner.ts';
-import { parseMarkup } from './markup-parser.ts';
+import { parseMarkup, CompileError } from './markup-parser.ts';
 import { hostEventType, bindWriteBack, isBindingAttr, isBranchPosition, isChildResolvedProperty, isTextValueProperty, normalizeLineBreaks, CONTENT_PROPERTIES, BUILTIN_SET as BUILTINS, ONE_ELEMENT_COMPONENTS } from 'azerothjs/semantics';
 import { loneFunctionChild, withoutSpacing } from './markup-util.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
@@ -73,8 +73,7 @@ interface Ctx
  *
  * `analysis` MUST match this `source` and `component`. Dependency sets are keyed by each
  * analyzed expression's source START, so every binding looks up its deps by span - which
- * keeps the two stages in lock-step through one shared key, but also means a stale analysis
- * silently mis-wires reactivity instead of erroring.
+ * keeps the two stages in lock-step. A binding missing its analysis scope is rejected.
  *
  * @param source - The original source.
  * @param component - The declaration from parseModule.
@@ -143,7 +142,7 @@ export function lowerComponent(source: string, component: ComponentDecl, analysi
 export function lowerMarkup(source: string, node: MarkupElement | MarkupFragment, classes: ClassScope = null, shadowed: ReadonlySet<string> = new Set()): RenderPlan
 {
     const ctx: Ctx = { next: 0, bindings: [] };
-    const template = createLowerer(source, new Map(), classes, shadowed).lowerNode(node, ctx);
+    const template = createLowerer(source, null, classes, shadowed).lowerNode(node, ctx);
     return { template, bindings: ctx.bindings };
 }
 
@@ -159,7 +158,7 @@ type ClassScope = Readonly<Record<string, string>> | null;
  * Builds the lowering closures bound to a `source`, a dependency-scope map, the style scope and the
  * builtin names the module imports from elsewhere.
  */
-function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>, classes: ClassScope, shadowed: ReadonlySet<string>): { lowerNode: (node: MarkupElement | MarkupFragment, ctx: Ctx) => TemplateNode }
+function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope> | null, classes: ClassScope, shadowed: ReadonlySet<string>): { lowerNode: (node: MarkupElement | MarkupFragment, ctx: Ctx) => TemplateNode }
 {
     /** One class name through the style scope; unknown names (globals, utilities) pass through. */
     const scopeName = (name: string): string => classes?.[name] ?? name;
@@ -170,7 +169,11 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
 
     const exprFor = (span: Span, lookupKey: number): ReactiveExpr =>
     {
-        const scope = scopeByStart.get(lookupKey);
+        const scope = scopeByStart?.get(lookupKey);
+        if (scopeByStart !== null && scope === undefined)
+        {
+            throw new CompileError('Missing analysis scope for a component markup binding.', lookupKey);
+        }
         return { span, deps: scope?.deps ?? [], pure: scope?.pure ?? true };
     };
 
@@ -407,9 +410,7 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
 
         // A one-element builtin drops the same-line spacing beside its lone child. Any other
         // shape, and a module's own component of that name, keeps its children as written.
-        const oneElement = ONE_ELEMENT_COMPONENTS.has(node.tag) && !shadowed.has(node.tag);
-        const alone = oneElement ? withoutSpacing(node.children) : node.children;
-        const kids = alone.length === 1 ? alone : node.children;
+        const { children: kids, oneElement } = componentChildren(node, shadowed);
         let children = lowerComponentChildren(kids, node.tag);
 
         // Binding attributes only make sense over markup children: the plan is emitted
@@ -420,7 +421,7 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
             // A For row whose body is one HOST element rides the CLONE row path - the
             // same per-row template the callback form produced - instead of a per-row
             // h() tree. Component-rooted and multi-child bodies stay on the markup
-            // path, mirroring tryLowerRenderClone's own bailouts.
+            // path, mirroring renderClone's eligibility.
             const real = oneElement ? kids : kids.filter(child => !(child.kind === 'text' && child.value.trim() === ''));
             const solo = real[0];
             if (node.tag === 'For' && real.length === 1 && solo !== undefined
@@ -450,62 +451,6 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
         return { kind: 'slot', id };
     };
 
-    // A render-fn child whose body is a single host-only markup element can be
-    // lowered into a CLONABLE sub-plan (template + bindings, with the param
-    // captured), so codegen can clone the row instead of building it with h()
-    // per node. Returns null for anything else (block body, fragment, or a
-    // component root) -> the caller falls back to the pass-through expression.
-    const tryLowerRenderClone = (innerSpan: Span): ComponentChildren | null =>
-    {
-        const code = source.slice(innerSpan.start, innerSpan.end);
-        const arrow = /^\s*(\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*</.exec(code);
-        if (arrow === null)
-        {
-            return null;
-        }
-        const markupStart = findMarkupStart(source, innerSpan.start);
-        if (markupStart === -1 || markupStart >= innerSpan.end)
-        {
-            return null;
-        }
-        let parsed: { node: MarkupElement | MarkupFragment; end: number };
-        try
-        {
-            parsed = parseMarkup(source, markupStart);
-        }
-        catch
-        {
-            return null;
-        }
-        // A clone template must be a single host element (not a component or
-        // fragment), and the markup must be the whole arrow body.
-        if (parsed.node.kind !== 'element' || parsed.node.isComponent)
-        {
-            return null;
-        }
-        if (source.slice(parsed.end, innerSpan.end).trim() !== '')
-        {
-            return null;
-        }
-        const paramText = arrow[1];
-        if (paramText === undefined)
-        {
-            return null;
-        }
-        const paramStart = innerSpan.start + code.indexOf(paramText);
-        const param: Span = { start: paramStart, end: paramStart + paramText.length };
-        const subCtx: Ctx = { next: 0, bindings: [] };
-        const template = lowerNode(parsed.node, subCtx);
-        // A render-fn row reads the param's per-row signals (`r.label()`), which
-        // the component-source dep analysis cannot see, so their dep sets are
-        // empty. Reactivity is decided by codegen's shape heuristic instead
-        // (wrapDynamic): a call-shaped expression stays reactive, while a bare
-        // reference (`row.id`) is bound ONCE - safe because a row render runs
-        // exactly once per key, so anything that changes during the row's life
-        // must be read through a getter call, which the heuristic wraps.
-        return { kind: 'render', param, body: { template, bindings: subCtx.bindings } };
-    };
-
     const lowerComponentChildren = (children: MarkupChild[], tag: string): ComponentChildren | null =>
     {
         if (children.length === 0)
@@ -520,11 +465,14 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
             const expr = exprFor(span, child.start);
             if (loneFunctionChild(children) !== undefined)
             {
-                // The param is captured on the pass-through path too: a <For> row rooted at a
-                // COMPONENT (`(item) => <Card item={ item } />`) still reads its params as
-                // values, and codegen's rowItems rewrite keys off this span - without it the
-                // child receives the raw row getter.
-                return tryLowerRenderClone(span) ?? { kind: 'render', param: renderParamSpan(source, span), body: expr };
+                const clone = renderClone(source, span);
+                if (clone === null)
+                {
+                    return { kind: 'render', param: null, body: expr };
+                }
+                const subCtx: Ctx = { next: 0, bindings: [] };
+                const template = lowerNode(clone.node, subCtx);
+                return { kind: 'render', param: clone.param, body: { template, bindings: subCtx.bindings } };
             }
             // A branch builds its children untracked, so a sole hole there stays a hole.
             if (!isBranchPosition(tag, 'children'))
@@ -541,21 +489,52 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
     return { lowerNode };
 }
 
-/**
- * The param-list span of a render-child arrow (`(item)`, `(item, index)`, or a bare `item`),
- * or null for a non-arrow function form. Mirrors {@link rowItemNames}'s reading of the span.
- */
-function renderParamSpan(source: string, innerSpan: Span): Span | null
+/** The same-line whitespace exception applies to a single child of an imported builtin. */
+export function componentChildren(node: MarkupElement, shadowed: ReadonlySet<string>): { children: MarkupChild[]; oneElement: boolean }
 {
-    const code = source.slice(innerSpan.start, innerSpan.end);
-    const arrow = /^\s*(\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.exec(code);
-    const paramText = arrow?.[1];
-    if (paramText === undefined)
+    const oneElement = ONE_ELEMENT_COMPONENTS.has(node.tag) && !shadowed.has(node.tag);
+    const alone = oneElement ? withoutSpacing(node.children) : node.children;
+    return { children: alone.length === 1 ? alone : node.children, oneElement };
+}
+
+/**
+ * A directly returned host element can be detached into a clone plan. Keep a
+ * complex parameter list with the whole arrow so its patterns, initializers and
+ * TypeScript syntax are scoped and rewritten together.
+ */
+export function renderClone(source: string, span: Span): { node: MarkupElement; param: Span } | null
+{
+    const code = source.slice(span.start, span.end);
+    const arrow = /^\s*(\(\s*(?:[A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*\s*,?\s*)?\)|[A-Za-z_$][\w$]*)\s*=>\s*(?=<)/.exec(code);
+    const header = arrow?.[1];
+    if (arrow === null || header === undefined)
     {
         return null;
     }
-    const start = innerSpan.start + code.indexOf(paramText);
-    return { start, end: start + paramText.length };
+    const bodyStart = arrow[0].length;
+    if (findMarkupStart(code, bodyStart) !== bodyStart)
+    {
+        return null; // A returned generic arrow can also start with '<'.
+    }
+    let parsed: ReturnType<typeof parseMarkup>;
+    try
+    {
+        parsed = parseMarkup(source, span.start + bodyStart);
+    }
+    catch (error)
+    {
+        if (error instanceof CompileError && !error.depthExceeded)
+        {
+            return null; // A TypeScript angle-bracket assertion may also look like markup.
+        }
+        throw error;
+    }
+    if (parsed.end > span.end || parsed.node.kind !== 'element' || parsed.node.isComponent || source.slice(parsed.end, span.end).trim() !== '')
+    {
+        return null;
+    }
+    const start = span.start + arrow[0].indexOf(header);
+    return { node: parsed.node, param: { start, end: start + header.length } };
 }
 
 /** The inner expression span of an attribute's `{ ... }` value (or spread arg). */

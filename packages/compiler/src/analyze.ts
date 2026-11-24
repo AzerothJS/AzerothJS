@@ -30,11 +30,11 @@ import * as ts from 'typescript';
 import type { Span, MarkupElement, MarkupFragment, MarkupChild } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
 import type { RenderPlan } from './ir.ts';
-import type { Dep, ReactiveSources } from './dep.ts';
+import { renderSources, type Dep, type ReactiveSources } from './dep.ts';
 
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
-import { lowerMarkup } from './lower.ts';
+import { lowerMarkup, renderClone, componentChildren } from './lower.ts';
 import { parseDeclarationSlice, parseStatementsSlice, parseExpressionSlice, parsePropsPattern, parseComponentParam, formFieldKeys } from './ts-slice.ts';
 import { collectReads } from './resolve.ts';
 
@@ -70,6 +70,8 @@ export interface ReactiveAnalysis
     /** The props parameter's author-chosen identifier (`props`/`p`/`data`), or null for a destructured
      * pattern. Codegen emits the runtime signature with this name so `p.x` body reads resolve. */
     paramName?: string | null | undefined;
+    /** Lexical captures emitted before user code for destructured prop reads and defaults. */
+    propCaptures?: ReadonlyMap<string, string> | undefined;
     /** True when the props parameter destructures a rest element (`{ a, ...rest }`) - unsupported. */
     hasRestProp?: boolean | undefined;
     /** Destructured-prop aliases from a `component Name({ a, b }: P)` signature (local name -> read expr). */
@@ -122,7 +124,7 @@ export interface ReactiveAnalysis
  * @see {@link lowerComponent}
  * @internal
  */
-export function analyzeComponent(source: string, component: ComponentDecl): ReactiveAnalysis
+export function analyzeComponent(source: string, component: ComponentDecl, shadowed: ReadonlySet<string> = new Set()): ReactiveAnalysis
 {
     const sources: ReactiveSourceInfo[] = [];
     const names = new Set<string>();
@@ -133,9 +135,7 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
         ? parseComponentParam(source.slice(component.propsParam.start, component.propsParam.end), component.propsParam.start)
         : { typeSpan: null, patternSpan: null, identName: null, hasRest: false };
     const hasProps = component.propsParam !== null;
-    const propAliases = param.patternSpan
-        ? parsePropsPattern(source.slice(param.patternSpan.start, param.patternSpan.end))
-        : undefined;
+    const { propAliases, propCaptures } = param.patternSpan === null ? {} : componentAliases(source, component, param.patternSpan);
 
     const forms = new Map<string, ReadonlySet<string>>();
     const arrayForms = new Map<string, ReadonlySet<string>>();
@@ -210,7 +210,7 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
         }
         else if (item.kind === 'markup')
         {
-            collectMarkupBindings(item.node, reactive, scopes);
+            collectMarkupBindings(source, item.node, reactive, scopes, shadowed);
         }
     }
 
@@ -227,7 +227,49 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
             }
         }
     }
-    return { sources, hasProps, scopes, paramName: param.identName, hasRestProp: param.hasRest, propAliases, forms, openForms, arrayForms, openRows, rowForms };
+    return { sources, hasProps, scopes, paramName: param.identName, propCaptures, hasRestProp: param.hasRest, propAliases, forms, openForms, arrayForms, openRows, rowForms };
+}
+
+/**
+ * A prop alias is evaluated at its use site. Preserve its original receiver and the
+ * lexical environment of a lazy default across any intervening callback or local.
+ */
+function componentAliases(source: string, component: ComponentDecl, pattern: Span): {
+    propAliases: Map<string, string>; propCaptures: Map<string, string>;
+}
+{
+    // JS identifiers can spell ASCII characters with Unicode escapes. Search the
+    // authored spelling and its decoded form before introducing a local identifier.
+    const authored = source.slice(component.start, component.end).replace(/\\u(?:\{([\da-f]+)\}|([\da-f]{4}))/gi,
+        (spelling: string, braced: string | undefined, fixed: string | undefined): string =>
+        {
+            const value = Number.parseInt(braced ?? fixed ?? '', 16);
+            return value <= 127 ? String.fromCharCode(value) : spelling;
+        });
+    const propCaptures = new Map<string, string>();
+    const capture = (stem: string, initializer: string): string =>
+    {
+        let name = stem;
+        while (authored.includes(name) || propCaptures.has(name))
+        {
+            name += '_';
+        }
+        propCaptures.set(name, initializer);
+        return name;
+    };
+
+    const receiver = /\bprops\b/.test(authored) ? capture('__azProps', 'props') : 'props';
+    function containsName(node: ts.Node): boolean
+    {
+        return ts.isIdentifier(node) || node.kind === ts.SyntaxKind.ThisKeyword
+            || ts.forEachChild(node, child => containsName(child) || undefined) === true;
+    }
+    const propAliases = parsePropsPattern(source.slice(pattern.start, pattern.end), receiver, expr =>
+    {
+        const raw = expr.getText();
+        return containsName(expr) ? `${ capture('__azDefault', `() => (${ raw })`) }()` : raw;
+    });
+    return { propAliases, propCaptures };
 }
 
 /**
@@ -508,7 +550,8 @@ function analyzeExpression(code: string, reactive: ReactiveSources, anchor = 0):
 }
 
 /** Walks a markup node, recording one scope per dynamic binding. */
-function collectMarkupBindings(node: MarkupElement | MarkupFragment, reactive: ReactiveSources, scopes: ReactiveScope[]): void
+function collectMarkupBindings(source: string, node: MarkupElement | MarkupFragment, reactive: ReactiveSources,
+    scopes: ReactiveScope[], shadowed: ReadonlySet<string>, depth = 0): void
 {
     const visitChild = (child: MarkupChild): void =>
     {
@@ -535,6 +578,28 @@ function collectMarkupBindings(node: MarkupElement | MarkupFragment, reactive: R
                 {
                     const { deps, pure } = analyzeExpression(attr.value.code, reactive, attr.start);
                     scopes.push({ origin: 'attribute', span: { start: attr.start, end: attr.end }, deps, pure });
+                }
+            }
+        }
+        if (n.kind === 'element' && n.isComponent)
+        {
+            const { children } = componentChildren(n, shadowed);
+            const arrow = children.length === 1 ? children[0] : undefined;
+            if (arrow?.kind === 'expression')
+            {
+                const clone = renderClone(source, { start: arrow.start + 1, end: arrow.end - 1 });
+                if (clone !== null)
+                {
+                    if (depth >= MAX_MARKUP_DEPTH)
+                    {
+                        throw markupDepthError(arrow.start);
+                    }
+                    // Creating the callback reads nothing. Its body's bindings own their
+                    // dependencies and are analyzed once, in the callback's lexical scope.
+                    scopes.push({ origin: 'text', span: { start: arrow.start, end: arrow.end }, deps: [], pure: true });
+                    const parameters = source.slice(clone.param.start, clone.param.end);
+                    collectMarkupBindings(source, clone.node, renderSources(reactive, parameters), scopes, shadowed, depth + 1);
+                    return;
                 }
             }
         }

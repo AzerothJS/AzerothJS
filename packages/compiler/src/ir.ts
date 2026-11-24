@@ -19,7 +19,7 @@
  *   - `bindings` are the DYNAMIC operations, each targeting a template node `id`. A binding reads its
  *     expression's dependency set (ReactiveExpr.deps): non-empty -> a targeted effect; empty ->
  *     evaluated once (not reactive), and bakeable into the template when also `pure`. The explicit
- *     ReactiveExpr.reactive flag overrides this for render-fn rows (see {@link isReactive}).
+ *     ReactiveExpr.reactive flag can override this choice (see {@link isReactive}).
  *
  * Control-flow (Show/For/...) and user components are `component` bindings (builtin:true for the
  * runtime built-ins) that target a `slot` template node - their co-range position in
@@ -53,11 +53,7 @@ export interface ReactiveExpr
     /** Conservative purity (may be refined later). */
     pure: boolean;
     /**
-     * Explicit reactivity resolved at lower time, OVERRIDING the deps-derived
-     * default. Set `true` for bindings inside a render-fn sub-plan:
-     * they read the param's per-row signals (`r.label()`), which are invisible to
-     * component-source dep analysis, so their `deps` are empty yet they are
-     * genuinely reactive. Undefined => fall back to `deps` (see {@link isReactive}).
+     * Explicit reactivity overrides the dependency-derived default when supplied.
      */
     reactive?: boolean;
 }
@@ -327,8 +323,7 @@ export interface RenderPlan
 
 /**
  * True when a binding's expression actually changes after setup (needs an
- * effect). The explicit {@link ReactiveExpr.reactive} flag wins when set (render-fn
- * sub-plan bindings force it `true`); otherwise it is derived from
+ * effect). The explicit {@link ReactiveExpr.reactive} flag wins when set; otherwise it is derived from
  * the dependency set.
  *
  * @param expr - The binding expression to classify.

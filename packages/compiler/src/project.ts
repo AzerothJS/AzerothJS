@@ -38,7 +38,8 @@ import {
     walkComponentTags,
     isFunctionLiteral,
     isBareReference,
-    isCollectionLiteral,
+    isLiteralValue,
+    isRenderCallback,
     objectKey,
     quoteString,
     alreadyImports
@@ -346,9 +347,8 @@ export function generateVirtualCode(source: string): VirtualCode
         const code = source.slice(span.start, span.end).trim();
         if (
             isEventHandler ||
-            isFunctionLiteral(code) ||
             isBareReference(code) ||
-            isCollectionLiteral(code)
+            isLiteralValue(code)
         )
         {
             // A spread must stay bare (`(...x)` is not an expression); everything else is emitted in
@@ -1356,19 +1356,4 @@ function trimSpan(source: string, start: number, end: number): Span
         e--;
     }
     return { start: s, end: e };
-}
-
-// The expression-shape predicates (isFunctionLiteral / isBareReference / isCollectionLiteral) and the
-// quoting helpers (objectKey / quoteString) are shared with codegen via markup-util so the virtual
-// module mirrors the shipped output exactly. Only the projection-specific render-callback predicate
-// lives here.
-
-/**
- * True for a render CALLBACK whose first parameter needs contextual typing - `item => ...` or
- * `(item, index) => ...`. Deliberately NOT true for a no-arg arrow (`() => ...`) or an IIFE (`(() => ...)()`):
- * those have no parameter to type and must be wrapped, not passed bare to `__azRender`.
- */
-function isRenderCallback(code: string): boolean
-{
-    return /^[A-Za-z_$][\w$]*\s*=>/.test(code) || /^\(\s*[A-Za-z_$]/.test(code);
 }

@@ -12,6 +12,14 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- Text and attributes inside an arrow child now follow changing component props and
+  reactive declarations. A row parameter shadows a component declaration with the same
+  name in text, attributes and handlers. Changes to the arrow child's own reads update
+  the binding in place, preserving drafts inside a wrapper or error boundary.
+- Joined and indexed collections and immediately invoked functions now update when
+  their inputs change. Rebuild compiled components to pick up these changes.
+  Newly reactive text can gain SSR hole markers. Hydrating cached HTML from an
+  earlier compiler can trigger the existing one-time client render for that page.
 - Routed components keep their own params, match and loader fields through lazy
   navigation and leave transitions. An outgoing layout keeps its mounted outlet.
   Use `useRenderedMatch()` in a retained layout to retry an outlet error boundary

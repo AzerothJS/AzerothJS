@@ -23,6 +23,7 @@ import type {
     MarkupText
 } from './types.ts';
 import {
+    findMarkupStart,
     isIdentStart,
     isIdentPart,
     isWhitespace,
@@ -752,5 +753,36 @@ export function parseMarkup(src: string, start: number): { node: MarkupElement |
             err.committed = parser.committed;
         }
         throw err;
+    }
+}
+
+/**
+ * Replaces every markup region in `source[start..end)` with `0` plus spaces, keeping all
+ * offsets stable, so TypeScript can parse the surrounding statements cleanly. Markup is not TS;
+ * an unblanked parse swallows whatever follows it.
+ */
+export function blankMarkupRegions(source: string, start: number, end: number): string
+{
+    let out = source.slice(start, end);
+    let pos = start;
+    for (;;)
+    {
+        const at = findMarkupStart(source, pos);
+        if (at === -1 || at >= end)
+        {
+            return out;
+        }
+        let regionEnd: number;
+        try
+        {
+            regionEnd = parseMarkup(source, at).end;
+        }
+        catch
+        {
+            return out;
+        }
+        const stop = Math.min(regionEnd, end);
+        out = out.slice(0, at - start) + '0' + ' '.repeat(stop - at - 1) + out.slice(stop - start);
+        pos = regionEnd;
     }
 }

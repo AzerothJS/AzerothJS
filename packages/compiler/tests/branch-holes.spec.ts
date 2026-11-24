@@ -607,7 +607,8 @@ describe('the server markup of a branch', () =>
         ['soleNumber', '<div><!--azc:show--><!--[-->5<!--]--><!--/azc--></div>'],
         ['showFallback', '<div><!--azc:show--><!--[--><i>out</i><!--]--><!--/azc--></div>'],
         ['switchFallback', '<div><!--azc:switch--><!--[--><i>out</i><!--]--><!--/azc--></div>'],
-        ['rawFallbackConst', '<div><!--azc:show--><!--[-->const<!--]--><!--/azc--></div>']
+        // The outer array map has its own computed hole. Its branch still owns one pair.
+        ['rawFallbackConst', '<div><!--[--><!--azc:show--><!--[-->const<!--]--><!--/azc--><!--]--></div>']
     ];
 
     for (const [name, html] of paired)

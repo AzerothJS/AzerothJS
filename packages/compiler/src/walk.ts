@@ -166,6 +166,10 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
     const rowItemOf = (name: string): boolean =>
         (!isShadowed(name) && (sources.rowItems?.has(name) ?? false)) || isRowParam(name);
 
+    /** A control-flow getter named props takes precedence over the component's argument. */
+    const isComponentProps = (name: string): boolean =>
+        sources.hasProps && name === 'props' && !isShadowed(name) && !rowItemOf(name);
+
     /** Resolves a name innermost-first: a scoped marker source (with writability), a shadowing local, or
      *  finally the component's flat sources. Returns null when the name is not reactive here. */
     const resolveSource = (name: string): { writable: boolean } | null =>
@@ -233,11 +237,11 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
         return false;
     };
 
-    const bindName = (name: ts.BindingName): void =>
+    const visitBinding = (name: ts.BindingName, declare?: (name: string) => void, read?: (expr: ts.Expression) => void): void =>
     {
         if (ts.isIdentifier(name))
         {
-            bind(name.text);
+            declare?.(name.text);
             return;
         }
         for (const element of name.elements)
@@ -248,16 +252,16 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
                 // EXPRESSION evaluated where the pattern sits - it reads, so traverse it.
                 if (element.propertyName !== undefined && ts.isComputedPropertyName(element.propertyName))
                 {
-                    visit(element.propertyName.expression);
+                    read?.(element.propertyName.expression);
                 }
-                bindName(element.name);
+                visitBinding(element.name, declare, read);
                 // A default value (`{ a = x }`, `[a = x]`) is an expression evaluated when
                 // the bound value is missing; reads inside it (e.g. a `state` read) must be
                 // detected and rewritten just like any other read. Without this they leak
                 // through unrewritten - a reactive false negative.
                 if (element.initializer !== undefined)
                 {
-                    visit(element.initializer);
+                    read?.(element.initializer);
                 }
             }
         }
@@ -266,7 +270,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
     const reference = (id: ts.Identifier): void =>
     {
         const name = id.text;
-        if (sources.hasProps && name === 'props' && !isShadowed('props'))
+        if (isComponentProps(name))
         {
             hooks.propsRead?.(id, '*');
             return;
@@ -386,7 +390,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
         if (ts.isPropertyAccessExpression(n))
         {
             const object = n.expression;
-            if (sources.hasProps && ts.isIdentifier(object) && object.text === 'props' && !isShadowed('props'))
+            if (ts.isIdentifier(object) && isComponentProps(object.text))
             {
                 hooks.propsRead?.(n, n.name.text);
                 return;
@@ -448,7 +452,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
             // registers x as a scoped reactive source instead of a shadowing local.
             if (!(ts.isVariableDeclaration(n) && tryScopedDeclaration(n)))
             {
-                bindName(n.name);
+                visitBinding(n.name, bind, visit);
             }
             if (n.initializer)
             {
@@ -474,21 +478,34 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
             {
                 bind(n.name.text);
             }
-            // A marker-wrapped render arrow's identifier params are row-item GETTERS, not
-            // plain locals - they join the scope's rows so reads inside gain the call.
+            // All parameters already bind when a default is evaluated, including later
+            // parameters in their temporal dead zone. Separate binding from evaluation.
             const rowArrow = rowMarkerArrows.has(n);
+            const scope = top();
             for (const parameter of n.parameters)
             {
                 if (rowArrow && ts.isIdentifier(parameter.name))
                 {
-                    top()?.rows.add(parameter.name.text);
-                    if (parameter.initializer)
-                    {
-                        visit(parameter.initializer);
-                    }
-                    continue;
+                    scope?.rows.add(parameter.name.text);
                 }
-                visit(parameter);
+                else
+                {
+                    visitBinding(parameter.name, name =>
+                    {
+                        if (interesting(name) || rowItemOf(name))
+                        {
+                            scope?.shadows.add(name);
+                        }
+                    });
+                }
+            }
+            for (const parameter of n.parameters)
+            {
+                visitBinding(parameter.name, undefined, visit);
+                if (parameter.initializer)
+                {
+                    visit(parameter.initializer);
+                }
             }
             if (n.body)
             {
@@ -509,7 +526,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
         ts.forEachChild(n, visit);
     };
 
-    scopeStack.push({ shadows: new Set(), scoped: new Map(), rows: new Set() });
+    scopeStack.push({ shadows: new Set(sources.locals), scoped: new Map(), rows: new Set() });
     ts.forEachChild(root, visit);
     scopeStack.pop();
 }
