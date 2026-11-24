@@ -15,12 +15,13 @@
  * a MutationObserver can observe each removal. Portal's automatic cleanup depends on that.
  */
 
-import { withHydrationRoots } from './adopt-roots.ts';
+import { renderBranchValue } from './branch-value.ts';
+import { withHydrationRoots as withBranchRoots } from './adopt-roots.ts';
 import { createHydrationEffect } from '../reactivity/create-effect.ts';
 import { createSetupMemo } from '../reactivity/create-memo.ts';
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { createMemo, createRoot, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
+import { createMemo, onRootDispose, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '../component/index.ts';
 import { hydrateChild, materializeChild, resolveReactive } from './h.ts';
@@ -57,9 +58,9 @@ export interface ShowProps<W = boolean>
      * <Show when={user()}>{(user) => <Avatar name={user().name}/>}</Show>
      * ```
      *
-     * The accessor stays reactive and does not yield null while the branch is mounted, so
-     * neither a `!` nor a snapshot IIFE is needed. A plain thunk ignores the argument, which
-     * is why both forms share one signature.
+     * The accessor stays reactive while mounted. After the branch closes it returns the last
+     * truthy value observed for that showing, including during cleanup. A later showing
+     * receives its own accessor.
      */
     children: (value: () => NonNullable<W>) => MountNode | MountNode[];
 }
@@ -150,97 +151,72 @@ export function driveShow<W>(props: ShowProps<W>, target: CoTarget, hydrateFirst
     // opts into the narrowed-accessor model below.
     const usesValue = props.children.length >= 1;
 
-    let valueAccessor: () => NonNullable<W>;
+    let buildShown: () => MountNode | MountNode[];
     let readTruthy: () => boolean;
 
     if (usesValue)
     {
-        // The NARROWED value the callback reads: the current truthy `when`, or the last truthy value once
-        // `when` goes falsy (the branch is torn down on that flip; a binding validating during the teardown
-        // window must still see a real value). This is what lets `<Show when={x()}>{(x) => x().foo}</Show>`
-        // replace a snapshot IIFE safely.
-        //
-        // It must be PULL-derived, never pushed by a separate effect: subscribers of a producer have no
-        // ordering guarantee, and an effect created during a write wave defers its first run - so a pushing
-        // effect can lose the race against the truthy memo below and hand the branch a stale seed. A memo
-        // recomputes AT THE READ, from the same `when` state the truthiness decision observed, so a mounted
-        // branch cannot observe the seed no matter where or when this Show was constructed.
-        // A markup-valued condition constructs a subtree on each evaluation. Both
-        // consumers must observe the same instance, including on the initial read.
+        // Both readers must see the same condition instance, even when it constructs a component.
         const when = createSetupMemo(() => resolveReactive(props.when) as W);
-        let lastTruthy = untrack(when);
-
-        const narrowed = createMemo<W>(() =>
+        let observe: ((value: W) => void) | undefined;
+        readTruthy = createMemo(() =>
         {
-            const current = when();
-
-            if (current)
-            {
-                lastTruthy = current;
-            }
-
-            return current || lastTruthy;
+            const value = when();
+            observe?.(value);
+            return Boolean(value);
         });
-
-        valueAccessor = narrowed as () => NonNullable<W>;
-
-        // The swap is driven by TRUTHINESS (a memo): a `when` change that stays truthy does not bump the
-        // boolean, so the branch is NOT rebuilt - only a truthy<->falsy flip rebuilds. Value changes reach
-        // the branch through `valueAccessor` instead, with no rebuild (no lost focus/scroll/DOM state).
-        const truthy = createMemo(() => Boolean(when()));
-        readTruthy = truthy;
+        buildShown = () => renderBranchValue(when, (read, remember) =>
+        {
+            observe = remember;
+            onRootDispose(() =>
+            {
+                if (observe === remember)
+                {
+                    observe = undefined;
+                }
+            });
+            return props.children(read);
+        });
     }
     else
     {
-        // Thunk form: a plain accessor (unused by the thunk) and the original "read `when` every run" swap.
-        valueAccessor = (): NonNullable<W> => resolveReactive(props.when) as NonNullable<W>;
-        readTruthy = (): boolean => Boolean(resolveReactive(props.when));
+        const when = (): NonNullable<W> => resolveReactive(props.when) as NonNullable<W>;
+        buildShown = () => props.children(when);
+        readTruthy = () => Boolean(when());
     }
 
-    // Builds the active branch's content: the children (truthy) or the fallback (falsy). Children is invoked
-    // WITH the narrowed accessor; a thunk ignores it. Building is untracked (it must not subscribe the swap
-    // effect; inner reactive bindings track under their own effects) and resolved (a nested thunk like
-    // `fallback={<Show/>}` is unwrapped to the real node).
-    const buildActive = (isTruthy: boolean): Child => (isTruthy
-        ? untrack(() => resolveReactive(props.children(valueAccessor)))
-        : (props.fallback ? untrack(() => resolveReactive(props.fallback)) : undefined)) as Child;
+    const buildActive = (isTruthy: boolean): Child => untrack(() =>
+        resolveReactive(isTruthy ? buildShown() : props.fallback)) as Child;
 
     createHydrationEffect(hydrateFirstRun, () =>
     {
         const isTruthy = readTruthy();
 
-        if (firstRun)
+        const adopting = firstRun;
+        firstRun = false;
+        withBranchRoots(openRoot =>
         {
-            // Hydration first run: adopt existing server children rather than appending.
-            firstRun = false;
-            withHydrationRoots(openRoot =>
+            if (isTruthy || props.fallback !== undefined)
             {
-                if (isTruthy || props.fallback !== undefined)
+                openRoot(dispose =>
                 {
-                    openRoot((d) =>
+                    branchDispose = dispose;
+                    const child = buildActive(isTruthy);
+                    if (adopting)
                     {
-                        branchDispose = d;
-                        hydrateChild(buildActive(isTruthy), hydrationCursor as HydrationCursorType);
-                    });
-                }
-
-                // Every server node in the range must be claimed; a leftover means SSR/CSR
-                // diverged, which hydrate() recovers from.
-                hydrationCursor?.assertExhausted('<Show> content');
-            });
-            return teardownBranch;
-        }
-
-        if (isTruthy || props.fallback !== undefined)
-        {
-            createRoot((d) =>
+                        hydrateChild(child, hydrationCursor as HydrationCursorType);
+                    }
+                    else
+                    {
+                        appendToCo(target, materializeChild(child));
+                    }
+                });
+            }
+            if (adopting)
             {
-                branchDispose = d;
-                // materializeChild: the resolved value may be any child type (string, array, node) -
-                // coerce it to an insertable node rather than assuming an element.
-                appendToCo(target, materializeChild(buildActive(isTruthy)));
-            });
-        }
+                hydrationCursor?.assertExhausted('<Show> content');
+            }
+        });
 
         // teardownBranch is the SINGLE teardown path: run before every re-render AND on
         // dispose, so no toggle leaks the rendered subtree's effects.

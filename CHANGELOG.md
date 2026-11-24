@@ -225,6 +225,10 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- Closing a `Show` and then reading its `let=` value in the same event now returns
+  the last selected record, even if the branch never displayed it. A saved `Show`
+  or `Match` accessor keeps its own showing's value after cleanup and reopening.
+
 - A `Show` whose child receives the condition value now evaluates `when` once per
   sample on client render and hydration. Using a markup prop or children with
   `let=` previously mounted two extra invisible components and could start duplicate

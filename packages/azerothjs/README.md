@@ -195,8 +195,10 @@ for named props, children builders and deliberate reuse.
 its `on` list load, and `Portal` renders its children into a target elsewhere in the document
 (default `document.body`).
 
-Inside a `Show` or `Match`, read the value through the `let=` name, as `{ user.name }` does above:
-the name keeps the last value until the branch closes. A read through the signal instead, such as
+Inside a `Show` or `Match`, read the value through the `let=` name, as `{ user.name }` does above.
+While the branch is mounted, the name follows its truthy value. Cleanup and saved event handlers
+can still read the last truthy value observed for that showing, even after the branch reopens.
+A read through the signal directly, such as
 `{ user()!.name + count() }` in `<Show when={ user() }>`, can run on the cleared value when one
 `batch` changes `count` and then clears `user`; its error is dropped with the branch, but an
 `ErrorBoundary` around the `Show` still receives it. In a `For`, the `let=` name is the row's own

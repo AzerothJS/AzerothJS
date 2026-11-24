@@ -11,8 +11,8 @@ import { routeAsyncError } from '../reactivity/create-effect.ts';
 import type { DisposeFn } from '../reactivity/types.ts';
 
 /**
- * A hydrated branch or row eventually owns its detached root. Until the entire range
- * matches, retain every disposer, including that of the row currently being built.
+ * A mounted branch or hydrated row eventually owns its detached root. Until construction
+ * and any range checks finish, retain every disposer, including the current root's.
  * On success the caller's normal teardown takes ownership.
  */
 export function withHydrationRoots<T>(adopt: (openRoot: typeof createRoot) => T): T
