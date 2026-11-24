@@ -1,0 +1,49 @@
+export { render } from 'azerothjs';
+
+export component Stock() {
+    state count = 1;
+    <table><tr><td>{count}</td><td><button onClick={() => count++}>Receive</button></td></tr></table>
+}
+
+export component Summary() {
+    state total = false;
+    <table><tr><td><button onClick={() => total = !total}>Toggle total</button></td></tr>{total ? <tfoot><tr><td>Total</td></tr></tfoot> : null}</table>
+}
+
+export component Warehouses() {
+    state total = false;
+    <main>
+        <For each={[1]} key={n => n} let={n}>
+            <table><tr><td>{n}</td><td><button onClick={() => total = !total}>Toggle total</button></td></tr>{total ? <tfoot><tr><td>Total</td></tr></tfoot> : null}</table>
+        </For>
+    </main>
+}
+
+export component NativeContent() {
+    <table>
+        <col/>
+        <tr><td>One</td></tr>
+        <script type="application/json">0</script>
+        <template id="card"><b>Card</b></template>
+        <tr><td>Two</td></tr>
+    </table>
+}
+
+export component LeadingSection() {
+    state total = false;
+    <main>
+        <template id="card"><b>Card</b></template>
+        <form>
+            <input name="shelf" value="stock"/>
+            <table>{total ? <tfoot><tr><td>Total</td></tr></tfoot> : null}<tr><td><input type="checkbox" checked/></td></tr></table>
+            <button type="button" onClick={() => total = !total}>Toggle total</button>
+            <button type="reset">Reset</button>
+        </form>
+    </main>
+}
+
+export component StoredTable() {
+    <template>
+        <table><tr><td>One</td></tr>{''}{1 + 2}<aside><input value="stock"/></aside></table>
+    </template>
+}

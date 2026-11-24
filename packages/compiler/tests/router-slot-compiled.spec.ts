@@ -553,16 +553,20 @@ function tableShape(root: Element): string
 describe('a route outlet after a row in a table with no tbody, whose page renders a table section', () =>
 {
     // The page's section closes the parser's tbody, so the outlet's markers land in two sections.
-    // The last element is each row's parent in the hydrated table where it differs from the parse.
+    // A fresh clone groups the fixed row and leaves the route outlet in the table.
     const plain = '{ props.children }';
     const conditional = '{ cond() ? props.children : <tfoot><tr><td>alt</td></tr></tfoot> }';
     const MIXED_TRS = 'h@tbody,a:0@table,pf@tfoot > h@tbody,a:1@table,pf@tfoot';
     // A rows page stays in the parser's tbody until a toggle places a page again, in the table.
     const ALT_SEQ = 'h,a:0 > h,a:1 > h,alt > h,a:0 > h,b:0 > h,alt > h,b:0 > h,a:0';
     const NO_ALT_SEQ = 'h,a:0 > h,a:1 > h > h,a:0 > h,b:0 > h > h,b:0 > h,a:0';
-    const rowPage = (alt: string, again = alt): string =>
-        `h@tbody,a:0@tbody > h@tbody,a:1@tbody > h@tbody${ alt } > h@tbody,a:0@table > h@tbody,b:0@tfoot > h@tbody${ again } > h@tbody,b:0@tfoot > h@tbody,a:0@table`;
-    const layouts: Array<[string, string, string, string, string?]> = [
+    const rowPage = (alt: string, again = alt): { render: string; hydrate: string } =>
+    {
+        const parents = (initial: string, firstAlt: string): string =>
+            `h@tbody,a:0@${ initial } > h@tbody,a:1@${ initial } > h@tbody${ firstAlt } > h@tbody,a:0@table > h@tbody,b:0@tfoot > h@tbody${ again } > h@tbody,b:0@tfoot > h@tbody,a:0@table`;
+        return { render: parents('table', again), hydrate: parents('tbody', alt) };
+    };
+    const layouts: Array<[string, string, string, string, (string | ReturnType<typeof rowPage>)?]> = [
         ['a plain outlet whose page renders a tbody', plain, 'tbody',
             'h,a:0 > h,a:1 > h,a:1 > h,a:1 > h,b:0 > h,b:0 > h,b:0 > h,a:0'],
         ['a plain outlet before a layout tfoot', `${ plain }<tfoot><tr><td>f</td></tr></tfoot>`, 'tbody',
@@ -600,8 +604,8 @@ describe('a route outlet after a row in a table with no tbody, whose page render
 
     /**
      * Mounts the layout in one lane, clicks the page, toggles the condition, navigates, toggles it
-     * again and navigates back. The shape reads a hydrated table as it stands and a rendered one as
-     * the parser reads it back. `section` names the page, or the first page and the page navigated
+     * again and navigates back. Both lanes report the live DOM so serializing the fresh clone cannot
+     * introduce a second parser-created tbody around a projected row. `section` names the page, or the first page and the page navigated
      * to, as in 'tr>tfoot'.
      */
     async function sectionRun(hole: string, section: string, lane: 'render' | 'hydrate'): Promise<{ threw: string; adopted: boolean; fallbacks: string[]; seq: string; shape: string; trs: string; teardown: string }>
@@ -676,19 +680,9 @@ describe('a route outlet after a row in a table with no tbody, whose page render
         warn.mockRestore();
 
         const read = (): string => [...container.querySelectorAll('td')].map((td) => td.textContent).join(',');
-        const view = (): Element =>
-        {
-            if (lane === 'hydrate')
-            {
-                return container;
-            }
-            const parsed = document.createElement('div');
-            parsed.innerHTML = container.innerHTML;
-            return parsed;
-        };
         const seq = [read()];
-        const shape = [tableShape(view())];
-        const trs = [rowParents(view())];
+        const shape = [tableShape(container)];
+        const trs = [rowParents(container)];
         const steps = [
             () => container.querySelector<HTMLButtonElement>('#row')?.click(),
             () => setCond(false),
@@ -710,8 +704,8 @@ describe('a route outlet after a row in a table with no tbody, whose page render
             {
                 seq.push(`threw ${ (error as Error).name }`);
             }
-            shape.push(tableShape(view()));
-            trs.push(rowParents(view()));
+            shape.push(tableShape(container));
+            trs.push(rowParents(container));
         }
         let teardown = 'ok';
         try
@@ -731,8 +725,11 @@ describe('a route outlet after a row in a table with no tbody, whose page render
         it(`${ label } adopts the server rows, then navigates and tears down cleanly`, async () =>
         {
             const rendered = await sectionRun(hole, section, 'render');
-            expect(rendered).toEqual({ threw: 'none', adopted: true, fallbacks: [], seq, shape: rendered.shape, trs: rendered.trs, teardown: 'ok' });
-            expect(await sectionRun(hole, section, 'hydrate')).toEqual({ ...rendered, trs: trs ?? rendered.trs });
+            const freshParents = typeof trs === 'string' ? trs : trs?.render ?? rendered.trs;
+            const hydratedParents = typeof trs === 'string' ? trs : trs?.hydrate ?? rendered.trs;
+            expect(rendered.trs.split(' > ').map(rows => rows.split(',')[0])).toEqual(seq.split(' > ').map(() => 'h@tbody'));
+            expect(rendered).toEqual({ threw: 'none', adopted: true, fallbacks: [], seq, shape: rendered.shape, trs: freshParents, teardown: 'ok' });
+            expect(await sectionRun(hole, section, 'hydrate')).toEqual({ ...rendered, trs: hydratedParents });
         });
     }
 });

@@ -12,6 +12,10 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- Compiled tables with bare rows now keep reactive cells and controls working on
+  client mounts and hydration fallback. Consecutive rows with a known table
+  structure share a `tbody`. Use explicit sections when a direct expression can
+  return either a row or a footer and row-parent selectors must agree across modes.
 - HTML script and style now use the same text encoding in client templates and SSR.
   Legacy raw-text elements display decoded static text consistently. Inline SVG and
   MathML styles and inert scripts retain their namespace and text across rendering

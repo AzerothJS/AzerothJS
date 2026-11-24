@@ -51,7 +51,7 @@ import { MARKER_ROW } from './markers.ts';
 import { lowerStatements, lowerExpression, watchDepGetters } from './lower-reactive.ts';
 import { renderSources, type ReactiveSources } from './dep.ts';
 import type { ComponentDecl } from './ast.ts';
-import { isReactive, type RenderPlan, type TemplateNode, type TemplateElement, type Binding, type TextBinding, type BindBinding, type EventBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren, type LetBinding, type PropEntry } from './ir.ts';
+import { htmlTagOf, isTableLiteral, isReactive, type RenderPlan, type TemplateNode, type TemplateElement, type Binding, type TextBinding, type BindBinding, type EventBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren, type LetBinding, type PropEntry } from './ir.ts';
 
 const RUNTIME_MODULE = 'azerothjs/internal';
 
@@ -166,9 +166,9 @@ interface Emit
 }
 
 /** Interns the clone factory arguments, including the parsing context of a detached root. */
-function allocateTemplate(emit: Emit, root: TemplateNode): string
+function allocateTemplate(emit: Emit, root: TemplateNode, displaced: TemplateNode[]): string
 {
-    const html = quoteString(serialize(root));
+    const html = quoteString(serialize(root, displaced));
     const args = root.kind === 'element' && root.namespace !== undefined && root.namespace !== hostNamespaceForTag(root.tag)
         ? `${ html }, ${ quoteString(root.namespace) }`
         : html;
@@ -757,9 +757,10 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
     const onlyChildHoles = new Set<number>();
     collectOnlyChildHoles(plan.template, onlyChildHoles);
 
-    const templateName = allocateTemplate(emit, plan.template);
+    const displaced: TemplateNode[] = [];
+    const templateName = allocateTemplate(emit, plan.template, displaced);
 
-    const paths = new Map<number, number[]>();
+    const paths = new Map<number, CloneStep[]>();
     computePaths(plan.template, [], paths);
 
     // Group element bindings by target node. A node with only attribute/event
@@ -803,6 +804,14 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
         ...componentBindings.map(b => b.target)
     ]);
 
+    // Restore each literal at its authored position before resolving any nested bindings.
+    const restore = displaced.map(node =>
+    {
+        const path = pathExpr(paths.get(node.id) ?? []);
+        return node.kind === 'text'
+            ? `${ path }.replaceWith(${ quoteString(node.value) });`
+            : `{ const holder = ${ path }; holder.replaceWith(holder.content); }`;
+    });
     const decls = [...boundIds].map(id => `const ${ nodeVar(id) } = ${ pathExpr(paths.get(id) ?? []) };`);
 
     const binds: string[] = [];
@@ -925,7 +934,7 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
         binds.push(`bindSlot(${ nodeVar(binding.target) }, ${ emitComponentCall(source, binding, sources, emit) });`);
     }
 
-    return [`const _r = ${ templateName }();`, ...decls, ...binds, 'return _r;'].join('\n    ');
+    return [`const _r = ${ templateName }();`, ...restore, ...decls, ...binds, 'return _r;'].join('\n    ');
 }
 
 /**
@@ -1221,9 +1230,12 @@ function emitNode(source: string, node: TemplateNode, plan: RenderPlan, sources:
     const model = contentModel(node.tag, node.namespace);
     // A compiled static data block has the same textContent whether a row constructs
     // it eagerly or the browser parses its template. Public h() still takes authored text.
+    const logicalChildren = htmlTagOf(node) === 'table'
+        ? node.children.flatMap(child => child.kind === 'element' && child.cloneOnlyGroup ? child.children : [child])
+        : node.children;
     const childItems = model === 'raw-text' && node.children.length > 0
         ? [quoteString(neutralizeRawText(node.tag, staticChildText(node)))]
-        : node.children.map(child => emitNode(source, child, plan, sources, emit));
+        : logicalChildren.map(child => emitNode(source, child, plan, sources, emit));
     // A noscript's content is built only to serialize or hydrate it, so a client render never
     // loads an image or runs a ref or a component inside it.
     if (childItems.length > 0 && model === 'server-only')
@@ -1525,14 +1537,16 @@ function nodeVar(id: number): string
     return `_n${ id }`;
 }
 
+type CloneStep = number | 'content';
+
 /** A firstChild/nextSibling path expression from the cloned root `_r`. */
-function pathExpr(path: number[]): string
+function pathExpr(path: CloneStep[]): string
 {
     if (path.length === 0)
     {
         return '_r';
     }
-    return '_r' + path.map(index => '.firstChild' + '.nextSibling'.repeat(index)).join('');
+    return '_r' + path.map(index => index === 'content' ? '.content' : '.firstChild' + '.nextSibling'.repeat(index)).join('');
 }
 
 /**
@@ -1541,7 +1555,7 @@ function pathExpr(path: number[]): string
  * advances the sibling offset by 2 and its own path points at the OPEN anchor
  * (bindHole finds the close anchor as its nextSibling).
  */
-function computePaths(node: TemplateNode, path: number[], into: Map<number, number[]>): void
+function computePaths(node: TemplateNode, path: CloneStep[], into: Map<number, CloneStep[]>): void
 {
     into.set(node.id, path);
     if (ownsContent(node))
@@ -1558,10 +1572,11 @@ function computePaths(node: TemplateNode, path: number[], into: Map<number, numb
     }
     if (node.kind === 'element' || node.kind === 'fragment')
     {
+        const owner: CloneStep[] = htmlTagOf(node) === 'template' ? [...path, 'content'] : path;
         let offset = 0;
         for (const child of node.children)
         {
-            computePaths(child, [...path, offset], into);
+            computePaths(child, [...owner, offset], into);
             offset += domNodeCount(child);
         }
     }
@@ -1595,7 +1610,7 @@ function domNodeCount(node: TemplateNode): number
  * hydratable; in a fresh clone the range starts empty and bindHole drives content
  * between the anchors.
  */
-function serialize(node: TemplateNode): string
+function serialize(node: TemplateNode, displaced: TemplateNode[]): string
 {
     if (node.kind === 'text')
     {
@@ -1614,7 +1629,7 @@ function serialize(node: TemplateNode): string
     }
     if (node.kind === 'fragment')
     {
-        return node.children.map(serialize).join('');
+        return node.children.map(child => serialize(child, displaced)).join('');
     }
 
     let html = `<${ node.tag }`;
@@ -1657,9 +1672,26 @@ function serialize(node: TemplateNode): string
     // so bindContent needs no anchor pair (see onlyChildHoleOf).
     if (onlyChildHoleOf(node) === null)
     {
+        const mixedTable = htmlTagOf(node) === 'table' && node.children.some(child => child.kind === 'element' && child.cloneOnlyGroup);
         for (const child of node.children)
         {
-            html += serialize(child);
+            // A folded string can move before its table during parsing. Keep its position with a
+            // comment, including for an empty or adjacent text node. Fostered elements parse inside
+            // an inert template and keep native descendants and form reset defaults when unwrapped.
+            if (mixedTable && child.kind === 'text')
+            {
+                displaced.push(child);
+                html += '<!---->';
+            }
+            else if (mixedTable && child.kind === 'element' && !isTableLiteral(child))
+            {
+                displaced.push(child);
+                html += `<template>${ serialize(child, displaced) }</template>`;
+            }
+            else
+            {
+                html += serialize(child, displaced);
+            }
         }
     }
     return `${ html }</${ node.tag }>`;
@@ -1671,7 +1703,7 @@ function staticChildText(node: TemplateElement): string
     return node.children.map(child => child.kind === 'text' ? child.value : '').join('');
 }
 
-/** True when the template tree contains a fragment (which the tmpl path can't clone). */
+/** A fragment has no element root to clone. */
 function hasFragment(node: TemplateNode): boolean
 {
     if (node.kind === 'fragment')

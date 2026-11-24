@@ -80,8 +80,24 @@ export interface TemplateElement
     id: number;
     tag: string;
     namespace?: HostNamespace;
+    /** A parser-stable group for a mixed table's fresh clone. SSR/adoption see its logical children. */
+    cloneOnlyGroup?: true;
     attrs: StaticAttr[];
     children: TemplateNode[];
+}
+
+/** The HTML local name of a host, or null for foreign elements and non-element nodes. */
+export function htmlTagOf(node: TemplateNode): string | null
+{
+    return node.kind === 'element' && (node.namespace ?? 'html') === 'html' ? node.tag.toLowerCase() : null;
+}
+
+const TABLE_LITERALS = new Set(['caption', 'colgroup', 'col', 'thead', 'tbody', 'tfoot', 'tr', 'script', 'style', 'template']);
+
+/** Static children accepted by the table parser without foster-parenting. */
+export function isTableLiteral(node: TemplateNode): boolean
+{
+    return node.kind === 'text' ? !/[^\t\n\f\r ]/.test(node.value) : TABLE_LITERALS.has(htmlTagOf(node) ?? '');
 }
 
 /** Static text content. */

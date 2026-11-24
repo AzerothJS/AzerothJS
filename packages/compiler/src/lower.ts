@@ -45,9 +45,11 @@ import type { ComponentDecl } from './ast.ts';
 // Type-only (erased at runtime), so the runtime module graph stays acyclic even though analyze imports
 // the VALUE `lowerMarkup` from here. See the module header for why the type-graph cycle is intentional.
 import type { ReactiveAnalysis, ReactiveScope } from './analyze.ts';
+import { htmlTagOf, isTableLiteral } from './ir.ts';
 import type {
     RenderPlan,
     TemplateNode,
+    TemplateElement,
     StaticAttr,
     Binding,
     PropEntry,
@@ -153,6 +155,63 @@ export function lowerMarkup(source: string, node: MarkupElement | MarkupFragment
  * styles it. `class={expr}` and `classList({...})` are TypeScript values and stay untouched.
  */
 type ClassScope = Readonly<Record<string, string>> | null;
+
+/** Materialize the row and column groups the HTML parser inserts around bare table children. */
+function groupTableRows(children: TemplateNode[], ctx: Ctx): TemplateNode[]
+{
+    const flat: TemplateNode[] = [];
+    const collect = (child: TemplateNode): void =>
+    {
+        if (child.kind === 'fragment')
+        {
+            child.children.forEach(collect);
+        }
+        else
+        {
+            flat.push(child);
+        }
+    };
+    children.forEach(collect);
+    if (!flat.some(child => htmlTagOf(child) === 'tr' || htmlTagOf(child) === 'col'))
+    {
+        return children;
+    }
+    // When a range can supply a row or a section, SSR and adoption retain their logical
+    // table children. The fresh clone needs concrete groups so its paths survive parsing.
+    const cloneOnly = flat.some(child => !isTableLiteral(child));
+    const result: TemplateNode[] = [];
+    let group: TemplateElement | null = null;
+    for (const child of flat)
+    {
+        const tag = htmlTagOf(child);
+        if (tag === 'tr' || tag === 'col')
+        {
+            const groupTag = tag === 'tr' ? 'tbody' : 'colgroup';
+            if (group === null || group.tag !== groupTag)
+            {
+                group = { kind: 'element', id: ctx.next++, tag: groupTag, namespace: 'html', attrs: [], children: [], ...(cloneOnly && { cloneOnlyGroup: true }) };
+                result.push(group);
+            }
+        }
+        else if (tag !== 'template' && !(group?.tag === 'tbody' && (tag === 'script' || tag === 'style'))
+            && !(child.kind === 'text' && isTableLiteral(child)))
+        {
+            group = null;
+        }
+        const siblings = group?.children ?? result;
+        const previous = siblings.at(-1);
+        if (child.kind === 'text' && previous?.kind === 'text' && isTableLiteral(child) && isTableLiteral(previous))
+        {
+            // Adjacent whitespace in transparent fragments parses as one text node.
+            siblings[siblings.length - 1] = { ...previous, value: previous.value + child.value };
+        }
+        else
+        {
+            siblings.push(child);
+        }
+    }
+    return result;
+}
 
 /**
  * Builds the lowering closures bound to a `source`, a dependency-scope map, the style scope and the
@@ -343,7 +402,12 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope> 
         const children = valueText !== null
             ? [{ kind: 'text' as const, id: ctx.next++, value: valueText }]
             : node.children.map(child => lowerChild(child, ctx));
-        return { kind: 'element', id, tag: node.tag, ...(node.namespace === undefined ? {} : { namespace: node.namespace }), attrs, children };
+        const element: TemplateNode = { kind: 'element', id, tag: node.tag, ...(node.namespace === undefined ? {} : { namespace: node.namespace }), attrs, children };
+        if (htmlTagOf(element) === 'table')
+        {
+            element.children = groupTableRows(children, ctx);
+        }
+        return element;
     };
 
     const lowerChild = (child: MarkupChild, ctx: Ctx): TemplateNode =>

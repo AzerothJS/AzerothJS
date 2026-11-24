@@ -66,6 +66,10 @@ command.
 
 ## Testing
 
+- To run the compiler's Chromium table regressions, run `npm run build`,
+  install Chromium with `npx playwright-core install chromium`, then run
+  `npm run test:browser:tables`. This exercises the browser's template parser
+  with both default and client-only builds.
 - Tests live in each package's `tests/` directory as `*.spec.ts` (not a top-level
   `test/` folder, and not `.test.ts`).
 - The harness is vitest + happy-dom. Files default to a DOM environment; opt out

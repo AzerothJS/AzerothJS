@@ -273,6 +273,13 @@ Spread          := `{` `...` TS expression `}`
   `Dynamic`, `Suspense`, `ErrorBoundary`, `Transition`, `Outlet`) are auto-imported.
 - **Void elements** (`br`, `img`, `input`, ...) may be written self-closed
   (`<br/>`) or HTML-style (`<br>`); both are childless.
+- **Table rows** written directly inside an HTML `table` form a `tbody` around
+  each group of consecutive rows. A cell can contain bindings and event handlers.
+  If a table also has a direct expression or component, a fresh clone leaves its
+  insertion point on the table so that the child can supply an entire section.
+  A projected row can therefore be directly under `table` on a client mount
+  and inside an implied `tbody` on hydration. Put row-producing expressions
+  inside an explicit `tbody` when selectors or refs depend on their parent.
 - **Text** carries no expression syntax - an apostrophe in text is text - and is
   normalized in two ways, both HTML's own, and beside a one-element child (below)
   in one more:
