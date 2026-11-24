@@ -95,7 +95,7 @@ function isAssignmentOperator(kind: ts.SyntaxKind): boolean
  * @param hooks - Read, props-read and write callbacks, all optional.
  * @internal
  */
-export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks: ReactiveHooks): void
+export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks: ReactiveHooks, generatedMarkers = true): void
 {
     // Each lexical scope tracks plain locals that SHADOW a source (`shadows`) and nested keyword
     // sources lowered to markers (`scoped`, name -> writable). A `derived`/`state` keyword used inside
@@ -208,7 +208,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
      *  and registers its name as a scoped source. Returns true when it handled the declaration. */
     const tryScopedDeclaration = (n: ts.VariableDeclaration): boolean =>
     {
-        if (n.initializer === undefined || !ts.isCallExpression(n.initializer) || !ts.isIdentifier(n.initializer.expression))
+        if (!generatedMarkers || n.initializer === undefined || !ts.isCallExpression(n.initializer) || !ts.isIdentifier(n.initializer.expression))
         {
             return false;
         }
@@ -366,7 +366,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
         // wrapper. An occurrence is either rewritten immediately with IR rowItems (non-raw, no
         // marker emitted) or deferred behind this marker - never both, because both are chosen
         // by the same `emit.raw` flag at the same emission site.
-        if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === MARKER_ROW)
+        if (generatedMarkers && ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === MARKER_ROW)
         {
             let wrapped: ts.Node | undefined = n.arguments[0];
             while (wrapped !== undefined && ts.isParenthesizedExpression(wrapped))
@@ -525,7 +525,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
             visit(n.statement);
             return;
         }
-        if (ts.isBreakOrContinueStatement(n) || ts.isImportDeclaration(n) || ts.isExportDeclaration(n))
+        if (ts.isBreakOrContinueStatement(n) || ts.isImportDeclaration(n) || ts.isExportDeclaration(n) || ts.isMetaProperty(n))
         {
             return;
         }
@@ -601,6 +601,14 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
 
         if (isFunctionScope(n))
         {
+            // A method decorator evaluates in the enclosing scope, before its parameters bind.
+            if (ts.canHaveDecorators(n))
+            {
+                for (const decorator of ts.getDecorators(n) ?? [])
+                {
+                    visit(decorator.expression);
+                }
+            }
             if (n.name && ts.isComputedPropertyName(n.name))
             {
                 visit(n.name.expression);

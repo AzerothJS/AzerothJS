@@ -152,8 +152,8 @@ describe('component params - codegen runtime semantics', () =>
         for (const src of [FORM.destructuredDefaults, FORM.inlineDestructuredDefaults])
         {
             const code = gen(src);
-            expect(code).toContain('(props.variant ?? "primary")');
-            expect(code).toContain('(props.size ?? "md")');
+            expect(code).toContain('(props.variant ?? ("primary"))');
+            expect(code).toContain('(props.size ?? ("md"))');
         }
     });
 

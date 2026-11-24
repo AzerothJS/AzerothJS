@@ -557,9 +557,9 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
     const typeParams = component.typeParams ? source.slice(component.typeParams.start, component.typeParams.end) : '';
     // Emit the runtime signature with the AUTHOR'S parameter name when it is a plain identifier
     // (`component C(p: T)` -> `function C(p = {})`), so a body reading `p.x` resolves. A destructured
-    // pattern lowers to `props.<name>` reads, so its runtime param is the canonical `props`.
+    // pattern uses the same collision-free receiver as its generated property reads.
     // `= {}` so a prop-less call site (`<C/>` lowers to `C()`) still gives the body a props object.
-    const paramName = analysis.paramName ?? 'props';
+    const paramName = analysis.paramName ?? analysis.propReceiver ?? 'props';
 
     // The body runs inside a scope of its own. A component is a plain function call, so without
     // this its work belongs to whatever owner is ambient at the call site: a `provideContext` in

@@ -228,6 +228,11 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- Object shorthand in a row handler such as `save({ item, index })` now builds
+  and reads the current row and index. Destructured prop defaults preserve
+  expression precedence and can refer to other props, including renamed
+  bindings. Rebuild affected components to use these compiler fixes.
+
 - A component with a props parameter such as `p` now updates bare `p.title` text and
   attributes after hydration. JavaScript locals inside a `let=` or `index=` row can
   reuse the row name. Rebuild affected components and deploy their server and

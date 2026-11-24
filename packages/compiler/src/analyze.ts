@@ -36,8 +36,9 @@ import { findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import { lowerMarkup, renderClone, componentChildren } from './lower.ts';
 import { markupBindingName } from './markup-util.ts';
-import { parseDeclarationSlice, parseStatementsSlice, parseExpressionSlice, parsePropsPattern, parseComponentParam, formFieldKeys } from './ts-slice.ts';
+import { parseDeclarationSlice, parseStatementsSlice, parseExpressionSlice, parseComponentParam, formFieldKeys } from './ts-slice.ts';
 import { collectReads } from './resolve.ts';
+import { componentPropAliases } from './prop-aliases.ts';
 
 /** A reactive source declared by the component. */
 export interface ReactiveSourceInfo
@@ -71,6 +72,10 @@ export interface ReactiveAnalysis
     /** The props parameter's author-chosen identifier (`props`/`p`/`data`), or null for a destructured
      * pattern. Codegen emits the runtime signature with this name so `p.x` body reads resolve. */
     paramName?: string | null | undefined;
+    /** Runtime receiver for a destructured pattern, chosen to avoid authored names. */
+    propReceiver?: string | undefined;
+    /** Writes to a live prop alias from a parameter initializer. */
+    propDefaultWrites?: ReadonlyArray<Span & { name: string }> | undefined;
     /** Lexical captures emitted before user code for destructured prop reads and defaults. */
     propCaptures?: ReadonlyMap<string, string> | undefined;
     /** True when the props parameter destructures a rest element (`{ a, ...rest }`) - unsupported. */
@@ -136,7 +141,8 @@ export function analyzeComponent(source: string, component: ComponentDecl, shado
         ? parseComponentParam(source.slice(component.propsParam.start, component.propsParam.end), component.propsParam.start)
         : { typeSpan: null, patternSpan: null, identName: null, hasRest: false };
     const hasProps = component.propsParam !== null;
-    const { propAliases, propCaptures } = param.patternSpan === null ? {} : componentAliases(source, component, param.patternSpan);
+    const pattern = param.patternSpan === null ? undefined : componentPropAliases(source, component, param.patternSpan);
+    const propAliases = pattern?.propAliases;
 
     const forms = new Map<string, ReadonlySet<string>>();
     const arrayForms = new Map<string, ReadonlySet<string>>();
@@ -228,49 +234,7 @@ export function analyzeComponent(source: string, component: ComponentDecl, shado
             }
         }
     }
-    return { sources, hasProps, scopes, paramName: param.identName, propCaptures, hasRestProp: param.hasRest, propAliases, forms, openForms, arrayForms, openRows, rowForms };
-}
-
-/**
- * A prop alias is evaluated at its use site. Preserve its original receiver and the
- * lexical environment of a lazy default across any intervening callback or local.
- */
-function componentAliases(source: string, component: ComponentDecl, pattern: Span): {
-    propAliases: Map<string, string>; propCaptures: Map<string, string>;
-}
-{
-    // JS identifiers can spell ASCII characters with Unicode escapes. Search the
-    // authored spelling and its decoded form before introducing a local identifier.
-    const authored = source.slice(component.start, component.end).replace(/\\u(?:\{([\da-f]+)\}|([\da-f]{4}))/gi,
-        (spelling: string, braced: string | undefined, fixed: string | undefined): string =>
-        {
-            const value = Number.parseInt(braced ?? fixed ?? '', 16);
-            return value <= 127 ? String.fromCharCode(value) : spelling;
-        });
-    const propCaptures = new Map<string, string>();
-    const capture = (stem: string, initializer: string): string =>
-    {
-        let name = stem;
-        while (authored.includes(name) || propCaptures.has(name))
-        {
-            name += '_';
-        }
-        propCaptures.set(name, initializer);
-        return name;
-    };
-
-    const receiver = /\bprops\b/.test(authored) ? capture('__azProps', 'props') : 'props';
-    function containsName(node: ts.Node): boolean
-    {
-        return ts.isIdentifier(node) || node.kind === ts.SyntaxKind.ThisKeyword
-            || ts.forEachChild(node, child => containsName(child) || undefined) === true;
-    }
-    const propAliases = parsePropsPattern(source.slice(pattern.start, pattern.end), receiver, expr =>
-    {
-        const raw = expr.getText();
-        return containsName(expr) ? `${ capture('__azDefault', `() => (${ raw })`) }()` : raw;
-    });
-    return { propAliases, propCaptures };
+    return { sources, hasProps, scopes, paramName: param.identName, hasRestProp: param.hasRest, ...pattern, forms, openForms, arrayForms, openRows, rowForms };
 }
 
 /**

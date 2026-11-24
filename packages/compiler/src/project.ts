@@ -49,6 +49,7 @@ import { parseModule } from './parser.ts';
 import { moduleBindScope } from './diagnostics.ts';
 import { findConstructs, splitTopLevelCommaSpans } from './lower-reactive.ts';
 import { parseDeclarationSlice, factoryPlan, parseComponentParam } from './ts-slice.ts';
+import { componentPropNames } from './prop-aliases.ts';
 import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY } from './keyword-spec.ts';
 import { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
 
@@ -1087,7 +1088,8 @@ export function generateVirtualCode(source: string): VirtualCode
             ? parseComponentParam(source.slice(component.propsParam.start, component.propsParam.end), component.propsParam.start)
             : { typeSpan: null, patternSpan: null };
         let propsTypeText: string;
-        builder.emit('(props: ');
+        const receiver = param.patternSpan ? componentPropNames(source, component).propReceiver : 'props';
+        builder.emit(`(${ receiver }: `);
         if (param.typeSpan)
         {
             builder.copy(param.typeSpan.start, param.typeSpan.end, 'script');
@@ -1100,14 +1102,14 @@ export function generateVirtualCode(source: string): VirtualCode
         }
         builder.emit(' = (undefined as unknown as ' + propsTypeText + ')) {\n');
 
-        // A destructuring signature `component Name({ a, b }: P)` projects as a `const { a, b } = props;`
-        // binding so the body's bare `a`/`b` type-check (the runtime rewrites them to `props.a`/`props.b`
-        // instead, for reactivity). Copied with mapping so rename/hover/refs work on the destructured names.
+        // Destructured props are readonly aliases. Type their defaults in parameter scope and keep
+        // the original binding span for hover and rename. The body needs its own function scope:
+        // even its var and function declarations cannot shadow a name used by a parameter default.
         if (param.patternSpan)
         {
             builder.emit('const ');
             builder.copy(param.patternSpan.start, param.patternSpan.end, 'script');
-            builder.emit(' = props;\n');
+            builder.emit(` = ${ receiver };\nreturn (() => {\n`);
         }
 
         let lastMarkup = -1;
@@ -1140,6 +1142,10 @@ export function generateVirtualCode(source: string): VirtualCode
             }
             emitConstruct(item);
         });
+        if (param.patternSpan)
+        {
+            builder.emit('})();\n');
+        }
         builder.emit('}\n');
     };
 

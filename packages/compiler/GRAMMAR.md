@@ -131,6 +131,18 @@ StyleSection    := `style` `{` ... CSS-aware balanced ... `}`
   `p`. Reads of `p.title` in markup track that field. A nested JavaScript
   binding of the same name takes precedence in its own scope. This also applies
   to nested bindings that shadow a `let=` or `index=` row getter.
+- A destructured prop is a live read. If its value is `null` or `undefined`,
+  a read evaluates its default in parameter scope. For example,
+  `{ station: name, caption = name }` tracks `station` whenever `caption`
+  falls back. A supplied empty string, zero or false is preserved. Defaults
+  can return functions and can appear on nested object bindings. A closure
+  can read a later binding after its initializer finishes. Reading that
+  binding while the initializer is running raises a reference error.
+  Assigning to a destructured prop alias in a default produces
+  `azeroth/prop-default-write` at the assignment target.
+- Object literal shorthand works with `let=` and `index=` values, including
+  in event handlers. For example, `save({ item, index })` passes the current
+  row and index at the time the handler runs.
 - A named value export of a module-level `state`, `derived` or `deferred`
   binding produces `azeroth/reactive-export`, including an export under an alias.
   To expose its current value, declare an exported reader alongside the binding.

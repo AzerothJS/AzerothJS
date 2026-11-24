@@ -437,15 +437,15 @@ export function parseComponentParam(paramText: string, base: number): ComponentP
  * Parses a `component Name({ ... }: P)` destructuring pattern into the reactive PROP ALIASES it
  * introduces: each local binding name maps to the expression a bare read of it lowers to - `props.<prop>`,
  * or `(props.<prop> ?? <default>)` for a defaulted binding. A rename `{ orig: local }` maps `local` ->
- * `props.orig`. Rest elements (`...rest`), nested patterns, computed keys, and non-identifier prop names
- * are skipped (not aliased) so they degrade rather than mis-lower.
+ * `props.orig`. Nested object patterns extend the enclosing read, including its fallback.
+ * Rest elements, array patterns and computed keys do not introduce aliases here.
  *
  * @param patternText - The `{ ... }` object-binding-pattern text (braces included).
  * @returns A map of local binding name -> the replacement expression.
  * @internal
  */
 export function parsePropsPattern(patternText: string, receiver = 'props',
-    defaultValue: (expr: ts.Expression) => string = expr => expr.getText()): Map<string, string>
+    defaultValue: (expr: ts.Expression, earlierBindings: number, offset: number) => string = expr => expr.getText()): Map<string, string>
 {
     const aliases = new Map<string, string>();
     const sf = parse(`const ${ patternText } = __props;`);
@@ -486,7 +486,13 @@ export function parsePropsPattern(patternText: string, receiver = 'props',
             {
                 continue;
             }
-            const read = `${ prefix }.${ prop }`;
+            let read = `${ prefix }.${ prop }`;
+            if (element.initializer !== undefined)
+            {
+                const expr = element.initializer;
+                const fallback = defaultValue(expr, aliases.size, expr.getStart(sf) - 'const '.length);
+                read = `(${ read } ?? (${ fallback }))`;
+            }
             if (ts.isObjectBindingPattern(element.name))
             {
                 walk(element.name, read); // nested: descend with the extended accessor
@@ -496,9 +502,7 @@ export function parsePropsPattern(patternText: string, receiver = 'props',
             {
                 continue; // array pattern or other - not aliased
             }
-            const local = element.name.text;
-            const def = element.initializer !== undefined ? defaultValue(element.initializer) : null;
-            aliases.set(local, def !== null ? `(${ read } ?? ${ def })` : read);
+            aliases.set(element.name.text, read);
         }
     };
     walk(decl.name, receiver);

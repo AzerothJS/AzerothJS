@@ -162,6 +162,38 @@ export function rewriteStatements(code: string, sources: ReactiveSources, offset
     return applyEdits(sourceFile.text, collectEdits(sourceFile, sources, offset));
 }
 
+// The shorthand name is both the key and the value. A read in a destructuring
+// assignment's default (`{ local = value }`) is only the value expression.
+function identifierRead(sourceFile: ts.SourceFile, id: ts.Identifier, value: string): Edit
+{
+    let text = value;
+    if (ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id)
+    {
+        // A shorthand __proto__ creates an own property. Its literal colon form is special.
+        const key = id.text === '__proto__' ? '["__proto__"]' : id.getText(sourceFile);
+        text = `${ key }: ${ value }`;
+    }
+    return { start: id.getStart(sourceFile), end: id.getEnd(), text };
+}
+
+/** Parameter initializers are authored TypeScript. Only reads of their lexical prop aliases are rewritten. */
+export function rewritePropDefault(code: string, aliases: ReadonlyMap<string, string>,
+    mapRead: (id: ts.Identifier) => string): string
+{
+    const { sourceFile } = parseExpressionSlice(code, 0);
+    const edits: Edit[] = [];
+    traverseReactive(sourceFile, { names: new Set(), hasProps: false, propAliases: aliases }, {
+        propsRead: node =>
+        {
+            if (ts.isIdentifier(node))
+            {
+                edits.push(identifierRead(sourceFile, node, mapRead(node)));
+            }
+        }
+    }, false);
+    return applyEdits(sourceFile.text, edits).slice(1, -1);
+}
+
 /**
  * Collects the reactive rewrite edits for an already-parsed slice. `offset` is the slice's
  * start in the original source, used only to locate a thrown error.
@@ -179,19 +211,13 @@ function collectEdits(sourceFile: ts.SourceFile, sources: ReactiveSources, offse
         edits.push({ start: at, end: at, text });
     };
 
+    const getterRead = (id: ts.Identifier): void =>
+    {
+        edits.push(identifierRead(sourceFile, id, `${ id.getText(sourceFile) }()`));
+    };
+
     traverseReactive(sourceFile, sources, {
-        read: (id) =>
-        {
-            // A shorthand property `{ count }` must expand to `{ count: count() }`.
-            if (ts.isShorthandPropertyAssignment(id.parent))
-            {
-                insert(id.getEnd(), `: ${ id.text }()`);
-            }
-            else
-            {
-                insert(id.getEnd(), '()');
-            }
-        },
+        read: getterRead,
         // A real `props.f` access needs no rewrite (props is a getter object, so reading the property runs
         // its getter). But a BARE destructured-prop alias (`a` from `component Name({ a }: P)`) is reported
         // here as an Identifier node, and IS rewritten to its aliased read (`props.a` / `(props.a ?? def)`).
@@ -206,15 +232,7 @@ function collectEdits(sourceFile: ts.SourceFile, sources: ReactiveSources, offse
             {
                 return;
             }
-            // A shorthand `{ a }` expands to `{ a: props.a }`; elsewhere the identifier is replaced.
-            if (ts.isShorthandPropertyAssignment(node.parent))
-            {
-                insert(node.getEnd(), `: ${ repl }`);
-            }
-            else
-            {
-                edits.push({ start: node.getStart(sourceFile), end: node.getEnd(), text: repl });
-            }
+            edits.push(identifierRead(sourceFile, node, repl));
         },
         write: (target, expression, writable) =>
         {
@@ -335,10 +353,7 @@ function collectEdits(sourceFile: ts.SourceFile, sources: ReactiveSources, offse
         // was built from. Call-shaped output is load-bearing: the row-binding reactivity heuristic
         // (wrapDynamic) binds call-shaped expressions live, which is what updates a replaced item's
         // row in place.
-        rowItemRead: (node) =>
-        {
-            insert(node.getEnd(), '()');
-        },
+        rowItemRead: getterRead,
         // A `__azRow(fn)` row marker is transport, not output: the walk has already scoped the
         // wrapped arrow's params, so the wrapper is deleted - callee + opening paren, and the
         // closing paren - leaving the arrow in place. Markers never survive to emitted code.

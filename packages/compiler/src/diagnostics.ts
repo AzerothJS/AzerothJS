@@ -984,6 +984,13 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
 
     // azeroth/constant-derived and azeroth/inert-effect
     const analysis = analyzeComponent(source, component, shadowed);
+    for (const { name, start, end } of analysis.propDefaultWrites ?? [])
+    {
+        out.push({
+            code: 'azeroth/prop-default-write', severity: 'error', start, end,
+            message: `Cannot write to destructured prop \`${ name }\` in a parameter default. Assign to a local variable instead.`
+        });
+    }
 
     // A rest element in the props parameter (`{ a, ...rest }`) cannot be lowered: props are read
     // through per-key getters to stay reactive, and there is no single getter for "the remaining

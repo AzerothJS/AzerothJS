@@ -23,6 +23,33 @@ function diagnose(name: string, source: string)
     return service.getDiagnostics(uri);
 }
 
+describe('LSP diagnostics: destructured parameter scope', () =>
+{
+    it.each([
+        ['module props', 'const props = { value: "module" };', 'label = props.value', 'label?: string', ''],
+        ['alias named props', '', 'owner: props, label = props.value', 'owner: { value: string }; label?: string', ''],
+        ['body var', 'const counter = "module";', 'label = counter.length', 'label?: number', 'var counter = 2;'],
+        ['body function', 'const get = () => "module";', 'label = get().length', 'label?: number', 'function get() { return 2; }']
+    ])('checks a default against its %s binding', (_case, module, pattern, propsType, setup) =>
+    {
+        const source = `${ module }\nexport default component Sample({ ${ pattern } }: { ${ propsType } }) {
+            ${ setup } <p>{ label }</p> }`;
+        expect(diagnose('Sample.azeroth', source)).toEqual([]);
+    });
+
+    it('locates an invalid module property in the authored default and preserves readonly body aliases', () =>
+    {
+        const source = 'const props = { value: "module" };\n'
+            + 'export default component Sample({ label = props.missing }: { label?: string }) {\n'
+            + '    label = "changed"; <p>{ label }</p> }';
+        const diagnostics = diagnose('Sample.azeroth', source);
+        const field = diagnostics.find(d => d.code === 2339);
+        expect(field?.message).toContain("'{ value: string; }'");
+        expect(field?.range.start).toEqual({ line: 1, character: source.split('\n')[1]!.indexOf('missing') });
+        expect(diagnostics.find(d => d.code === 2588)?.range.start).toEqual({ line: 2, character: 4 });
+    });
+});
+
 describe('LSP diagnostics: event handler type', () =>
 {
     it('flags a non-function event handler, anchored to the handler value (not scaffolding)', () =>

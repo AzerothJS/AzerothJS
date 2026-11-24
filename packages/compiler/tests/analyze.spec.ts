@@ -51,7 +51,7 @@ describe('analyzeComponent - sources and hasProps', () =>
     {
         const a = analyze('component C({ title, size = "sm" }: P) { <p class={size}>{title}</p> }');
         expect(a.propAliases?.get('title')).toBe('props.title');
-        expect(a.propAliases?.get('size')).toBe('(props.size ?? "sm")');
+        expect(a.propAliases?.get('size')).toBe('(props.size ?? ("sm"))');
     });
 });
 

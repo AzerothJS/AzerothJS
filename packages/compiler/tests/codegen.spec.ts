@@ -132,7 +132,7 @@ describe('generateModule - reactive desugaring', () =>
         // The runtime function still takes a single `props` object; the destructured names are aliases.
         expect(code).toContain('function Card(props = {})');
         expect(code).toContain('props.title');
-        expect(code).toContain('(props.size ?? "sm")');
+        expect(code).toContain('(props.size ?? ("sm"))');
         // A snapshot `const { ... } = props` would lose reactivity, so it must NOT be emitted.
         expect(code).not.toContain('= props;');
     });
@@ -140,9 +140,9 @@ describe('generateModule - reactive desugaring', () =>
     it('supports number / object / array (any-expression) defaults in destructured props', () =>
     {
         const code = gen('component C({ count = 0, opts = {}, items = [] }: P) { <ul>{count}{opts.x}{items.length}</ul> }');
-        expect(code).toContain('(props.count ?? 0)');
-        expect(code).toContain('(props.opts ?? {})');
-        expect(code).toContain('(props.items ?? [])');
+        expect(code).toContain('(props.count ?? (0))');
+        expect(code).toContain('(props.opts ?? ({}))');
+        expect(code).toContain('(props.items ?? ([]))');
     });
 
     it('bind:value desugars to a reactive value + a write-back input listener (assignment -> setter)', () =>
