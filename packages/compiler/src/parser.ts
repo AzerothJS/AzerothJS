@@ -52,13 +52,36 @@ import {
 import { parseMarkup, CompileError } from './markup-parser.ts';
 import { DECLARATION_KEYWORDS, WRAPPER_FN } from './keyword-spec.ts';
 
-import type { Step } from './code-walker.ts';
+import { maskMarkupOperand, type Step } from './code-walker.ts';
 export type { Step, StepKind } from './code-walker.ts';
 
 /** Structural cursor using the committed markup parser and the shared JS lexical goal. */
 export function createCodeWalker(source: string, from = 0, limit: number = source.length, expression = false, allowGenericArrows = false): (i: number) => Step
 {
     return markupWalker(source, from, limit, expression, i => tryConsumeMarkup(source, i), allowGenericArrows);
+}
+
+/** Give TypeScript one operand per complete markup region, keeping source offsets and line breaks. */
+export function maskMarkupOperands(code: string, expression: boolean): string
+{
+    if (!code.includes('<'))
+    {
+        return code;
+    }
+    const walk = createCodeWalker(code, 0, code.length, expression, true);
+    const parts: string[] = [];
+    let from = 0;
+    for (let i = 0; i < code.length;)
+    {
+        const token = walk(i);
+        if (token.kind === 'markup')
+        {
+            parts.push(code.slice(from, i), maskMarkupOperand(code, i, token.next));
+            from = token.next;
+        }
+        i = token.next;
+    }
+    return from === 0 ? code : parts.join('') + code.slice(from);
 }
 
 /**

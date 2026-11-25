@@ -183,10 +183,11 @@ of the following; anything unrecognized is an opaque TypeScript statement run.
 ```
 BodyItem        := ReactiveDecl | EffectBlock | WrapperBlock | Markup | OpaqueTS
 
-ReactiveDecl    := DeclKeyword Identifier ArraySuffix? ( `=` Value )? WithClause? `;`
+ReactiveDecl    := DeclKeyword Identifier ArraySuffix? TypeAnnotation? ( `=` Value )? WithClause? `;`
 DeclKeyword     := `state` | `derived` | `deferred`
                  | `resource` | `stream` | `store` | `selector` | `form`
 ArraySuffix     := `[` `]`                             // permitted ONLY after a `form` name
+TypeAnnotation  := `!`? `:` TypeScriptType
 
 EffectBlock     := `effect` WithClause? Block
                  | `effect` `(` Deps `)` ( `(` CallbackParams `)` )? WithClause? Block
@@ -208,6 +209,12 @@ Normative rules:
   does not terminate) but never infers a terminator from a newline. Rationale: the
   value span feeds the reactive rewrite; a guessed boundary would silently change
   which reads get rewritten.
+- Each reactive declaration introduces one binding. A comma after the binding,
+  a following statement before its semicolon, or text after its options object
+  produces `azeroth/malformed-declaration` on the extra source. Write
+  `state open; state spare = 2;` to declare both signals. Write
+  `state open; mark();` to run a call after the declaration. Commas inside a
+  type, a call or a parenthesized expression retain their TypeScript meaning.
 - **`Value` is a verbatim TypeScript expression span** - never parsed here, may
   contain markup, which is consumed as a unit and compiled where it stands -
   inside a parenthesised or block arrow body, a parenthesised ternary branch, an
@@ -536,8 +543,11 @@ well-formed declaration follows the word: an `=` that is not `==` or `=>`, `:`, 
 `form`, the one keyword that takes the suffix, before `;` as well. So `state as = 1;`
 declares a state named `as`, on one line or with `as = 1;` on the line after the
 keyword, and `form as[];` declares an array form, while `state as [] && run();` and
-`state as [];` are casts and `state as! = 1;` is left as the expression TypeScript
-reads, with TypeScript's error. The operator word is the whole name: `state inedit = 0;`
+`state as [];` are casts. A malformed declaration such as `state as! = 1;`
+produces `azeroth/malformed-declaration`. A line break after the operator may
+still introduce a type operand, as in `state as` followed by `Row && run();`.
+Write `state as;` to end a declaration before a separate statement.
+The operator word is the whole name: `state inedit = 0;`
 declares a state, and a name that goes on with a non-ASCII letter right after the word
 is read as any other name that holds one: as a statement of the component body it is
 refused as `azeroth/non-ascii-name`.

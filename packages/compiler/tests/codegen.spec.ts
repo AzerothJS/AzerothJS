@@ -1015,7 +1015,7 @@ describe('generateModule - markup held in a declaration value', () =>
     // A declaration value is an expression like any other: markup it holds inside brackets is
     // compiled where it stands, exactly as the same markup compiles from a hole, and the span is
     // rewritten once. The value ends where the TypeScript parser ends the first declarator's
-    // initializer, so a terminator, trailing trivia and a second declarator stay out of the emit.
+    // initializer, so a terminator and trailing trivia stay out of the emit.
     const holeCall = 'h(\'li\', {  }, () => ( count() ))';
 
     it('emits from a hole the call the declaration values are pinned against', () =>
@@ -1115,17 +1115,14 @@ describe('generateModule - markup held in a declaration value', () =>
 
     it('emits a markup-free value exactly as it does without the projection', () =>
     {
-        const code = gen('component C { state count = 0; derived twice = count * 2; form f = { a: 1 }; store st = { a: 1 }; resource r = fetchIt() with { source: 1 }; derived m = (1) /* note */; state x = 1 2; state y = 1, z = 2; <p>{count}</p> }');
+        const code = gen('component C { state count = 0; derived twice = count * 2; form f = { a: 1 }; store st = { a: 1 }; resource r = fetchIt() with { source: 1 }; derived m = (1) /* note */; <p>{count}</p> }');
         expect(code).toContain('const [count, setCount] = createSignal(0);');
         expect(code).toContain('const twice = createMemo(() => (count() * 2));');
         expect(code).toContain('const f = createForm({ initial: ({ a: 1 }) });');
         expect(code).toContain('const st = createStore(() => ({ a: 1 }));');
         expect(code).toContain('const r = createResource(() => (1), fetchIt());');
         expect(code).toContain('const m = createMemo(() => ((1)));');
-        expect(code).toContain('const [x, setX] = createSignal(1);');
-        expect(code).toContain('const [y, setY] = createSignal(1);');
         expect(code).not.toContain('note');
-        expect(code).not.toContain('z = 2');
     });
 
     it('passes markup in a string, a comment or a template literal through unchanged', () =>
@@ -1138,18 +1135,12 @@ describe('generateModule - markup held in a declaration value', () =>
         expect(syntaxErrorOf(code)).toBe(null);
     });
 
-    it('emits the first declarator only, whether or not it holds the markup', () =>
+    it('rejects an extra declarator with markup in either initializer', () =>
     {
-        const first = gen('component C { state y = (<li/>), z = (<b/>); <p>x</p> }');
-        expect(declLine(first, 'y')).toContain('createSignal((h(\'li\', {  })))');
-        expect(first).not.toContain('h(\'b\'');
-        expect(first).not.toContain('z =');
-        expect(syntaxErrorOf(first)).toBe(null);
-
-        const second = gen('component C { state y = 1, z = (<li/>); <p>x</p> }');
-        expect(declLine(second, 'y')).toContain('createSignal(1)');
-        expect(second).not.toContain('h(\'li\'');
-        expect(syntaxErrorOf(second)).toBe(null);
+        for (const decl of ['state y = (<li/>), z = (<b/>);', 'state y = 1, z = (<li/>);'])
+        {
+            expect(() => gen(`component C { ${ decl } <p>x</p> }`)).toThrow(/azeroth\/malformed-declaration/);
+        }
     });
 
     const wholeValue: ReadonlyArray<readonly [string, string]> = [
@@ -1182,19 +1173,18 @@ describe('generateModule - markup held in a declaration value', () =>
 
     for (const [decl, expected] of divisions)
     {
-        it(`reads the division in \`${ expected }\` as the first declarator's value`, () =>
+        it(`keeps the division in \`${ expected }\` and catches an extra declarator after it`, () =>
         {
-            const code = gen(`component C { ${ decl } <p>x</p> }`);
+            expect(() => gen(`component C { ${ decl } <p>x</p> }`)).toThrow(/azeroth\/malformed-declaration/);
+            const code = gen(`component C { ${ decl.replace(',\nz =', ';\nstate z =') } <p>x</p> }`);
             expect(declLine(code, 'y')).toContain(expected);
-            expect(code).not.toContain('h(\'li\'');
+            expect(declLine(code, 'z')).toContain('h(\'li\'');
         });
     }
 
     it('keeps markup-bearing junk loud instead of silently dropping the tail', () =>
     {
-        const trailing = gen('component C { derived d = (<li/>) 2; <p>x</p> }');
-        expect(declLine(trailing, 'd')).toContain('(h(\'li\', {  })) 2');
-        expect(syntaxErrorOf(trailing)).not.toBe(null);
+        expect(() => gen('component C { derived d = (<li/>) 2; <p>x</p> }')).toThrow(/azeroth\/malformed-declaration/);
 
         const twoRoots = gen('component C { derived d = (<div/><span/>); <p>x</p> }');
         expect(declLine(twoRoots, 'd')).toContain('h(\'div\', {  })h(\'span\', {  })');

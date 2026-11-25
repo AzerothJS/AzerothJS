@@ -73,7 +73,8 @@ import { annotationEncoding, blankMarkupRegions, CompileError, parseMarkup } fro
 import { findConstructs } from './lower-reactive.ts';
 import { evalConstant } from './optimize.ts';
 import { arrayFormEachName } from './analyze.ts';
-import { DECLARATION_KEYWORDS } from './keyword-spec.ts';
+import { DECLARATION_KEYWORDS, SOURCE_KINDS } from './keyword-spec.ts';
+import { diagnoseOperatorDeclarationTails } from './operator-declaration-tails.ts';
 import {
     hostEventType,
     isBindingAttr,
@@ -107,7 +108,7 @@ import {
 } from 'azerothjs/semantics';
 import { attributeMarkupContext, isRenderCallback, loneFunctionChild, markupBindingName, withoutSpacing } from './markup-util.ts';
 import { analyzeComponent } from './analyze.ts';
-import { parseStatementsSlice, parseExpressionSlice, parseDeclarationSlice } from './ts-slice.ts';
+import { parseStatementsSlice, parseExpressionSlice, parseDeclarationSlice, declarationTail } from './ts-slice.ts';
 import { createMarkupSearch, findMarkupStart, isIdentStart, isIdentPart, isWhitespace, scanTypeParams, skipBalanced } from './scanner.ts';
 import { traverseReactive } from './walk.ts';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
@@ -697,7 +698,8 @@ function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out:
         {
             continue;
         }
-        const decl = item as { kind: string; name: string; start: number; nameStart: number; nameEnd: number; valueEnd: number; end: number };
+        const decl = item as Parameters<typeof parseDeclarationSlice>[1];
+        const previousCount = out.length;
 
         const nextCp = source.codePointAt(decl.nameEnd);
         if (nextCp !== undefined && nextCp > 0x7F && /\p{L}|\p{N}/u.test(String.fromCodePoint(nextCp)))
@@ -760,7 +762,9 @@ function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out:
             });
         }
 
-        const span = diagnoseDeclarationShape(source, item as Parameters<typeof parseDeclarationSlice>[1], 0, out);
+        // An absorbed keyword, render or truncated name already explains this declaration.
+        const span = out.length === previousCount ? diagnoseDeclarationShape(source, decl, 0, out, true)
+            : [decl.start, decl.end] as [number, number];
         if (span !== null)
         {
             flagged.push(span);
@@ -779,24 +783,27 @@ function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out:
             }
             continue;
         }
-        const spans: Array<[number, number]> = [];
         if (item.kind === 'effect' || item.kind === 'watch' || item.kind === 'wrapper')
         {
-            const block = item as { bodyStart: number; bodyEnd: number };
-            spans.push([block.bodyStart, block.bodyEnd]);
+            flagged.push(...shapeDeclarations(source.slice(item.bodyStart, item.bodyEnd), item.bodyStart, false, out));
         }
         else if (item.kind === 'opaque-statements')
         {
-            spans.push([item.start, item.end]);
+            flagged.push(...shapeDeclarations(source.slice(item.start, item.end), item.start, false, out, true));
         }
-        else if (DECLARATION_KINDS.has(item.kind))
+        else if (DECLARATION_WORD.test(source.slice(item.nameEnd, item.valueEnd)))
         {
-            const decl = item as { nameEnd: number; valueEnd: number };
-            spans.push([decl.nameEnd, decl.valueEnd]);
+            const parsed = parseDeclarationSlice(source, item);
+            if (parsed?.initializer)
+            {
+                const start = parsed.mapPos(parsed.initializer.getStart(parsed.sourceFile));
+                const end = source[item.valueEnd - 1] === ';' ? item.valueEnd - 1 : item.valueEnd;
+                flagged.push(...shapeDeclarations(source.slice(start, end), start, true, out));
+            }
         }
-        for (const [from, to] of spans)
+        if ('optionsStart' in item && item.optionsStart !== null && item.optionsEnd !== null)
         {
-            flagged.push(...shapeDeclarations(source.slice(from, to), from, false, out));
+            flagged.push(...shapeDeclarations(source.slice(item.optionsStart, item.optionsEnd), item.optionsStart, true, out));
         }
     }
     return flagged;
@@ -806,26 +813,28 @@ function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out:
  * The declaration shape rules over one code region and its embedded markup; returns the flagged
  * spans. `base` rebases positions; `expression` says the region starts in expression position.
  */
-function shapeDeclarations(code: string, base: number, expression: boolean, out: AzerothDiagnostic[]): Array<[number, number]>
+function shapeDeclarations(code: string, base: number, expression: boolean, out: AzerothDiagnostic[], componentBody = false): Array<[number, number]>
 {
     const flagged: Array<[number, number]> = [];
     if (!DECLARATION_WORD.test(code))
     {
         return flagged;
     }
+    diagnoseOperatorDeclarationTails(code, base, expression, out, componentBody);
     for (const construct of findConstructs(code, expression))
     {
         if (!DECLARATION_KINDS.has(construct.kind))
         {
             continue;
         }
-        const span = diagnoseDeclarationShape(code, construct as Parameters<typeof parseDeclarationSlice>[1], base, out);
+        const decl = construct as Parameters<typeof parseDeclarationSlice>[1];
+        const span = diagnoseDeclarationShape(code, decl, base, out, SOURCE_KINDS.has(decl.kind));
         if (span !== null)
         {
             flagged.push(span);
         }
     }
-    for (const expr of embeddedMarkupExpressions(code))
+    for (const expr of embeddedMarkupExpressions(code, expression))
     {
         flagged.push(...shapeDeclarations(expr.code, base + expr.codeStart, true, out));
     }
@@ -843,9 +852,8 @@ function shapeDeclarations(code: string, base: number, expression: boolean, out:
  *     OUTCOME (a token scan false-positives on `=>` in type annotations): the slice is
  *     null, or the initializer is absent from an unclean parse, or the recovered
  *     initializer is an artifact (zero-width, or `=`-leading like `x = = 1`). The
- *     present-branch is deliberately narrow: markup-bearing values parse unclean with a
- *     LEGAL initializer and must stay silent. Residual recovery artifacts that survive
- *     this (e.g. `x = 1 2` recovering `1`) still fail a default build downstream.
+ *     first declaration must consume its whole value and any options must reach the
+ *     terminator. Markup-bearing values may parse uncleanly even when valid.
  *
  * Returns the flagged declaration's absolute span, or null. The specific rule suppresses
  * the general one on the same declaration.
@@ -854,7 +862,8 @@ function diagnoseDeclarationShape(
     source: string,
     decl: Parameters<typeof parseDeclarationSlice>[1],
     shift: number,
-    out: AzerothDiagnostic[]
+    out: AzerothDiagnostic[],
+    checkTail: boolean
 ): [number, number] | null
 {
     if (decl.kind !== 'form')
@@ -877,32 +886,40 @@ function diagnoseDeclarationShape(
         }
     }
     const parsed = parseDeclarationSlice(source, decl);
-    let broken: boolean;
-    if (parsed === null)
+    const init = parsed?.initializer;
+    const artifact = init && (init.getStart(parsed.sourceFile) === init.end || init.getText(parsed.sourceFile).startsWith('='));
+    const tail = checkTail && parsed && !artifact ? declarationTail(source, decl, parsed) : null;
+    if (tail)
     {
-        broken = true;
+        const fix = source[tail.start] === ',' ? 'Write each binding as a separate declaration.'
+            : 'End the declaration with `;` before the following statement.';
+        out.push({
+            code: 'azeroth/malformed-declaration',
+            severity: 'error',
+            message: `\`${ decl.kind } ${ decl.name }\` would drop \`${ declarationExcerpt(source, tail.start, tail.end) }\`. ${ fix }`,
+            start: tail.start + shift,
+            end: tail.end + shift
+        });
+        return [decl.start + shift, decl.end + shift];
     }
-    else if (parsed.initializer === undefined)
-    {
-        broken = !parsed.clean;
-    }
-    else
-    {
-        const init = parsed.initializer;
-        broken = init.getStart(parsed.sourceFile) === init.end || init.getText(parsed.sourceFile).startsWith('=');
-    }
-    if (!broken)
+    if (parsed && (init ? !artifact : parsed.clean))
     {
         return null;
     }
     out.push({
         code: 'azeroth/malformed-declaration',
         severity: 'error',
-        message: `\`${ decl.kind } ${ decl.name }\` does not parse as \`${ decl.kind } <name> = <value>;\` - its value would be silently dropped or mis-emitted. Fix the span between the name and the \`;\`.`,
+        message: `\`${ decl.kind } ${ decl.name }\` has a malformed value in \`${ declarationExcerpt(source, skipTrivia(source, decl.nameEnd), decl.valueEnd) }\`. Write \`${ decl.kind } <name> = <value>;\`.`,
         start: decl.start + shift,
         end: decl.valueEnd + shift
     });
     return [decl.start + shift, decl.valueEnd + shift];
+}
+
+/** Keep messages readable when a large expression follows the error. The range retains the whole tail. */
+function declarationExcerpt(source: string, start: number, end: number): string
+{
+    return end - start > 60 ? source.slice(start, start + 59) + '…' : source.slice(start, end);
 }
 
 /**
@@ -2591,10 +2608,10 @@ function diagnoseDerivedWrites(source: string, component: ComponentDecl, analysi
  * Yields the expressions of every markup region embedded in `code`, each with its offset inside
  * `code`. Scanning stops at the first region that does not parse.
  */
-function* embeddedMarkupExpressions(code: string): Generator<{ code: string; codeStart: number }>
+function* embeddedMarkupExpressions(code: string, expression = false): Generator<{ code: string; codeStart: number }>
 {
     let pos = 0;
-    const search = createMarkupSearch(code, pos, code.length);
+    const search = createMarkupSearch(code, pos, code.length, expression);
     while (pos < code.length)
     {
         const at = search(pos);

@@ -12,6 +12,10 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- Reactive declarations now report the extra name in `state open, spare = 2;`
+  and the call lost when `state open` precedes `mark();` on the next line.
+  Use `state open; state spare = 2;` for two signals, or `state open; mark();`
+  for a signal followed by a call. The compiler and editor locate the extra text.
 - Division after a TypeScript non-null assertion, update operator or type argument
   now preserves following markup and component declarations. Regex statements in
   handlers preserve the following reactive block, including a `batch` whose opening

@@ -6,8 +6,7 @@
 // run over top-level declarations AND nested spans (effect bodies, opaque statements,
 // initializer arrows). The malformed-declaration trigger is keyed on the SLICE PARSE
 // OUTCOME, never a token scan: `=>` in a type annotation and markup-bearing values must
-// stay silent. Residual recovery artifacts that survive the deliberately narrow
-// initializer-present branch are pinned below as a documented record.
+// stay silent.
 import { describe, expect, it, vi } from 'vitest';
 import { diagnoseModule } from '../src/diagnostics.ts';
 import { generateModule } from '../src/codegen.ts';
@@ -57,19 +56,20 @@ describe('azeroth/array-suffix: the [] suffix is form-only', () =>
 
 describe('azeroth/malformed-declaration: the slice-outcome class guard', () =>
 {
-    it('rejects every probed recovery shape exactly once, spanning the declaration', () =>
+    it('rejects each recovered shape once and identifies the authored declaration', () =>
     {
-        for (const body of [
-            'state rows @@ = { a: 1 };',
-            'state rows = ;',
-            'state rows { a: 1 };',
-            'state rows = = { a: 1 };'
-        ])
+        for (const [body, discarded] of [
+            ['state rows @@ = { a: 1 };', '@@'],
+            ['state rows = ;', '='],
+            ['state rows { a: 1 };', '{ a: 1 }'],
+            ['state rows = = { a: 1 };', '= =']
+        ] as const)
         {
             const source = component(body);
             const findings = diagnoseModule(source);
             expect(findings.map((d) => d.code)).toEqual(['azeroth/malformed-declaration']);
-            expect(source.slice(findings[0]!.start, findings[0]!.end)).toContain('rows');
+            expect(findings[0]!.message).toContain('state rows');
+            expect(source.slice(findings[0]!.start, findings[0]!.end)).toContain(discarded);
         }
     });
 
@@ -89,9 +89,12 @@ describe('azeroth/malformed-declaration: the slice-outcome class guard', () =>
         }
     });
 
-    it('pins the documented residual: an initializer-present recovery artifact stays silent HERE (a default build still fails downstream)', () =>
+    it('locates the unconsumed literal after a recovered initializer', () =>
     {
-        expect(codes(component('state x = 1 2;', 'x()'))).toEqual([]);
+        const source = component('state x = 1 2;', 'x()');
+        const [finding] = diagnoseModule(source);
+        expect(finding?.code).toBe('azeroth/malformed-declaration');
+        expect(source.slice(finding!.start, finding!.end)).toContain('2');
     });
 });
 

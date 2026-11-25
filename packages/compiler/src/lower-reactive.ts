@@ -30,12 +30,11 @@
  */
 
 import * as ts from 'typescript';
-import { maskMarkupOperand } from './code-walker.ts';
 import type { ReactiveSources } from './dep.ts';
 import type { BodyItem, StateDecl, DerivedDecl, DeferredDecl, EffectBlock, WatchBlock, WrapperBlock } from './ast.ts';
 
-import { createCodeWalker, tryParseConstruct, skipTrivia } from './parser.ts';
-import { parseDeclarationSlice, parseExpressionSlice, parseStatementsSlice } from './ts-slice.ts';
+import { createCodeWalker, maskMarkupOperands, tryParseConstruct, skipTrivia } from './parser.ts';
+import { parseDeclarationSlice, parseExpressionSlice, parseStatementsSlice, type ParsedSlice } from './ts-slice.ts';
 import { rewriteStatements, rewriteReactive, setterName } from './rewrite.ts';
 import { MARKER_MEMO, MARKER_SIGNAL, MARKER_DEFERRED } from './markers.ts';
 import { RUNTIME_FN, LOWERABLE, LOWERABLE_WORDS } from './keyword-spec.ts';
@@ -156,44 +155,32 @@ function opensConditional(code: string, i: number): boolean
  * unbraced body of a control statement cannot supply this evidence. Parse at most once per
  * candidate-bearing slice and use the existing expression wrapper to preserve its grammar.
  */
-function statementListPositions(code: string, expression: boolean): Map<number, number>
+export function visitStatementListExpressions(
+    code: string,
+    expression: boolean,
+    visit: (statement: ts.ExpressionStatement, owner: ts.Block | ts.ModuleBlock | ts.SourceFile | ts.CaseOrDefaultClause,
+        parsed: ParsedSlice, index: number) => void,
+    typeMembers?: Set<number>
+): void
 {
-    // An apostrophe in markup text is not a TS quote. Represent each complete markup
-    // region as one operand and preserve every subsequent offset and line terminator.
-    if (code.includes('<'))
-    {
-        const walk = createCodeWalker(code, 0, code.length, expression, true);
-        const parts: string[] = [];
-        let from = 0;
-        for (let i = 0; i < code.length;)
-        {
-            const token = walk(i);
-            if (token.kind === 'markup')
-            {
-                parts.push(code.slice(from, i), maskMarkupOperand(code, i, token.next));
-                from = token.next;
-            }
-            i = token.next;
-        }
-        if (parts.length > 0)
-        {
-            parts.push(code.slice(from));
-            code = parts.join('');
-        }
-    }
-    const { sourceFile, mapPos } = expression ? parseExpressionSlice(code, 0) : parseStatementsSlice(code, 0);
-    const positions = new Map<number, number>();
-    const pending: ts.Node[] = [sourceFile];
+    const masked = maskMarkupOperands(code, expression);
+    const parsed = expression ? parseExpressionSlice(masked, 0) : parseStatementsSlice(masked, 0);
+    const pending: ts.Node[] = [parsed.sourceFile];
     while (pending.length > 0)
     {
         const node = pending.pop() as ts.Node;
-        if (ts.isExpressionStatement(node))
+        if (typeMembers && ts.isPropertySignature(node) && ts.isIdentifier(node.name))
         {
-            const owner = node.parent;
-            if (ts.isBlock(owner) || ts.isModuleBlock(owner) || ts.isSourceFile(owner) || ts.isCaseOrDefaultClause(owner))
+            typeMembers.add(parsed.mapPos(node.name.getStart(parsed.sourceFile)));
+        }
+        if (ts.isBlock(node) || ts.isModuleBlock(node) || ts.isSourceFile(node) || ts.isCaseOrDefaultClause(node))
+        {
+            for (const [index, statement] of node.statements.entries())
             {
-                const list = ts.isCaseOrDefaultClause(owner) ? owner.parent : owner;
-                positions.set(mapPos(node.getStart(sourceFile)), ts.isSourceFile(list) ? -1 : mapPos(list.getStart(sourceFile)));
+                if (ts.isExpressionStatement(statement))
+                {
+                    visit(statement, node, parsed, index);
+                }
             }
         }
         ts.forEachChild(node, child =>
@@ -201,7 +188,18 @@ function statementListPositions(code: string, expression: boolean): Map<number, 
             pending.push(child);
         });
     }
-    return positions;
+}
+
+function constructPositions(code: string, expression: boolean): { statements: Map<number, number>; typeMembers: Set<number> }
+{
+    const statements = new Map<number, number>();
+    const typeMembers = new Set<number>();
+    visitStatementListExpressions(code, expression, (node, owner, { sourceFile, mapPos }) =>
+    {
+        const list = ts.isCaseOrDefaultClause(owner) ? owner.parent : owner;
+        statements.set(mapPos(node.getStart(sourceFile)), ts.isSourceFile(list) ? -1 : mapPos(list.getStart(sourceFile)));
+    }, typeMembers);
+    return { statements, typeMembers };
 }
 
 /**
@@ -218,7 +216,7 @@ export function findConstructs(code: string, expression = false): BodyItem[]
     let prevWord = '';
     let atStmtStart = !expression;
     const walk = createCodeWalker(code, 0, code.length, expression, true);
-    let statementPositions: Map<number, number> | undefined;
+    let positions: ReturnType<typeof constructPositions> | undefined;
     // Declaration initializers can contain statements before their trailing `with` clause.
     let optionEnds: Map<number, number> | undefined;
     let opaqueUntil = 0;
@@ -248,11 +246,15 @@ export function findConstructs(code: string, expression = false): BodyItem[]
                 // name followed by an ordinary block. The authored boundary above rules
                 // out ASI-only starts. A TypeScript statement index separates method names
                 // and class fields from real statement-list entries at the same boundary.
-                if (!atStmtStart)
+                // Two interface fields can look like one declaration split over a newline.
+                // Require positive member evidence so recovery around a real framework
+                // statement never disqualifies it.
+                const splitName = 'nameStart' in construct && /[\r\n\u2028\u2029]/.test(code.slice(s.next, construct.nameStart));
+                if (!atStmtStart || splitName)
                 {
-                    statementPositions ??= statementListPositions(code, expression);
+                    positions ??= constructPositions(code, expression);
                 }
-                if (atStmtStart || statementPositions?.get(i) === scope.open)
+                if ((atStmtStart || positions?.statements.get(i) === scope.open) && !(splitName && positions?.typeMembers.has(i)))
                 {
                     out.push(construct);
                     // The emission owns an effect's complete header and a declaration's

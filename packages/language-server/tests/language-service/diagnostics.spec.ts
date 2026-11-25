@@ -25,6 +25,29 @@ function diagnose(name: string, source: string)
     return service.getDiagnostics(uri);
 }
 
+describe('reactive declaration tails in editor buffers', () =>
+{
+    it('locates the dropped call and clears the error when the author inserts a semicolon', () =>
+    {
+        const service = new AzerothLanguageService(fixtures, tsconfig);
+        const uri = pathToFileURL(path.join(fixtures, 'Inventory.azeroth')).href;
+        const source = 'export default component Inventory() {\n    const mark = () => 1;\n    state open\n    mark();\n    <p>Inventory</p>\n}';
+        service.didOpen(uri, source);
+        try
+        {
+            const finding = service.getDiagnostics(uri).find(d => d.code === 'azeroth/malformed-declaration');
+            expect(finding?.range.start).toEqual({ line: 3, character: 4 });
+            expect(finding?.message).toContain('mark');
+            service.didChange(uri, source.replace('state open', 'state open;'));
+            expect(service.getDiagnostics(uri).filter(d => d.severity === 1)).toEqual([]);
+        }
+        finally
+        {
+            service.didClose(uri);
+        }
+    });
+});
+
 describe('markup after division in editor buffers', () =>
 {
     it('keeps the later tag in diagnostics, HTML projection and editing', () =>

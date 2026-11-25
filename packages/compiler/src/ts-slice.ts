@@ -28,6 +28,7 @@ import type { StateDecl, DerivedDecl, DeferredDecl, ResourceDecl, StreamDecl, St
 import type { Span } from './types.ts';
 
 import { RUNTIME_FN, type FactoryKind } from './keyword-spec.ts';
+import { createCodeWalker, maskMarkupOperands, skipTrivia } from './parser.ts';
 
 /** A parsed slice plus the map from slice positions back to source offsets. */
 export interface ParsedSlice
@@ -44,6 +45,9 @@ export interface ParsedDeclaration extends ParsedSlice
 {
     /** The declared name, as TypeScript parsed it. */
     name: string;
+
+    /** Original offset after the first name (including the form suffix), type or initializer. */
+    firstEnd: number;
 
     /** The type annotation node, when present (`state x: T = ...`). */
     type: ts.TypeNode | undefined;
@@ -73,7 +77,7 @@ const VALUE_PREFIX = 'let __v = ';
  * Where a value expression ends, read by the TypeScript parser from `let __v = <code>;`. `end` is an
  * index into `code` - the end of the FIRST declarator's initializer, which excludes a terminator,
  * trailing trivia and any further declarator, and falls back to the whole text when the parse
- * recovered no initializer at all. `dirty` is true when the parse recorded a diagnostic.
+ * recovered no initializer at all. `dirty` means the outer expression still needed recovery.
  *
  * @param code - A value expression, with no markup left in it
  * @returns The initializer's end within `code` and whether the parse recorded a diagnostic
@@ -85,6 +89,47 @@ const VALUE_PREFIX = 'let __v = ';
  * ```
  */
 export function parseValueEnd(code: string): { end: number; dirty: boolean }
+{
+    const raw = readValueEnd(code);
+    if (!raw.dirty || !code.includes('{'))
+    {
+        return raw;
+    }
+
+    // A nested framework declaration is not a TS statement. Recovery inside a function
+    // can terminate the *outer* initializer halfway through its body. For the boundary
+    // alone a balanced block, object or type literal can keep just its two braces.
+    const walk = createCodeWalker(code, 0, code.length, true, true);
+    const parts: string[] = [];
+    let depth = 0;
+    let open = 0;
+    let from = 0;
+    for (let i = 0; i < code.length;)
+    {
+        const token = walk(i);
+        if (token.kind === 'open' && token.text === '{')
+        {
+            if (depth === 0)
+            {
+                open = token.next;
+            }
+            depth++;
+        }
+        else if (token.kind === 'close' && token.text === '}' && depth > 0)
+        {
+            depth--;
+            if (depth === 0 && i > open)
+            {
+                parts.push(code.slice(from, open), code.slice(open, i).replace(/[^\r\n\u2028\u2029]/g, ' '));
+                from = i;
+            }
+        }
+        i = token.next;
+    }
+    return from === 0 ? raw : readValueEnd(parts.join('') + code.slice(from));
+}
+
+function readValueEnd(code: string): { end: number; dirty: boolean }
 {
     const sourceFile = parse(`${ VALUE_PREFIX }${ code };`);
     const statement = sourceFile.statements[0];
@@ -186,14 +231,13 @@ export function parseDeclarationSlice(
     // An array-form (`form NAME[] = ...`) carries an `[]` between the name and `=` that is not valid in a
     // variable declaration. Blank the two brackets with spaces (offset-preserving) so `NAME[]` parses as
     // `NAME  ` and the initializer's source positions still map straight back.
+    let nameEnd = decl.nameEnd;
     if (decl.kind === 'form' && decl.isArray)
     {
-        const open = text.indexOf('[', decl.nameEnd - decl.start);
-        const close = open === -1 ? -1 : text.indexOf(']', open);
-        if (open !== -1 && close !== -1)
-        {
-            text = `${ text.slice(0, open) } ${ text.slice(open + 1, close) } ${ text.slice(close + 1) }`;
-        }
+        const open = skipTrivia(text, decl.nameEnd - decl.start);
+        const close = skipTrivia(text, open + 1);
+        text = `${ text.slice(0, open) } ${ text.slice(open + 1, close) } ${ text.slice(close + 1) }`;
+        nameEnd = decl.start + close + 1;
     }
 
     const sourceFile = parse(text);
@@ -215,10 +259,42 @@ export function parseDeclarationSlice(
         sourceFile,
         mapPos,
         name: declaration.name.getText(sourceFile),
+        firstEnd: declaration.initializer ? mapPos(declaration.initializer.end)
+            : declaration.type ? mapPos(declaration.type.end) : nameEnd,
         type: declaration.type,
         initializer: declaration.initializer,
         clean: parseDiagnostics === undefined || parseDiagnostics.length === 0
     };
+}
+
+/** The authored part of a declaration left over after the first binding or its options. */
+export function declarationTail(source: string, decl: Parameters<typeof parseDeclarationSlice>[1], parsed: ParsedDeclaration): Span | null
+{
+    let firstEnd = parsed.firstEnd;
+    if (!parsed.clean && parsed.initializer)
+    {
+        // Raw TS can end a value inside markup text, or run through a later comma.
+        // Mask complete markup operands before asking the emitter's value parser for its end.
+        const start = parsed.mapPos(parsed.initializer.getStart(parsed.sourceFile));
+        const raw = source.slice(start, decl.valueEnd);
+        if (raw.includes('<') || raw.includes('{'))
+        {
+            const masked = maskMarkupOperands(raw, true);
+            firstEnd = start + parseValueEnd(masked).end;
+        }
+    }
+    let start = skipTrivia(source, firstEnd);
+    let end = decl.valueEnd;
+    if (start >= end && decl.optionsEnd !== null)
+    {
+        start = skipTrivia(source, decl.optionsEnd);
+        end = decl.end;
+    }
+    if (source[end - 1] === ';')
+    {
+        end--;
+    }
+    return start < end ? { start, end: start + source.slice(start, end).trimEnd().length } : null;
 }
 
 /**
