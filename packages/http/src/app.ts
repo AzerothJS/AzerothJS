@@ -33,6 +33,8 @@ import type { PathParams } from './router.ts';
 import { RadixRouter, segmentsOf } from './router.ts';
 import { reportIsolated, BadRequestError, HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
 import { mergeAdditions } from './context-merge.ts';
+import { headResponse } from './conditional.ts';
+import { PayloadResponse } from './payload.ts';
 import { markServerRuntime } from 'azerothjs/internal';
 import { runInRequestRoot, type WorkUnitOptions } from './request-root.ts';
 import { apiRegistrationOf, type ApiRegistration } from './api/registry.ts';
@@ -219,10 +221,17 @@ export function pathnameOf(url: string): string
  */
 function finishDispatch(request: Request, response: Response): Response | Promise<Response>
 {
-    if (request.method.toUpperCase() === 'HEAD' && response.body !== null)
+    if (request.method.toUpperCase() === 'HEAD')
     {
-        return response.body.cancel().then(() =>
-            new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers }));
+        if (response instanceof PayloadResponse)
+        {
+            return headResponse(response);
+        }
+        const body = response.body;
+        if (body !== null)
+        {
+            return body.cancel().then(() => headResponse(response));
+        }
     }
     return response;
 }

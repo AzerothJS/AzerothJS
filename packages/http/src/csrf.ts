@@ -27,7 +27,7 @@
 
 import { parseCookies, serializeCookie } from './cookies.ts';
 import { ForbiddenError } from './errors.ts';
-import { edge } from './edge.ts';
+import { copyResponseHeaders, edge } from './edge.ts';
 import type { EdgeMiddleware } from './edge.ts';
 import type { GuardContext } from './api/declare.ts';
 import { isSharedDispatch } from './api/bridge.ts';
@@ -193,12 +193,7 @@ function withSetCookies(response: Response, cookies: readonly string[]): Respons
     {
         headers.append('set-cookie', cookie);
     }
-    // 204/205/304 forbid a body - Response() throws on any stream for them, and the
-    // kernel's lazy response materializes a stream even for an empty payload.
-    const body = response.status === 204 || response.status === 205 || response.status === 304
-        ? null
-        : response.body;
-    return new Response(body, { status: response.status, statusText: response.statusText, headers });
+    return copyResponseHeaders(response, headers);
 }
 
 /**

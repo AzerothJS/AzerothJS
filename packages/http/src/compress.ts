@@ -15,8 +15,11 @@
  *   - non-compressible types (images, video, fonts, archives - already entropy-coded;
  *     recompressing burns CPU to make them larger);
  *   - bodies under the threshold (headers dwarf the saving; default 1 KiB);
- *   - already-encoded responses, 204/304s, and HEAD-stripped bodies;
+ *   - already-encoded responses, byte ranges and bodyless representations;
  *   - responses that carry `Cache-Control: no-transform`.
+ *
+ * HEAD and a framework-produced 304 can describe a known GET representation without running
+ * the encoder. A sparse upstream 304 retains its original coding and validator.
  *
  * Compression STREAMS: the body pipes through the zlib transform, so a large SSR document
  * compresses as it is produced. Piping is not enough on its own, though - the compressor holds
@@ -33,6 +36,10 @@
 import { constants, createBrotliCompress, createDeflate, createGzip } from 'node:zlib';
 import { Readable, pipeline, type Transform } from 'node:stream';
 
+import { hasRepresentationHeaders, headResponse, matchesEtag } from './conditional.ts';
+import { negotiateEncodings } from './content-coding.ts';
+import { appendVary, edge, withResponseHeaders, type EdgeMiddleware } from './edge.ts';
+import { PayloadResponse } from './payload.ts';
 import { markClientFault } from './errors.ts';
 import { webStreamOf } from './web-stream.ts';
 
@@ -56,129 +63,143 @@ function isCompressible(contentType: string): boolean
         || type.endsWith('+xml');
 }
 
-/** @internal The `q` weight of one Accept-Encoding entry, from its parameters (default 1). */
-function qualityOf(parameters: string[]): number
-{
-    for (const parameter of parameters)
-    {
-        const equals = parameter.indexOf('=');
-        if (parameter.slice(0, equals === -1 ? undefined : equals).trim().toLowerCase() !== 'q')
-        {
-            continue;
-        }
-        const quality = Number(parameter.slice(equals + 1).trim());
-        // An unparseable weight counts as a refusal: identity is always acceptable, so
-        // guessing "acceptable" is the only reading that can put an undecodable body on the wire.
-        return Number.isFinite(quality) ? Math.min(Math.max(quality, 0), 1) : 0;
-    }
-    return 1;
-}
-
-/**
- * @internal The client's pick among what we implement, by the Accept-Encoding header.
- * `q=0` is a REFUSAL, not a listing (RFC 9110 12.5.3), so a coding named only to reject it is
- * never used. `*` stands for the codings the client did not name and authorizes gzip - the
- * universally safe pick - never brotli, which a client that wanted it would have named.
- */
-function negotiate(acceptEncoding: string): 'br' | 'gzip' | 'deflate' | null
-{
-    const quality = new Map<string, number>();
-    for (const entry of acceptEncoding.split(','))
-    {
-        const semicolon = entry.indexOf(';');
-        const coding = entry.slice(0, semicolon === -1 ? undefined : semicolon).trim().toLowerCase();
-        if (coding === '')
-        {
-            continue;
-        }
-        const weight = semicolon === -1 ? 1 : qualityOf(entry.slice(semicolon + 1).split(';'));
-        // A coding listed twice keeps its LOWEST weight: a refusal anywhere in the field is
-        // still a refusal.
-        const previous = quality.get(coding);
-        quality.set(coding, previous === undefined ? weight : Math.min(previous, weight));
-    }
-
-    const wildcard = quality.get('*') ?? 0;
-    let best: 'br' | 'gzip' | 'deflate' | null = null;
-    let bestQuality = 0;
-    for (const candidate of ['br', 'gzip', 'deflate'] as const)
-    {
-        const offered = quality.get(candidate) ?? (candidate === 'gzip' ? wildcard : 0);
-        if (offered > bestQuality)
-        {
-            best = candidate;
-            bestQuality = offered;
-        }
-    }
-    return best;
-}
-
-/**
- * @internal The encoded representation's validator. RFC 9110 8.8.3: representations whose
- * bytes differ must not share a strong ETag, or a cache revalidates its stored gzip body
- * against the identity tag and then serves gzip bytes as plain text.
- */
-function encodedEtag(etag: string, encoding: string): string
-{
-    const weak = etag.startsWith('W/');
-    const value = weak ? etag.slice(2) : etag;
-    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"'))
-    {
-        return `${ weak ? 'W/' : '' }"${ value.slice(1, -1) }-${ encoding }"`;
-    }
-    return `${ etag }-${ encoding }`;
-}
-
-/**
- * Options for negotiated response compression (br/gzip/deflate): the size floor below which
- * compression costs more than it saves, and the media types worth compressing. Event streams
- * and already-compressed types are skipped regardless.
- */
+/** Quality and size controls for on-the-fly response compression. */
 export interface CompressOptions
 {
     /** Bodies below this byte count (per Content-Length, when known) pass through. Default 1024. */
     threshold?: number;
+
+    /** Brotli compression quality, an integer from 0 to 11. Default 5. */
+    brotliQuality?: number;
+
+    /** Gzip compression level, an integer from -1 (zlib default) to 9. Default -1. */
+    gzipLevel?: number;
+}
+
+function validateOptions(options: CompressOptions): void
+{
+    const { brotliQuality, gzipLevel } = options;
+    if (brotliQuality !== undefined && (!Number.isInteger(brotliQuality) || brotliQuality < 0 || brotliQuality > 11))
+    {
+        throw new RangeError('brotliQuality must be an integer from 0 to 11');
+    }
+    if (gzipLevel !== undefined && (!Number.isInteger(gzipLevel) || gzipLevel < -1 || gzipLevel > 9))
+    {
+        throw new RangeError('gzipLevel must be an integer from -1 to 9');
+    }
+}
+
+/** Negotiate compression around the public HTTP handler, including its HEAD responses. */
+export function compress(options: CompressOptions = {}): EdgeMiddleware
+{
+    const settings = { ...options };
+    validateOptions(settings);
+    return edge(next => ({
+        handle: async request => compressFor(request, await next.handle(request), settings)
+    }));
 }
 
 /**
- * Returns `response` compressed for `request`, or `response` itself when compression does
- * not apply. Always safe to call unconditionally on the way out.
+ * Returns the representation negotiated for the request. Responses eligible for compression
+ * vary by Accept-Encoding, including when the selected representation is identity.
  */
 export function compressResponse(request: Request, response: Response, options: CompressOptions = {}): Response
 {
-    const threshold = options.threshold ?? 1024;
+    validateOptions(options);
+    return compressFor(request, response, options);
+}
 
-    if (response.body === null
-        || response.status === 204
-        || response.status === 206 // a byte range refers to the UNENCODED representation; compressing it breaks resume math
-        || response.status === 304
-        || response.headers.has('content-encoding'))
+/** Discard a representation that the client already has or only requested metadata for. */
+function discardBody(response: Response): void
+{
+    // A kernel payload is already buffered. Reading its body would construct a stream just
+    // to cancel it. A native producer may hold a file or an iterator and must be cancelled.
+    if (!(response instanceof PayloadResponse))
+    {
+        // The comparison is synchronous. A producer already errored or closed has no more
+        // bytes to release, and its cancellation rejection has no downstream body reader.
+        void response.body?.cancel().catch(() => undefined);
+    }
+}
+
+function compressFor(request: Request, response: Response, options: CompressOptions): Response
+{
+    const head = request.method === 'HEAD';
+    if (head && (response instanceof PayloadResponse || response.body !== null))
+    {
+        discardBody(response);
+        response = headResponse(response);
+    }
+
+    const status = response.status;
+    const type = response.headers.get('content-type');
+    if (status === 204 || status === 205 || status === 206 || status === 416
+        || request.headers.has('range') || response.headers.has('content-encoding')
+        || (type === null ? status !== 304 : !isCompressible(type)))
     {
         return response;
     }
-    if (!isCompressible(response.headers.get('content-type') ?? ''))
-    {
-        return response;
-    }
-    // `no-transform` forbids exactly this (RFC 9110 5.2.2.6): whoever set it needs the bytes
-    // delivered as written - a signed payload, a byte-exact contract.
     const cacheControl = (response.headers.get('cache-control') ?? '').toLowerCase();
-    if (cacheControl.split(',').some((directive) => directive.trim() === 'no-transform'))
+    if (cacheControl.split(',').some(directive => directive.trim() === 'no-transform'))
     {
         return response;
     }
-    // Only an EXPLICIT Content-Length can prove the body is too small to bother with;
-    // an absent header (Number(null) is 0, a classic trap) means "unknown - compress".
     const declared = response.headers.get('content-length');
-    if (declared !== null && Number(declared) < threshold)
+    if (declared !== null && Number(declared) < (options.threshold ?? 1024))
+    {
+        return response;
+    }
+    // A HEAD handler can omit opening its GET stream and declare its positive byte length.
+    // The framework can also attest to a suppressed stream whose length was unknown.
+    const headDescribesBody = head && (hasRepresentationHeaders(response)
+        || (declared !== null && /^0*[1-9]\d*$/.test(declared)));
+    // Reading a buffered payload's body would allocate a stream before encoding starts.
+    if (status !== 304 && !(response instanceof PayloadResponse) && response.body === null && !headDescribesBody)
     {
         return response;
     }
 
-    const encoding = negotiate(request.headers.get('accept-encoding') ?? '');
-    if (encoding === null)
+    const vary = appendVary(response.headers.get('vary'), 'accept-encoding');
+    // External 304s may legally omit the GET's coding, size or cache policy. Keep their
+    // validator and add conservative Vary when the visible headers allow negotiation.
+    const [encoding] = status === 304 && (!hasRepresentationHeaders(response) || declared === null || type === null)
+        ? []
+        : negotiateEncodings(request.headers.get('accept-encoding') ?? '');
+    const ifNoneMatch = request.headers.get('if-none-match');
+    // Codec quality and streaming flush boundaries can change the encoded bytes while
+    // preserving the content. Retain the coding suffix with a weak validator.
+    const entity = /^(?:W\/)?"([^"]*)"$/.exec(response.headers.get('etag') ?? '');
+    const tag = encoding === undefined || entity === null ? null : `W/"${ entity[1] }-${ encoding }"`;
+    const codedMatch = tag !== null && matchesEtag(ifNoneMatch, tag);
+    // An early 304 against an explicit identity validator revalidates that copy. A date,
+    // wildcard or list containing the negotiated tag describes the selected GET.
+    if (encoding === undefined || (status === 304 && ifNoneMatch !== null && ifNoneMatch.trim() !== '*' && !codedMatch))
     {
-        return response;
+        return response.headers.get('vary') === vary ? response : withResponseHeaders(response, { vary });
+    }
+
+    const headers = new Headers(response.headers);
+    headers.set('vary', vary);
+    headers.set('content-encoding', encoding);
+    headers.delete('content-length');
+    headers.delete('accept-ranges');
+    if (tag !== null)
+    {
+        headers.set('etag', tag);
+    }
+    else
+    {
+        // A malformed producer tag cannot validate a transformed representation.
+        headers.delete('etag');
+    }
+    if (status === 200 && (head || request.method === 'GET') && codedMatch)
+    {
+        discardBody(response);
+        return new Response(null, { status: 304, headers });
+    }
+    if (head || status === 304)
+    {
+        return new Response(null, { status, statusText: response.statusText, headers });
     }
 
     // A STREAMED response needs a flush per chunk or compression silently defeats streaming.
@@ -192,19 +213,22 @@ export function compressResponse(request: Request, response: Response, options: 
     //
     // Flushing costs ratio, so it is spent only where it buys something: a response with no
     // content-length is the streaming one. A buffered response keeps the tighter encoding.
-    const streaming = response.headers.get('content-length') === null;
+    const streaming = declared === null;
     let transform: Transform;
     if (encoding === 'br')
     {
         // TEXT mode tunes brotli's context modeling for what we compress (see isCompressible).
         transform = createBrotliCompress({
-            params: { [constants.BROTLI_PARAM_MODE]: constants.BROTLI_MODE_TEXT },
+            params: {
+                [constants.BROTLI_PARAM_MODE]: constants.BROTLI_MODE_TEXT,
+                [constants.BROTLI_PARAM_QUALITY]: options.brotliQuality ?? 5
+            },
             ...(streaming ? { flush: constants.BROTLI_OPERATION_FLUSH } : {})
         });
     }
     else if (encoding === 'gzip')
     {
-        transform = createGzip(streaming ? { flush: constants.Z_SYNC_FLUSH } : {});
+        transform = createGzip({ level: options.gzipLevel ?? -1, ...(streaming ? { flush: constants.Z_SYNC_FLUSH } : {}) });
     }
     else
     {
@@ -228,18 +252,6 @@ export function compressResponse(request: Request, response: Response, options: 
             return markClientFault(premature);
         }
     });
-
-    const headers = new Headers(response.headers);
-    headers.set('content-encoding', encoding);
-    headers.delete('content-length');
-    // Range offsets name bytes of the IDENTITY representation; the encoded stream has none.
-    headers.delete('accept-ranges');
-    headers.append('vary', 'accept-encoding');
-    const etag = response.headers.get('etag');
-    if (etag !== null)
-    {
-        headers.set('etag', encodedEtag(etag, encoding));
-    }
 
     return new Response(compressed, { status: response.status, statusText: response.statusText, headers });
 }

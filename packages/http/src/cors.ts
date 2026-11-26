@@ -26,7 +26,7 @@
  * so a cache keyed on it stays correct alongside the compression layer's own `Vary`.
  */
 
-import { withResponseHeaders, edge, type EdgeMiddleware } from './edge.ts';
+import { appendVary, withResponseHeaders, edge, type EdgeMiddleware } from './edge.ts';
 import { PayloadResponse } from './payload.ts';
 
 /**
@@ -91,17 +91,6 @@ function isAllowed(origin: string, spec: CorsOrigin): boolean
         // the literal `null` a browser itself sends. A throw is a denial, never a rejection.
         return false;
     }
-}
-
-/** @internal Appends a token to an existing Vary header without duplication or overwrite. */
-function appendVary(existing: string | null, token: string): string
-{
-    if (existing === null || existing === '')
-    {
-        return token;
-    }
-    const present = existing.split(',').some((part) => part.trim().toLowerCase() === token.toLowerCase());
-    return present ? existing : `${ existing }, ${ token }`;
 }
 
 /**

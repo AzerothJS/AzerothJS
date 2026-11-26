@@ -1,21 +1,23 @@
 // @vitest-environment node
 //
 // Negotiated compression: the encoded body must DECODE back to the original (round-trip
-// through node:zlib), the pass-through cases must return the very same Response object, and
+// through node:zlib), ineligible bodies keep their Response object, and
 // Vary must always ride along - the header whose absence poisons shared caches.
 
 import { describe, it, expect, vi } from 'vitest';
-import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
+import { brotliCompressSync, brotliDecompressSync, constants, createGzip, gunzipSync, inflateSync } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import { buffer } from 'node:stream/consumers';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compressResponse } from '../src/compress.ts';
-import { json, text } from '../src/respond.ts';
+import { App, conditional, csrfCookie, etagFor, json, pipeline, requestId, securityHeaders, text } from '@azerothjs/http';
+import { compress, staticFiles } from '@azerothjs/http/node';
 
 const LONG = 'azeroth '.repeat(500); // ~4 KB of compressible text
 
@@ -74,13 +76,20 @@ describe('encoding negotiation and round-trip', () =>
     });
 });
 
-describe('pass-through cases return the SAME response object', () =>
+describe('identity and ineligible responses', () =>
 {
-    it('no Accept-Encoding overlap', () =>
+    it('eligible identity responses vary by Accept-Encoding without mutating a shared response', async () =>
     {
         const original = text(LONG);
-        expect(compressResponse(requestAccepting(null), original)).toBe(original);
-        expect(compressResponse(requestAccepting('zstd'), original)).toBe(original);
+        for (const encoding of [null, 'identity', 'zstd'])
+        {
+            const response = compressResponse(requestAccepting(encoding), original);
+            expect(response.headers.get('vary')).toBe('accept-encoding');
+            expect(response.headers.get('content-encoding')).toBeNull();
+            expect(await response.text()).toBe(LONG);
+        }
+        expect(original.headers.get('vary')).toBeNull();
+        expect(original.bodyUsed).toBe(false);
     });
 
     it('non-compressible types (already entropy-coded)', () =>
@@ -113,7 +122,10 @@ describe('pass-through cases return the SAME response object', () =>
         expect(compressResponse(requestAccepting('br'), encoded)).toBe(encoded);
 
         const empty = new Response(null, { status: 304 });
-        expect(compressResponse(requestAccepting('gzip'), empty)).toBe(empty);
+        const result = compressResponse(requestAccepting('gzip'), empty);
+        expect(result.body).toBeNull();
+        expect(result.headers.get('content-encoding')).toBeNull();
+        expect(result.headers.get('vary')).toBe('accept-encoding');
     });
 
     it('a 206 partial response is NEVER compressed - byte ranges refer to the unencoded file', () =>
@@ -146,10 +158,10 @@ describe('q-values: a listed coding can be a REFUSAL (RFC 9110 12.5.3)', () =>
     it('refusing everything - explicitly or through the wildcard - passes the response through', () =>
     {
         const original = text(LONG);
-        expect(compressResponse(requestAccepting('gzip;q=0'), original)).toBe(original);
-        expect(compressResponse(requestAccepting('*;q=0'), original)).toBe(original);
-        expect(compressResponse(requestAccepting('br;q=0, gzip;q=0, deflate;q=0'), original)).toBe(original);
-        expect(compressResponse(requestAccepting('identity;q=0'), original)).toBe(original);
+        expect(compressResponse(requestAccepting('gzip;q=0'), original).headers.get('content-encoding')).toBeNull();
+        expect(compressResponse(requestAccepting('*;q=0'), original).headers.get('content-encoding')).toBeNull();
+        expect(compressResponse(requestAccepting('br;q=0, gzip;q=0, deflate;q=0'), original).headers.get('content-encoding')).toBeNull();
+        expect(compressResponse(requestAccepting('identity;q=0'), original).headers.get('content-encoding')).toBeNull();
     });
 
     it('the heaviest weight wins over our own preference order', () =>
@@ -161,8 +173,8 @@ describe('q-values: a listed coding can be a REFUSAL (RFC 9110 12.5.3)', () =>
     it('a coding listed twice keeps its lowest weight - a refusal anywhere is a refusal', () =>
     {
         const original = text(LONG);
-        expect(compressResponse(requestAccepting('gzip, gzip;q=0'), original)).toBe(original);
-        expect(compressResponse(requestAccepting('gzip;q=0, gzip'), original)).toBe(original);
+        expect(compressResponse(requestAccepting('gzip, gzip;q=0'), original).headers.get('content-encoding')).toBeNull();
+        expect(compressResponse(requestAccepting('gzip;q=0, gzip'), original).headers.get('content-encoding')).toBeNull();
     });
 });
 
@@ -176,7 +188,7 @@ describe('the encoded body is a DIFFERENT representation', () =>
             headers: { 'content-type': 'text/plain', etag: '"14-1a2b"', 'accept-ranges': 'bytes' }
         });
         const response = compressResponse(requestAccepting('gzip'), original);
-        expect(response.headers.get('etag')).toBe('"14-1a2b-gzip"');
+        expect(response.headers.get('etag')).toBe('W/"14-1a2b-gzip"');
         expect(response.headers.get('accept-ranges')).toBeNull();
     });
 
@@ -184,6 +196,274 @@ describe('the encoded body is a DIFFERENT representation', () =>
     {
         const original = new Response(LONG, { headers: { 'content-type': 'text/plain', etag: 'W/"14-1a2b"' } });
         expect(compressResponse(requestAccepting('br'), original).headers.get('etag')).toBe('W/"14-1a2b-br"');
+    });
+});
+
+describe('compression level and public middleware', () =>
+{
+    it('encodes known-length bodies with the requested codec options', async () =>
+    {
+        const body = Array.from({ length: 2200 }, (_, i) => `parcel-${ i % 193 } dispatch ${ i % 59 }\n`).join('');
+        for (const quality of [0, 5, 11])
+        {
+            const settings = quality === 5 ? {} : { brotliQuality: quality };
+            const result = compressResponse(requestAccepting('br'), text(body), settings);
+            expect(Buffer.from(await result.arrayBuffer())).toEqual(brotliCompressSync(body, {
+                params: { [constants.BROTLI_PARAM_QUALITY]: quality, [constants.BROTLI_PARAM_MODE]: constants.BROTLI_MODE_TEXT }
+            }));
+        }
+        for (const level of [-1, 0, 9])
+        {
+            const result = compressResponse(requestAccepting('gzip'), text(body), { gzipLevel: level });
+            const expected = await buffer(Readable.from([body]).pipe(createGzip({ level })));
+            expect(Buffer.from(await result.arrayBuffer())).toEqual(expected);
+        }
+    });
+
+    it.each([{ brotliQuality: -1 }, { brotliQuality: 12 }, { brotliQuality: 4.5 },
+        { gzipLevel: -2 }, { gzipLevel: 10 }, { gzipLevel: NaN }])('rejects invalid levels at configuration and direct call', options =>
+    {
+        expect(() => compress(options)).toThrow(RangeError);
+        expect(() => compressResponse(requestAccepting('br'), text(LONG), options)).toThrow(RangeError);
+    });
+
+    it.each(['br', 'gzip', 'deflate'])('describes and revalidates the %s representation through an outer pipeline', async coding =>
+    {
+        const app = new App();
+        const value = { rows: LONG };
+        const base = etagFor(value, 'parcels');
+        app.get('/', context => conditional(context.request, value, { scope: 'parcels' }));
+        const handler = pipeline(app, compress(), requestId(), securityHeaders(), csrfCookie());
+        const ask = (method: string, validator?: string, encoding = coding): Promise<Response> => handler.handle(
+            new Request('http://local/', { method, headers: {
+                'accept-encoding': encoding, ...(validator === undefined ? {} : { 'if-none-match': validator })
+            } })
+        );
+        const get = await ask('GET');
+        const tag = get.headers.get('etag')!;
+        expect(tag).toBe(`W/${ base.slice(0, -1) }-${ coding }"`);
+        expect(await decoded(get)).toBe(JSON.stringify(value));
+        const head = await ask('HEAD');
+        expect(head.body).toBeNull();
+        for (const key of ['etag', 'vary', 'content-encoding', 'content-length', 'accept-ranges'])
+        {
+            expect(head.headers.get(key)).toBe(get.headers.get(key));
+        }
+        for (const method of ['GET', 'HEAD'])
+        {
+            for (const validator of [tag, `"other", ${ tag.slice(2) }`, `${ base }, ${ tag }`, '*'])
+            {
+                const cached = await ask(method, validator);
+                expect(cached.status).toBe(304);
+                expect(cached.body).toBeNull();
+                expect(cached.headers.get('etag')).toBe(tag);
+                expect(cached.headers.get('vary')).toBe('accept-encoding');
+                expect(cached.headers.get('content-length')).toBeNull();
+                expect(cached.headers.has('x-request-id')).toBe(true);
+                if (method === 'GET')
+                {
+                    expect(cached.headers.getSetCookie()).toHaveLength(1);
+                }
+            }
+        }
+        const identity = await ask('GET', base);
+        expect(identity.status).toBe(304);
+        expect(identity.headers.get('etag')).toBe(base);
+        expect(identity.headers.get('vary')).toBe('accept-encoding');
+        expect(identity.headers.get('content-encoding')).toBeNull();
+        const other = await ask('GET', tag, `${ coding };q=0`);
+        expect(other.status).toBe(200);
+        expect(await other.json()).toEqual(value);
+    });
+
+    it('leaves an upstream 304 validator alone when the GET was small or already encoded', async () =>
+    {
+        for (const encoded of [false, true])
+        {
+            const app = new App();
+            const etag = encoded ? '"stored-br"' : '"tiny"';
+            app.get('/', context =>
+            {
+                const headers = new Headers({ 'content-type': 'text/plain', etag });
+                if (context.request.headers.has('if-modified-since') || context.request.headers.has('if-none-match'))
+                {
+                    return new Response(null, { status: 304, headers });
+                }
+                const body = encoded ? brotliCompressSync(LONG) : 'abc';
+                if (encoded)
+                {
+                    headers.set('content-encoding', 'br');
+                }
+                headers.set('content-length', String(body.length));
+                return new Response(body, { headers });
+            });
+            const handler = pipeline(app, compress(), securityHeaders(), csrfCookie());
+            const get = await handler.handle(requestAccepting('br, gzip'));
+            expect(get.headers.get('content-encoding')).toBe(encoded ? 'br' : null);
+            expect(await decoded(get)).toBe(encoded ? LONG : 'abc');
+            for (const [name, value] of [['if-none-match', '*'], ['if-modified-since', new Date().toUTCString()]] as const)
+            {
+                const req = requestAccepting('br, gzip');
+                req.headers.set(name, value);
+                const cached = await handler.handle(req);
+                expect(cached.status).toBe(304);
+                expect(cached.body).toBeNull();
+                expect(cached.headers.get('etag')).toBe(etag);
+                expect(cached.headers.get('content-encoding')).toBeNull();
+                expect(cached.headers.get('vary')).toBe('accept-encoding');
+            }
+        }
+        // Even a size supplied by a third-party 304 does not prove that the GET permitted
+        // transformation. Its cache policy or content coding may have been omitted.
+        const cached = new Response(null, { status: 304, headers: { 'content-type': 'text/plain', 'content-length': '4096', etag: '"opaque"' } });
+        const result = compressResponse(requestAccepting('br'), cached);
+        expect(result.headers.get('etag')).toBe('"opaque"');
+        expect(result.headers.get('content-length')).toBe('4096');
+        expect(result.headers.get('content-encoding')).toBeNull();
+    });
+
+    it('preserves static date revalidation and no-transform policy through header decorators', async () =>
+    {
+        const dir = await mkdtemp(path.join(tmpdir(), 'azeroth-revalidate-'));
+        try
+        {
+            await writeFile(path.join(dir, 'parcel.txt'), LONG);
+            const app = new App();
+            app.get('/live/*path', staticFiles(dir, { cacheControl: 'private' }));
+            app.get('/signed/*path', staticFiles(dir, { cacheControl: 'private, no-transform' }));
+            const handler = pipeline(app, compress(), requestId(), securityHeaders(), csrfCookie());
+            for (const route of ['live', 'signed'])
+            {
+                const req = new Request(`http://local/${ route }/parcel.txt`, { headers: { 'accept-encoding': 'br' } });
+                const get = await handler.handle(req);
+                expect(get.headers.get('content-encoding')).toBe(route === 'live' ? 'br' : null);
+                expect(await decoded(get)).toBe(LONG);
+                req.headers.set('if-modified-since', get.headers.get('last-modified')!);
+                const cached = await handler.handle(req);
+                expect(cached.status).toBe(304);
+                expect(cached.headers.get('etag')).toBe(get.headers.get('etag'));
+                expect(cached.headers.get('content-encoding')).toBe(get.headers.get('content-encoding'));
+                expect(cached.headers.get('vary')).toBe(get.headers.get('vary'));
+                expect(cached.headers.getSetCookie()).toHaveLength(1);
+            }
+        }
+        finally
+        {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('distinguishes an actual empty GET from a suppressed stream on HEAD', async () =>
+    {
+        const app = new App();
+        const headers = { 'content-type': 'text/plain', etag: '"parcel"' };
+        app.get('/empty', () => new Response(null, { headers }));
+        app.get('/stream', () => new Response(LONG, { headers }));
+        const handler = pipeline(app, compress(), requestId(), securityHeaders(), csrfCookie());
+        for (const route of ['empty', 'stream'])
+        {
+            for (const method of ['GET', 'HEAD'])
+            {
+                const req = new Request(`http://local/${ route }`, { method, headers: { 'accept-encoding': 'gzip' } });
+                const result = await handler.handle(req);
+                const streamed = route === 'stream';
+                expect(result.headers.get('etag')).toBe(streamed ? 'W/"parcel-gzip"' : '"parcel"');
+                expect(result.headers.get('content-encoding')).toBe(streamed ? 'gzip' : null);
+                expect(result.headers.get('vary')).toBe(streamed ? 'accept-encoding' : null);
+                if (method === 'GET' && streamed)
+                {
+                    expect(await decoded(result)).toBe(LONG);
+                }
+                else
+                {
+                    expect(result.body).toBeNull();
+                }
+            }
+        }
+    });
+
+    it('negotiates a separately registered HEAD that declares the size of its GET', async () =>
+    {
+        const app = new App();
+        const headers = { 'content-type': 'text/plain', 'content-length': String(LONG.length), etag: '"parcel"' };
+        app.get('/', () => new Response(LONG, { headers }));
+        app.route('HEAD', '/', () => new Response(null, { headers }));
+        const handler = pipeline(app, compress());
+        const get = await handler.handle(requestAccepting('br'));
+        const head = await handler.handle(new Request(requestAccepting('br'), { method: 'HEAD' }));
+        expect(get.headers.get('content-encoding')).toBe('br');
+        expect(await decoded(get)).toBe(LONG);
+        expect([...head.headers]).toEqual([...get.headers]);
+        expect(head.body).toBeNull();
+    });
+
+    it('releases the original stream on a direct HEAD and on a negotiated cache hit', () =>
+    {
+        for (const method of ['GET', 'HEAD'])
+        {
+            const stop = vi.fn();
+            const response = new Response(new ReadableStream({ cancel: stop }), {
+                headers: { 'content-type': 'text/plain', etag: '"parcel"' }
+            });
+            const cached = compressResponse(new Request('http://local/', { method, headers: {
+                'accept-encoding': 'gzip', 'if-none-match': '"parcel-gzip"'
+            } }), response);
+            expect(cached.status).toBe(304);
+            expect(cached.body).toBeNull();
+            expect(stop).toHaveBeenCalledTimes(1);
+        }
+    });
+
+    it('retains previous variation tokens and separate cookies in both representations', async () =>
+    {
+        for (const vary of ['Origin', 'ACCEPT-ENCODING', '*'])
+        {
+            for (const encoding of ['identity', 'gzip'])
+            {
+                const headers = new Headers({ vary });
+                headers.append('set-cookie', 'one=1');
+                headers.append('set-cookie', 'two=2');
+                const response = compressResponse(requestAccepting(encoding), text(LONG, { headers }));
+                expect(response.headers.get('vary')).toBe(vary === 'Origin' ? 'Origin, accept-encoding' : vary);
+                expect(response.headers.getSetCookie()).toEqual(['one=1', 'two=2']);
+                expect(await decoded(response)).toBe(LONG);
+            }
+        }
+    });
+
+    it('can add Vary to an immutable fetch response', async () =>
+    {
+        const fetched = await fetch('data:text/plain,' + encodeURIComponent(LONG));
+        const result = compressResponse(requestAccepting('identity'), fetched);
+        expect(result.headers.get('vary')).toBe('accept-encoding');
+        expect(fetched.headers.get('vary')).toBeNull();
+        expect(await result.text()).toBe(LONG);
+    });
+
+    it('preserves a full identity response to a range request', async () =>
+    {
+        const req = new Request('http://local/', { headers: { range: 'bytes=2-7', 'accept-encoding': 'br' } });
+        const response = compressResponse(req, text(LONG));
+        expect(response.status).toBe(200);
+        expect(response.headers.get('content-encoding')).toBeNull();
+        expect(await response.text()).toBe(LONG);
+    });
+
+    it('only converts eligible successful GET and HEAD representations to 304', async () =>
+    {
+        const headers = { 'accept-encoding': 'gzip', 'if-none-match': '"parcel-gzip"' };
+        const request = new Request('http://local/', { headers });
+        const write = new Request('http://local/', { method: 'POST', headers });
+        const retry = compressResponse(write, text(LONG, { headers: { etag: '"parcel"' } }));
+        expect(retry.status).toBe(200);
+        expect(await decoded(retry)).toBe(LONG);
+        const missing = compressResponse(request, text(LONG, { status: 404, headers: { etag: '"parcel"' } }));
+        expect(missing.status).toBe(404);
+        expect(await decoded(missing)).toBe(LONG);
+        const tiny = compressResponse(request, text('small', { headers: { etag: '"parcel"' } }));
+        expect(tiny.status).toBe(200);
+        expect(tiny.headers.get('vary')).toBeNull();
+        expect(await tiny.text()).toBe('small');
     });
 });
 

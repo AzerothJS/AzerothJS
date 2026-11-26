@@ -27,5 +27,5 @@ export type { StaticOptions } from './static.ts';
 export { containedFile } from './contained-file.ts';
 export type { ContainedFile, ContainedFileOptions } from './contained-file.ts';
 
-export { compressResponse } from './compress.ts';
+export { compress, compressResponse } from './compress.ts';
 export type { CompressOptions } from './compress.ts';

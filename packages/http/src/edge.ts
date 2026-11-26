@@ -47,6 +47,7 @@ export function attachErrorPolicy(handler: WebHandler, policy: (error: unknown, 
 }
 import { markServerRuntime } from 'azerothjs/internal';
 import { PayloadResponse } from './payload.ts';
+import { hasRepresentationHeaders, withRepresentationMetadata } from './conditional.ts';
 import { errorResponse } from './errors.ts';
 
 /**
@@ -226,6 +227,17 @@ export function toNativeResponse(response: Response): Response
     return new Response(bodyless ? null : raw.payload, { status: raw.status, statusText: response.statusText, headers });
 }
 
+/** @internal Appends a token to an existing Vary header without duplication or overwrite. */
+export function appendVary(existing: string | null, token: string): string
+{
+    if (existing === null || existing === '')
+    {
+        return token;
+    }
+    const present = existing.split(',').some((part) => part.trim() === '*' || part.trim().toLowerCase() === token.toLowerCase());
+    return present ? existing : `${ existing }, ${ token }`;
+}
+
 /**
  * Returns a response with `extra` headers merged in (names lowercased, overwriting). Uses the
  * PayloadResponse fast path when possible - mutating the `headers` view alone would not reach
@@ -243,7 +255,16 @@ export function withResponseHeaders(response: Response, extra: Record<string, st
     {
         headers.set(name, value);
     }
-    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+    return copyResponseHeaders(response, headers);
+}
+
+/** @internal Copy native headers, preserving complete conditional metadata across decorators. */
+export function copyResponseHeaders(response: Response, headers: Headers): Response
+{
+    // A lazy payload may expose an empty stream even on a status that forbids a body.
+    const body = response.status === 204 || response.status === 205 || response.status === 304 ? null : response.body;
+    const copy = new Response(body, { status: response.status, statusText: response.statusText, headers });
+    return hasRepresentationHeaders(response) ? withRepresentationMetadata(copy) : copy;
 }
 
 const REQUEST_ID: unique symbol = Symbol.for('azerothjs.http.requestId');

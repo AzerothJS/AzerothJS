@@ -5,7 +5,7 @@
 // decision: a body hash, a tenant scope folded into the tag, `W/` stripping, and comma-split tag
 // lists. The framework already contained the hard half, private to static file serving.
 import { describe, expect, it } from 'vitest';
-import { conditional, etagFor } from '@azerothjs/http';
+import { conditional, etagFor, matchesEtag } from '@azerothjs/http';
 
 function ask(headers: Record<string, string> = {}): Request
 {
@@ -60,6 +60,24 @@ describe('conditional', () =>
         expect(conditional(ask({ 'if-none-match': `W/${ tag }` }), { rows: [1] }, { scope: 's' }).status).toBe(304);
         expect(conditional(ask({ 'if-none-match': `"stale", ${ tag }` }), { rows: [1] }, { scope: 's' }).status).toBe(304);
         expect(conditional(ask({ 'if-none-match': '*' }), { rows: [1] }, { scope: 's' }).status).toBe(304);
+    });
+
+    it('compares whole quoted tags, including commas, with weak comparison on either side', () =>
+    {
+        expect(matchesEtag('"parcel,21", W/"next"', 'W/"parcel,21"')).toBe(true);
+        expect(matchesEtag('"parcel,21", W/"next"', '"next"')).toBe(true);
+        expect(matchesEtag('"parcel,21"', '"21"')).toBe(false);
+        expect(matchesEtag('"parcel,21"', '"parcel"')).toBe(false);
+    });
+
+    it('derives the validator and response bytes from one serialization', async () =>
+    {
+        let calls = 0;
+        const value = { toJSON: () => ++calls };
+        const response = conditional(ask(), value, { scope: 's' });
+        expect(await response.json()).toBe(1);
+        expect(response.headers.get('etag')).toBe(etagFor(1, 's'));
+        expect(calls).toBe(1);
     });
 
     it('returns 200 when the body changed', () =>

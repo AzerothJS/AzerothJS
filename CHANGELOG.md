@@ -12,6 +12,11 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- HTTP compression defaults to Brotli quality 5 and accepts custom Brotli and gzip
+  levels. Eligible responses vary by encoding, including identity. Conditional GET
+  and HEAD use the selected representation's headers. Live encodings use weak ETags
+  because codec settings can change their bytes. Static handlers can opt in to
+  serving fresh Brotli and gzip files with their own validators.
 - Reactive declarations now report the extra name in `state open, spare = 2;`
   and the call lost when `state open` precedes `mark();` on the next line.
   Use `state open; state spare = 2;` for two signals, or `state open; mark();`

@@ -44,9 +44,11 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { realpath } from 'node:fs/promises';
-import { extname, resolve } from 'node:path';
+import { extname, relative, resolve } from 'node:path';
 import type { Handler } from './app.ts';
-import { containedFile } from './contained-file.ts';
+import { containedFile, type ContainedFile } from './contained-file.ts';
+import { matchesEtag, notModified, withRepresentationMetadata } from './conditional.ts';
+import { negotiateEncodings } from './content-coding.ts';
 import { NotFoundError } from './errors.ts';
 import { webStreamOf } from './web-stream.ts';
 
@@ -99,6 +101,12 @@ export interface StaticOptions
      */
     cacheControl?: string;
 
+    /**
+     * Negotiate fresh .br or .gz siblings beside the requested file. The default serves
+     * the original. Range requests use the original byte offsets.
+     */
+    precompressed?: boolean;
+
     /** The file served when the path resolves to a directory (default 'index.html'). */
     index?: string;
 
@@ -139,37 +147,56 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
     const index = options.index ?? 'index.html';
     const param = options.param ?? 'path';
     const dotfiles = options.dotfiles === true;
+    const precompressed = options.precompressed === true
+        && !cacheControl.split(',').some(directive => directive.trim().toLowerCase() === 'no-transform');
 
     return async (context) =>
     {
-        const relative = context.params[param] ?? '';
-        const found = await containedFile(root, relative, { index, dotfiles, realRoot: await getRealRoot() });
+        const requested = context.params[param] ?? '';
+        const realRoot = await getRealRoot();
+        const found = await containedFile(root, requested, { index, dotfiles, realRoot });
         if (found === null)
         {
             throw new NotFoundError();
         }
-        const { path: target, stats: info } = found;
+        const request = context.request;
+        const canVary = precompressed && !/\.(?:br|gz)$/i.test(found.path);
+        const variant = canVary && !request.headers.has('range')
+            ? await selectSibling(root, realRoot, found, dotfiles, request.headers.get('accept-encoding'))
+            : undefined;
+        const { path: target, stats: info } = variant?.file ?? found;
 
-        // A strong validator from (size, mtime, identity): whole-file responses cannot differ
-        // without one of the first two changing on any sane filesystem, and the third is what
-        // tells two FILES served under one url apart - a page negotiated into two languages is
-        // two files of one length written by one build pass, one millisecond apart at best, and
-        // an entity tag must differentiate representations that arise from negotiation.
+        // Include the file identity to distinguish negotiated files with equal size and mtime.
+        // An encoder can replace a sibling while preserving both values, so its tag also
+        // includes the filesystem change time and the selected coding.
         const identity = createHash('sha256').update(target.slice(root.length).replaceAll('\\', '/')).digest('hex').slice(0, 8);
-        const etag = `"${ info.size.toString(16) }-${ Math.trunc(info.mtimeMs).toString(16) }-${ identity }"`;
+        const suffix = variant === undefined ? '' : `-${ info.ctimeMs.toString(16) }-stored-${ variant.coding }`;
+        const etag = `"${ info.size.toString(16) }-${ Math.trunc(info.mtimeMs).toString(16) }-${ identity }${ suffix }"`;
         const lastModified = new Date(info.mtimeMs).toUTCString();
         const headers = new Headers({
-            'content-type': contentTypeFor(target),
+            'content-type': contentTypeFor(found.path),
+            'content-length': String(info.size),
             'cache-control': cacheControl,
-            'accept-ranges': 'bytes',
             'last-modified': lastModified,
             etag
         });
-
-        const ifNoneMatch = context.request.headers.get('if-none-match');
-        if (ifNoneMatch !== null && matchesEntity(ifNoneMatch, etag, context.request))
+        if (canVary)
         {
-            return new Response(null, { status: 304, headers });
+            headers.set('vary', 'accept-encoding');
+        }
+        if (variant === undefined)
+        {
+            headers.set('accept-ranges', 'bytes');
+        }
+        else
+        {
+            headers.set('content-encoding', variant.coding);
+        }
+
+        const ifNoneMatch = request.headers.get('if-none-match');
+        if (matchesEtag(ifNoneMatch, etag))
+        {
+            return notModified(headers);
         }
 
         // An HTTP-date is the weaker validator, so it only speaks when the client offered no
@@ -181,13 +208,14 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
             const since = Date.parse(ifModifiedSince);
             if (!Number.isNaN(since) && Math.trunc(info.mtimeMs / 1000) <= Math.trunc(since / 1000))
             {
-                return new Response(null, { status: 304, headers });
+                return notModified(headers);
             }
         }
 
-        const range = rangeFor(context.request, info.size, etag, lastModified);
+        const range = rangeFor(request, info.size, etag, lastModified);
         if (range === 'unsatisfiable')
         {
+            headers.delete('content-length');
             headers.set('content-range', `bytes */${ info.size }`);
             return new Response(null, { status: 416, headers });
         }
@@ -195,48 +223,40 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
         {
             headers.set('content-range', `bytes ${ range.start }-${ range.end }/${ info.size }`);
             headers.set('content-length', String(range.end - range.start + 1));
-            const span = webStreamOf(createReadStream(target, { start: range.start, end: range.end }));
+            const span = request.method === 'HEAD' ? null : webStreamOf(createReadStream(target, range));
             return new Response(span, { status: 206, headers });
         }
 
-        headers.set('content-length', String(info.size));
-        const body = webStreamOf(createReadStream(target));
-        return new Response(body, { status: 200, headers });
+        if (request.method === 'HEAD')
+        {
+            return withRepresentationMetadata(new Response(null, { status: 200, headers }));
+        }
+        return new Response(webStreamOf(createReadStream(target)), { status: 200, headers });
     };
 }
 
-/**
- * @internal The byte span to serve for this request, `null` for the full file, or
- * `'unsatisfiable'` for a 416. Only the single-range form is honored (see the module doc);
- * a syntactically invalid or multi-range header is IGNORED per RFC 9110, never an error.
- */
-/**
- * @internal Does `If-None-Match` identify the file we would serve? An exact match is the plain
- * case. A tag carrying an encoding suffix is the COMPRESSED variant of the same file
- * (`compressResponse` appends one so the two representations cannot share a validator), and it
- * revalidates only while the client still accepts that coding - honouring it unconditionally is
- * how a cache ends up serving gzip bytes to a request that asked for identity.
- */
-function matchesEntity(ifNoneMatch: string, etag: string, request: Request): boolean
+/** Chooses the highest-ranked fresh stored representation of this exact admitted file. */
+async function selectSibling(
+    root: string, realRoot: string, original: ContainedFile, dotfiles: boolean, acceptEncoding: string | null
+): Promise<{ file: ContainedFile; coding: 'br' | 'gzip' } | undefined>
 {
-    if (ifNoneMatch === etag)
+    for (const coding of negotiateEncodings(acceptEncoding ?? ''))
     {
-        return true;
+        if (coding === 'deflate')
+        {
+            continue;
+        }
+        const sibling = relative(root, original.path) + (coding === 'br' ? '.br' : '.gz');
+        const file = await containedFile(root, sibling, { realRoot, dotfiles });
+        if (file !== null && file.stats.mtimeMs >= original.stats.mtimeMs)
+        {
+            return { file, coding };
+        }
     }
-    const inner = etag.slice(0, -1);
-    if (!ifNoneMatch.startsWith(inner) || !ifNoneMatch.endsWith('"'))
-    {
-        return false;
-    }
-    const suffix = ifNoneMatch.slice(inner.length, -1);
-    if (!suffix.startsWith('-'))
-    {
-        return false;
-    }
-    const accepted = request.headers.get('accept-encoding') ?? '';
-    return accepted.toLowerCase().includes(suffix.slice(1).toLowerCase());
+    return undefined;
 }
 
+/** The byte span to serve, null for the full file, or an unsatisfiable range. */
 function rangeFor(
     request: Request, size: number, etag: string, lastModified: string
 ): { start: number; end: number } | 'unsatisfiable' | null

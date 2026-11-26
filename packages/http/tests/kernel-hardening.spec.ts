@@ -287,35 +287,42 @@ describe('the adapter fast lane cannot hang on a second read', () =>
 
 describe('a compressed variant revalidates without lying about its representation', () =>
 {
-    it('an encoding-suffixed ETag answers 304 only while the client still accepts that coding', async () =>
+    it('an encoding-suffixed ETag answers 304 only while the client still accepts that coding', async ({ onTestFinished }) =>
     {
         const { staticFiles } = await import('../src/static.ts');
-        const { mkdtemp, writeFile } = await import('node:fs/promises');
+        const { compress } = await import('../src/compress.ts');
+        const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
         const { tmpdir } = await import('node:os');
         const { join } = await import('node:path');
 
         const root = await mkdtemp(join(tmpdir(), 'azeroth-etag-'));
+        onTestFinished(() => rm(root, { recursive: true, force: true }));
         await writeFile(join(root, 'app.js'), 'console.log(1);'.repeat(40));
 
         const app = new App({ dev: false });
         app.get('/*path', staticFiles(root));
 
-        const first = await app.handle(new Request('http://x/app.js', { headers: { 'accept-encoding': 'gzip' } }));
+        const handler = compress({ threshold: 0 })(app);
+        const first = await handler.handle(new Request('http://x/app.js', { headers: { 'accept-encoding': 'gzip' } }));
         expect(first.status).toBe(200);
-        const identity = first.headers.get('etag') ?? '';
-        const compressed = `${ identity.slice(0, -1) }-gzip"`;
+        expect(first.headers.get('content-encoding')).toBe('gzip');
+        const compressed = first.headers.get('etag')!;
+        await first.arrayBuffer();
 
         // A cache holding the gzip body, still asking for gzip: 304 is correct and saves the body.
-        const revalidated = await app.handle(new Request('http://x/app.js', {
+        const revalidated = await handler.handle(new Request('http://x/app.js', {
             headers: { 'if-none-match': compressed, 'accept-encoding': 'gzip' }
         }));
         expect(revalidated.status).toBe(304);
+        expect(revalidated.headers.get('etag')).toBe(compressed);
 
         // The same tag with no Accept-Encoding must NOT 304, or the cache serves gzip as identity.
-        const identityAsked = await app.handle(new Request('http://x/app.js', {
+        const identityAsked = await handler.handle(new Request('http://x/app.js', {
             headers: { 'if-none-match': compressed }
         }));
         expect(identityAsked.status).toBe(200);
+        const identity = identityAsked.headers.get('etag')!;
+        await identityAsked.text();
 
         // The plain case is untouched.
         expect((await app.handle(new Request('http://x/app.js', { headers: { 'if-none-match': identity } }))).status).toBe(304);

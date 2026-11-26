@@ -281,6 +281,29 @@ const answer = await app.handle(forwardIdentity(pageRequest, new Request('https:
 
 ---
 
+## Serving compressed responses on Node
+
+Place `compress()` first in the public pipeline to negotiate Brotli, gzip or
+deflate for eligible responses. Live Brotli defaults to quality 5. Gzip uses
+the zlib default. Both levels and the minimum declared body size are configurable.
+
+```ts
+import { App, pipeline } from '@azerothjs/http';
+import { compress, serve, staticFiles } from '@azerothjs/http/node';
+
+const app = new App();
+app.get('/assets/*path', staticFiles('./dist/assets', { precompressed: true }));
+await serve(pipeline(app, compress({ threshold: 1024, brotliQuality: 5, gzipLevel: 6 })));
+```
+
+A static mount with `precompressed: true` checks for fresh `.br` and `.gz` files
+beside the original and uses the highest-ranked available encoding. A byte-range
+request uses the original file. Stored files advertise their encoded lengths.
+Live compression streams the result and uses a weak ETag because codec settings
+and chunk boundaries can change the encoded bytes. Both paths support conditional
+GET and HEAD. Responses that can vary by encoding carry `Vary: Accept-Encoding`
+even when the client receives identity.
+
 ## Other runtimes - Bun, Deno, Workers, Vercel Edge
 
 The `.` entry is a pure fetch-standard kernel (one sanctioned `node:` import, the
