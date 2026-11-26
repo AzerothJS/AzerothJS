@@ -283,9 +283,18 @@ const answer = await app.handle(forwardIdentity(pageRequest, new Request('https:
 
 ## Serving compressed responses on Node
 
+The production static handler uses a curated extension table. For example,
+`.gltf` is served as `model/gltf+json`, `.glb` as `model/gltf-binary`, and
+`.webmanifest` as `application/manifest+json`. Browsers can import the JSON
+formats as JSON modules and open `.htm` and `.xhtml` as documents. Unlisted
+extensions, including `.ts`, use `application/octet-stream`. Vite's development
+server can recognize additional formats.
+
 Place `compress()` first in the public pipeline to negotiate Brotli, gzip or
 deflate for eligible responses. Live Brotli defaults to quality 5. Gzip uses
 the zlib default. Both levels and the minimum declared body size are configurable.
+Live compression also covers binary glTF models, TTF and OTF fonts, and BMP images.
+WOFF, WOFF2 and ICO files retain their original bytes under live compression.
 
 ```ts
 import { App, pipeline } from '@azerothjs/http';

@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import { App } from '@azerothjs/http';
+import { staticFiles } from '@azerothjs/http/node';
 import { MemoryImageCache, imageHandler, mountPages, type ImageAdapter, type PageRoute } from '@azerothjs/kit';
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
@@ -51,6 +52,28 @@ const get = (app: App, query: string, headers: Record<string, string> = {}): Pro
 
 describe('imageHandler without an adapter', () =>
 {
+    it.each([
+        ['apng', 'image/apng'], ['bmp', 'image/bmp'], ['cur', 'image/x-icon'],
+        ['heic', 'image/heic'], ['heif', 'image/heif'], ['jxl', 'image/jxl'],
+        ['jfif', 'image/jpeg'], ['pjp', 'image/jpeg'], ['pjpeg', 'image/jpeg'],
+        ['tif', 'image/tiff'], ['tiff', 'image/tiff']
+    ])('preserves the same .%s bytes and media type on the static and image routes', async (extension, expected) =>
+    {
+        const { app, root } = serve();
+        const filename = `sample.${ extension }`;
+        const bytes = Buffer.from(`original ${ extension } bytes`);
+        writeFileSync(join(root, filename), bytes);
+        app.get('/static/*path', staticFiles(root));
+        const image = await get(app, `src=/${ filename }`);
+        const asset = await app.handle(new Request(`http://local/static/${ filename }`));
+        for (const response of [image, asset])
+        {
+            expect(response.status).toBe(200);
+            expect(response.headers.get('content-type')).toBe(expected);
+            expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+        }
+    });
+
     it('serves original bytes with immutable caching, an etag, and miss-then-hit verdicts', async () =>
     {
         const { app } = serve();

@@ -336,10 +336,52 @@ describe('a mount at the volume root', () =>
 
 describe('contentTypeFor', () =>
 {
+    it.each([
+        ['htm', 'text/html; charset=utf-8'],
+        ['xhtml', 'application/xhtml+xml'],
+        ['webmanifest', 'application/manifest+json'],
+        ['geojson', 'application/geo+json'],
+        ['jsonld', 'application/ld+json'],
+        ['atom', 'application/atom+xml'],
+        ['rss', 'application/rss+xml'],
+        ['csv', 'text/csv; charset=utf-8'],
+        ['ics', 'text/calendar; charset=utf-8'],
+        ['vtt', 'text/vtt; charset=utf-8'],
+        ['apng', 'image/apng'],
+        ['bmp', 'image/bmp'],
+        ['cur', 'image/x-icon'],
+        ['heic', 'image/heic'],
+        ['heif', 'image/heif'],
+        ['jfif', 'image/jpeg'],
+        ['jxl', 'image/jxl'],
+        ['pjp', 'image/jpeg'],
+        ['pjpeg', 'image/jpeg'],
+        ['tif', 'image/tiff'],
+        ['tiff', 'image/tiff'],
+        ['m4a', 'audio/mp4'],
+        ['aac', 'audio/aac'],
+        ['flac', 'audio/flac'],
+        ['oga', 'audio/ogg'],
+        ['ogg', 'audio/ogg'],
+        ['opus', 'audio/ogg'],
+        ['wav', 'audio/wav'],
+        ['weba', 'audio/webm'],
+        ['mov', 'video/quicktime'],
+        ['ogv', 'video/ogg'],
+        ['glb', 'model/gltf-binary'],
+        ['gltf', 'model/gltf+json'],
+        ['obj', 'model/obj'],
+        ['stl', 'model/stl']
+    ])('serves .%s as %s', (extension, expected) =>
+    {
+        expect(contentTypeFor(`public/assets/item.${ extension.toUpperCase() }`)).toBe(expected);
+    });
+
     it('maps the web asset set and defaults to octet-stream', () =>
     {
         expect(contentTypeFor('app.js')).toBe('text/javascript; charset=utf-8');
         expect(contentTypeFor('font.WOFF2')).toBe('font/woff2');
+        expect(contentTypeFor('component.ts')).toBe('application/octet-stream');
         expect(contentTypeFor('archive.xyz')).toBe('application/octet-stream');
     });
 });

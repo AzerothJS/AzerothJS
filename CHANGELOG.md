@@ -12,6 +12,11 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- Production static serving now supplies media types for glTF models, web
+  manifests, structured text and additional image, audio and video formats.
+  Browsers now render `.htm` and `.xhtml` as documents. Scripts in those files
+  can run on the application's origin. Eligible GLB, TTF, OTF and BMP responses
+  now use negotiated live compression.
 - The fullstack production build writes Brotli and gzip variants of eligible client
   assets. Kit serves them on its immutable asset mount, and the generated server
   compresses eligible page and API responses.

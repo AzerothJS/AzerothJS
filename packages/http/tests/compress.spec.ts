@@ -17,7 +17,7 @@ import { buffer } from 'node:stream/consumers';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compressResponse } from '../src/compress.ts';
 import { App, conditional, csrfCookie, etagFor, json, pipeline, requestId, securityHeaders, text } from '@azerothjs/http';
-import { compress, staticFiles } from '@azerothjs/http/node';
+import { compress, contentTypeFor, staticFiles } from '@azerothjs/http/node';
 
 const LONG = 'azeroth '.repeat(500); // ~4 KB of compressible text
 
@@ -74,6 +74,31 @@ describe('encoding negotiation and round-trip', () =>
         expect(response.headers.get('content-encoding')).toBe('gzip');
         expect(JSON.parse(await decoded(response))).toEqual(payload);
     });
+
+    it.each(['scene.gltf', 'app.webmanifest'])('compresses the JSON media type served for %s', async file =>
+    {
+        const payload = JSON.stringify({ name: LONG });
+        const response = compressResponse(requestAccepting('gzip'), new Response(payload, {
+            headers: { 'content-type': contentTypeFor(file), 'content-length': String(Buffer.byteLength(payload)) }
+        }));
+        expect(response.headers.get('content-encoding')).toBe('gzip');
+        expect(await decoded(response)).toBe(payload);
+    });
+
+    it.each(['model/gltf-binary', 'Font/TTF; version=1', 'font/otf', 'image/bmp'])(
+        'round-trips the binary bytes of %s with Brotli and gzip', async type =>
+        {
+            const bytes = Buffer.alloc(4096, Buffer.from([0x00, 0xff, 0x80, 0x01]));
+            const headers = { 'content-type': type, 'content-length': String(bytes.length) };
+            for (const [coding, decompress] of [['br', brotliDecompressSync], ['gzip', gunzipSync]] as const)
+            {
+                const response = compressResponse(requestAccepting(coding), new Response(bytes, { headers }));
+                expect(response.headers.get('content-encoding')).toBe(coding);
+                expect(response.headers.get('content-type')).toBe(type);
+                expect(decompress(Buffer.from(await response.arrayBuffer()))).toEqual(bytes);
+            }
+        }
+    );
 });
 
 describe('identity and ineligible responses', () =>
@@ -92,9 +117,12 @@ describe('identity and ineligible responses', () =>
         expect(original.bodyUsed).toBe(false);
     });
 
-    it('non-compressible types (already entropy-coded)', () =>
+    it.each([
+        'font/woff', 'font/woff2', 'image/x-icon', 'image/png', 'image/jpeg', 'image/webp',
+        'image/avif', 'audio/mpeg', 'video/mp4', 'text/event-stream', 'application/octet-stream'
+    ])('passes through %s regardless of how compressible the bytes are', type =>
     {
-        const original = new Response(new Uint8Array(4096), { headers: { 'content-type': 'image/png' } });
+        const original = new Response(new Uint8Array(4096), { headers: { 'content-type': type } });
         expect(compressResponse(requestAccepting('gzip, br'), original)).toBe(original);
     });
 

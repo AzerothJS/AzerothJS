@@ -12,8 +12,7 @@
  * encoding the client accepts (brotli > gzip > deflate), or the response untouched when
  * compression would be wrong:
  *
- *   - non-compressible types (images, video, fonts, archives - already entropy-coded;
- *     recompressing burns CPU to make them larger);
+ *   - formats such as WOFF2, PNG and compressed audio or video that already encode compactly;
  *   - bodies under the threshold (headers dwarf the saving; default 1 KiB);
  *   - already-encoded responses, byte ranges and bodyless representations;
  *   - responses that carry `Cache-Control: no-transform`.
@@ -43,7 +42,12 @@ import { PayloadResponse } from './payload.ts';
 import { markClientFault } from './errors.ts';
 import { webStreamOf } from './web-stream.ts';
 
-/** Media types worth compressing: text in any costume, plus the text-like applications. */
+/** Exact media types eligible alongside text and the JSON/XML structured syntax suffixes. */
+const compressibleTypes = new Set([
+    'application/javascript', 'application/json', 'application/wasm', 'application/xml',
+    'font/otf', 'font/ttf', 'image/bmp', 'model/gltf-binary'
+]);
+
 function isCompressible(contentType: string): boolean
 {
     const type = (contentType.split(';')[0] ?? '').trim().toLowerCase();
@@ -54,13 +58,9 @@ function isCompressible(contentType: string): boolean
         return false;
     }
     return type.startsWith('text/')
-        || type === 'application/json'
-        || type === 'application/javascript'
-        || type === 'application/xml'
-        || type === 'application/wasm'
-        || type === 'image/svg+xml'
         || type.endsWith('+json')
-        || type.endsWith('+xml');
+        || type.endsWith('+xml')
+        || compressibleTypes.has(type);
 }
 
 /** Quality and size controls for on-the-fly response compression. */
@@ -217,7 +217,6 @@ function compressFor(request: Request, response: Response, options: CompressOpti
     let transform: Transform;
     if (encoding === 'br')
     {
-        // TEXT mode tunes brotli's context modeling for what we compress (see isCompressible).
         transform = createBrotliCompress({
             params: {
                 [constants.BROTLI_PARAM_MODE]: constants.BROTLI_MODE_TEXT,
