@@ -248,6 +248,11 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- Compiled component slots now mount text and numbers on client navigation, update
+  getter results in place, and retain DOM nodes returned from another window.
+  `ErrorBoundary` can render text and multiple siblings in its fallback and protected
+  content, including after a retry.
+
 - Buffered server rendering now sends the ready Suspense branch for an empty watch
   list, a seeded result or a settled route loader. Hydration can retain input entered
   into that branch before startup. An unseeded resource still shows its fallback.

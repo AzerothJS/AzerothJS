@@ -534,7 +534,7 @@ export function appendChild(parent: HTMLElement | DocumentFragment, child: Child
     // DocumentFragment (how <For> mounts its rows with no wrapper: appending the
     // fragment moves its markers + rows directly into `parent`). <For> reaches here via
     // its `as unknown as HTMLElement` return, so `child` isn't statically a Node.
-    if ((child as unknown) instanceof Node)
+    if (domNodeType(child) !== undefined)
     {
         parent.appendChild(child as unknown as Node);
         return;
@@ -564,10 +564,10 @@ export function appendChild(parent: HTMLElement | DocumentFragment, child: Child
  *
  * @internal
  */
-function spliceMultiNode(parent: Node, value: unknown, anchor: ChildNode | null): void
+function spliceMultiNode(parent: Node, value: unknown[] | DocumentFragment, anchor: ChildNode | null): void
 {
     const start = parent.childNodes.length;
-    if (value instanceof DocumentFragment)
+    if (!Array.isArray(value))
     {
         // A fragment empties into the parent on append, so its children become direct children with
         // no wrapper - the same guarantee the array branch gives, for a `<For>`/branch node group.
@@ -580,7 +580,7 @@ function spliceMultiNode(parent: Node, value: unknown, anchor: ChildNode | null)
         // the segment's root and leaves the handle claimed forever. Refused (DEV throw,
         // prod warn); a getter member resolving to a handle is fine - it gets its own
         // binding with full slot support.
-        refuseArraySlotMembers(value as readonly unknown[]);
+        refuseArraySlotMembers(value);
         appendChildren(parent as HTMLElement, value as Child[]);
     }
     // Anchor-free (append) case: appendChildren already left the nodes in order at the parent's tail,
@@ -692,7 +692,7 @@ function driveReactiveChild(initialNode: ChildNode, child: () => unknown): void
             localDispose = d;
             return resolveReactive(child);
         });
-        const multi = Array.isArray(value) || value instanceof DocumentFragment;
+        const multi = Array.isArray(value) || isFragment(value);
         if (end !== null && !multi)
         {
             clearRange(parent, currentNode, end);
@@ -865,21 +865,41 @@ function buildNode(value: unknown): ChildNode
         return document.createTextNode('');
     }
 
-    if (value instanceof HTMLElement)
-    {
-        return value;
-    }
-
-    // Any other DOM node (SVG/MathML element, Text, Comment) is inserted as-is -
-    // only a NON-node value falls through to being rendered as text. Without this
-    // a returned SVG element or text node would be stringified to "[object ...]".
-    if (value instanceof Node)
+    if (domNodeType(value) !== undefined)
     {
         return value as ChildNode;
     }
 
     // eslint-disable-next-line @typescript-eslint/no-base-to-string -- last-resort text coercion: primitives stringify correctly; a plain object is caller error surfaced visibly rather than thrown mid-render
     return document.createTextNode(String(value));
+}
+
+/** Read the browser's own Node brand, including nodes adopted from another window. */
+function domNodeType(value: unknown): number | undefined
+{
+    if (typeof value !== 'object' || value === null)
+    {
+        return undefined;
+    }
+    try
+    {
+        return Reflect.get(Node.prototype, 'nodeType', value);
+    }
+    catch
+    {
+        // The DOM getter rejects non-nodes, even objects with a nodeType of their own.
+        return undefined;
+    }
+}
+
+function isFragment(value: unknown): value is DocumentFragment
+{
+    // Skip the brand read for local elements and text nodes on the single-node path.
+    if (value instanceof Element || value instanceof Text)
+    {
+        return false;
+    }
+    return domNodeType(value) === 11;
 }
 
 /**
@@ -928,7 +948,7 @@ export function materializeChild(value: unknown): Node | null
 
     // A <For> (and any branch returning a DocumentFragment) is moved in directly so its
     // rows become the co-range's own children - no wrapper element.
-    if (value instanceof DocumentFragment)
+    if (isFragment(value))
     {
         return value;
     }
@@ -985,7 +1005,7 @@ export function bindHole(openAnchor: ChildNode, child: Child): void
     // Static (non-function) child, placed once. A MULTI-node value (array or fragment) must go in as
     // DIRECT children before the close anchor - the same treatment the reactive path gives - because
     // buildNode coerces a SINGLE node only; passing it an array would stringify it (`[object ...]`).
-    if (Array.isArray(child) || child instanceof DocumentFragment)
+    if (Array.isArray(child) || isFragment(child))
     {
         spliceMultiNode(parent, child, closeAnchor);
     }
@@ -1030,7 +1050,7 @@ export function bindContent(el: HTMLElement, child: Child): void
  */
 function placeStatic(el: HTMLElement, value: unknown): void
 {
-    if (Array.isArray(value) || value instanceof DocumentFragment)
+    if (Array.isArray(value) || isFragment(value))
     {
         spliceMultiNode(el, value, null);
         return;
@@ -1120,40 +1140,39 @@ export function bindEvent(el: HTMLElement, type: string, handler: unknown): void
 }
 
 /**
- * Drives a control-flow / component SLOT in a template clone: inserts the
- * component's already-built output (`result` - a co-range fragment for built-ins,
- * an element/fragment for user components, an ARRAY of roots for a fragment-root
- * component, or `null` when it renders nothing) at the slot's marker position, then
- * removes the marker. The component manages its
- * own reactivity and co-range internally, so the slot is a one-time placement -
- * the analog of {@link bindHole} for a `slot` node rather than a `hole`.
- * A fragment is moved in directly (no display:contents
- * wrapper), keeping control-flow output valid inside `<table>`/`<select>`/`<ul>`.
+ * Places a component's result at the slot marker in a template clone.
+ * A getter replaces the marker on its first run and continues updating there.
+ * Arrays and fragments place their children directly inside the parent.
  *
  * @param marker - The slot's placeholder comment inside a template clone
  * @param result - The component invocation's return value
  *
  * @internal Compiler-emitted runtime; not part of the application API.
  */
-export function bindSlot(marker: ChildNode, result: Node | unknown[] | DocumentFragment | null | undefined): void
+export function bindSlot(marker: ChildNode, result: unknown): void
 {
     const parent = marker.parentNode as Node;
     // A compiled <Outlet/> returns the route slot handle; it places its own markers and
-    // effect at the slot position. Today's bare insertBefore would throw on a non-Node.
+    // effect at the slot position.
     if (isSlotHandle(result))
     {
         slotDriverOf(result).place(parent, marker);
     }
-    else if (Array.isArray(result) || result instanceof DocumentFragment)
+    else if (typeof result === 'function')
+    {
+        driveReactiveChild(marker, result as () => unknown);
+        return;
+    }
+    else if (Array.isArray(result) || isFragment(result))
     {
         // A fragment-root component lowers to the array of its roots. The h()-tree path that
         // serves SSR and hydration already accepts one, so the clone path must too, or the same
         // component renders on the server and throws in the browser, blanking the page.
         spliceMultiNode(parent, result, marker);
     }
-    else if (result !== null && result !== undefined)
+    else if (result !== null && result !== undefined && result !== false)
     {
-        parent.insertBefore(result, marker);
+        parent.insertBefore(buildNode(result), marker);
     }
     parent.removeChild(marker);
 }
@@ -1427,7 +1446,7 @@ function driveHoleRange(parent: Node, openAnchor: ChildNode | null, closeAnchor:
             }
 
             // A multi-node value renders its nodes as direct children before the close anchor.
-            if (Array.isArray(value) || value instanceof DocumentFragment)
+            if (Array.isArray(value) || isFragment(value))
             {
                 spliceMultiNode(host, value, closeAnchor);
                 const open = openAnchor;
@@ -1748,11 +1767,11 @@ function holdsSection(value: unknown): boolean
     {
         return value.some(holdsSection);
     }
-    if (value instanceof DocumentFragment)
+    if (isFragment(value))
     {
         return Array.from(value.childNodes).some(holdsSection);
     }
-    return value instanceof Element && TABLE_SECTIONS.has(value.tagName);
+    return domNodeType(value) === 1 && TABLE_SECTIONS.has((value as Element).tagName);
 }
 
 /**

@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { generateModule } from '../src/codegen.ts';
 import * as internal from 'azerothjs/internal';
 import * as azerothjs from 'azerothjs';
-import { hydrate, render, renderToString } from 'azerothjs';
+import { createMemoryHistory, createRouter, createSignal, h, hydrate, render, renderToString, Routes, ssr } from 'azerothjs';
 
 type Component = (props?: Record<string, unknown>) => unknown;
 
@@ -69,6 +69,109 @@ function mount(build: () => unknown): HTMLElement
     render(() => build() as HTMLElement, container);
     return container;
 }
+
+const VALUE_PARENT = `
+import Value from './Value.azeroth';
+export default component Parent()
+{
+    <section><i>L</i><Value/><i>R</i></section>
+}`;
+
+describe('a component value in a compiled slot', () =>
+{
+    it.each([
+        ['<em>text</em>', '<em>text</em>'], [0, '0'], [true, 'true'],
+        [false, ''], [null, ''], [undefined, ''], ['', '']
+    ])('mounts %j in place and adopts matching server output', (value, shown) =>
+    {
+        const Parent = compile(VALUE_PARENT, { Value: () => value });
+        const host = mount(Parent);
+        const section = host.firstElementChild;
+        expect(section?.textContent).toBe(`L${ shown }R`);
+        expect(section?.querySelector('em')).toBeNull();
+        if (value === false || value == null)
+        {
+            expect(section?.childNodes).toHaveLength(2);
+        }
+        host.innerHTML = renderToString(() => Parent() as HTMLElement);
+        const first = host.querySelector('i');
+        hydrate(() => Parent() as HTMLElement, host);
+        expect(host.querySelector('i')).toBe(first);
+        expect(host.textContent).toBe(`L${ shown }R`);
+        host.remove();
+    });
+
+    it('updates a getter between stable siblings and releases it on remount', () =>
+    {
+        const [step, setStep] = createSignal(0);
+        const el = document.createElement('b');
+        el.textContent = 'element';
+        const read = vi.fn(() => ['start', [0, [el]], false][step()]);
+        const Parent = compile(VALUE_PARENT, { Value: () => read });
+        const host = mount(Parent);
+        const siblings = [...host.querySelectorAll('i')];
+        expect(host.textContent).toBe('LstartR');
+        setStep(1);
+        expect(host.textContent).toBe('L0elementR');
+        expect(host.querySelector('b')).toBe(el);
+        setStep(2);
+        expect(host.textContent).toBe('LR');
+        expect([...host.querySelectorAll('i')]).toEqual(siblings);
+        render(() => document.createElement('aside'), host);
+        const reads = read.mock.calls.length;
+        setStep(0);
+        expect(read).toHaveBeenCalledTimes(reads);
+        host.remove();
+    });
+
+    it('serializes branded server markup and uses ordinary object coercion on the client', () =>
+    {
+        const Parent = compile(VALUE_PARENT, { Value: () => ssr('<b>server</b>') });
+        const host = mount(Parent);
+        expect(host.textContent).toBe('L[object Object]R');
+        expect(host.querySelector('b')).toBeNull();
+        host.innerHTML = renderToString(() => Parent() as HTMLElement);
+        expect(host.querySelector('b')?.textContent).toBe('server');
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try
+        {
+            hydrate(() => Parent() as HTMLElement, host);
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining('falling back'));
+            expect(host.querySelector('b')).toBeNull();
+            expect(host.textContent).toBe('L[object Object]R');
+        }
+        finally
+        {
+            warn.mockRestore();
+            host.remove();
+        }
+    });
+
+    it('retains a route outlet returned by a getter and releases it when hidden', () =>
+    {
+        const [step, setStep] = createSignal(0);
+        const Layout = compile(`export default component Layout(props: { children?: unknown }) {
+            <main><Value content={props.children}/></main>
+        }`, { Value: (props: { content: unknown }) => () => step() === 2 ? 'closed' : props.content });
+        const leaf = vi.fn(() => h('b', {}, 'leaf'));
+        const host = mount(() => Routes({ router: createRouter({
+            history: createMemoryHistory('/p'),
+            routes: [{ path: '/p', component: props => Layout(props) as HTMLElement, children: [{ path: '', component: leaf }] }]
+        }) }));
+        const original = host.querySelector('b');
+        expect(original?.textContent).toBe('leaf');
+        setStep(1);
+        expect(host.querySelector('b')).toBe(original);
+        expect(leaf).toHaveBeenCalledTimes(1);
+        setStep(2);
+        expect(host.textContent).toBe('closed');
+        setStep(0);
+        expect(host.textContent).toBe('leaf');
+        expect(leaf).toHaveBeenCalledTimes(2);
+        render(() => h('aside', {}), host);
+        host.remove();
+    });
+});
 
 describe('a fragment-root component in a template-clone slot', () =>
 {

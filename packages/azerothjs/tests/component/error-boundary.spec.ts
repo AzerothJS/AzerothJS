@@ -42,6 +42,39 @@ function mountBoundary(props: Parameters<typeof ErrorBoundary>[0]): {
 
 describe('ErrorBoundary', () =>
 {
+    it('mounts fragment values on error and reset and releases effects from the old branch', () =>
+    {
+        const [label, setLabel] = createSignal('retry');
+        let attempts = 0;
+        let reads = 0;
+        const { container, dispose } = mountBoundary({
+            fallback: (_err, reset) => [0, h('button', { onClick: reset }, () =>
+            {
+                reads++;
+                return label();
+            })],
+            children: () =>
+            {
+                if (++attempts === 1)
+                {
+                    throw new Error('offline');
+                }
+                return ['back', false, h('b', {}, ' online')];
+            }
+        });
+        expect(container.textContent).toBe('0retry');
+        setLabel('again');
+        expect(container.textContent).toBe('0again');
+        const beforeReset = reads;
+        (container.querySelector('button') as HTMLButtonElement).click();
+        expect(container.textContent).toBe('back online');
+        expect(container.querySelector('button')).toBeNull();
+        setLabel('unused');
+        expect(reads).toBe(beforeReset);
+        dispose();
+        container.remove();
+    });
+
     it('renders children when nothing throws', () =>
     {
         const { container, dispose } = mountBoundary({

@@ -54,6 +54,20 @@ The renderer shares the render-mode flag and SSR/hydration primitives with
 `azerothjs`, so `hydrate` can adopt server-rendered markup by walking
 it with a hydration cursor instead of creating new nodes.
 
+A component used inside markup can return text, a number, a DOM node, an array,
+or a fragment. Arrays and fragments insert their children in order at the component's
+position. `null`, `undefined`, and `false` render nothing. Returning a getter keeps
+that position reactive until its owning scope is disposed. `ErrorBoundary` can
+display multiple siblings in both its protected content and its fallback.
+
+In the browser, each `For` row, `Transition` child, and `Portal` child must
+produce one `HTMLElement`. Static server rendering can serialize text and
+`ssr(html)` in these positions. Raw HTML from `ssr(html)` is server-only.
+Returning that object from a component in live markup displays `[object Object]`.
+If the server sent an element there, hydration can fall back to a full client
+render and discard edits made before startup. Return an element in both modes
+when the page needs to preserve that content.
+
 ## Components
 
 | File | Role |

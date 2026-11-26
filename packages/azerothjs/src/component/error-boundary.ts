@@ -25,8 +25,9 @@
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
 import type { MountNode } from './types.ts';
 import { createSignal, createEffect, createRoot, catchError, isStringMode, isHydrating, runInMode, untrack } from '../reactivity/index.ts';
-import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
-import { createCoMarkers, appendToCo, clearCo, resolveMountNode } from './co-range.ts';
+import { serializeChild, wrapContentsAnchored, hydrationNode, resolveThunks } from '../reactivity/internal.ts';
+import { materializeChild } from '../renderer/h.ts';
+import { createCoMarkers, appendToCo, clearCo } from './co-range.ts';
 
 /**
  * Props for the `<ErrorBoundary>` component.
@@ -181,11 +182,11 @@ export function ErrorBoundary(props: ErrorBoundaryProps): MountNode
             {
                 if (captured === null)
                 {
-                    catchError(() => appendToCo(target, resolveMountNode(props.children())), err => setError({ value: err }));
+                    catchError(() => appendToCo(target, materializeChild(resolveThunks(props.children()))), err => setError({ value: err }));
                 }
                 else
                 {
-                    appendToCo(target, resolveMountNode(props.fallback(captured.value, reset)));
+                    appendToCo(target, materializeChild(resolveThunks(props.fallback(captured.value, reset))));
                 }
             }
             catch (error)

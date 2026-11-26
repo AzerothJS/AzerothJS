@@ -1,0 +1,9 @@
+export { ErrorBoundary, createSignal, render } from 'azerothjs';
+
+component Value(props: { value: unknown }) {
+    return props.value;
+}
+
+export component Parcel(props: { value: unknown }) {
+    <section><i>L</i><Value value={props.value}/><i>R</i></section>
+}
