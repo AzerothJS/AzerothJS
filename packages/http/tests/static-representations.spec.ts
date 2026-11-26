@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { brotliCompressSync, gunzipSync, gzipSync } from 'node:zlib';
 import { App } from '@azerothjs/http';
 import { compressResponse, staticFiles } from '@azerothjs/http/node';
@@ -42,6 +42,93 @@ async function ask(app: App, headers: Record<string, string>, method = 'GET', li
 
 describe('negotiated static representations', () =>
 {
+    it.each([false, true])('finishes the admitted release when the public mount moves (range: %s)', async ranged =>
+    {
+        const current = join(root, 'current');
+        for (const release of ['spring', 'summer'])
+        {
+            const directory = join(root, release);
+            await mkdir(directory);
+            await writeFile(join(directory, 'parcel.js'), release);
+        }
+        await symlink(join(root, 'spring'), current, 'junction');
+        const app = new App();
+        let switched = false;
+        app.get('/assets/*path', staticFiles(current, {
+            async allowFile()
+            {
+                if (!switched)
+                {
+                    await unlink(current);
+                    await symlink(join(root, 'summer'), current, 'junction');
+                    switched = true;
+                }
+                return true;
+            }
+        }));
+        const response = await ask(app, ranged ? { range: 'bytes=0-2' } : {});
+        expect(response.status).toBe(ranged ? 206 : 200);
+        expect(await response.text()).toBe(ranged ? 'spr' : 'spring');
+        expect(await (await ask(app, {})).text()).toBe('summer');
+    });
+
+    it('consults the file policy for the original and fresh preferred encoding', async () =>
+    {
+        const visited: string[][] = [];
+        const app = new App();
+        app.get('/assets/*path', staticFiles(root, {
+            precompressed: true,
+            allowFile(candidate, realPath)
+            {
+                visited.push([candidate.path, realPath]);
+                return true;
+            }
+        }));
+        const response = await ask(app, { 'accept-encoding': 'br, gzip' });
+        expect(Buffer.from(await response.arrayBuffer())).toEqual(br);
+        expect(visited).toEqual([[file, await realpath(file)], [file + '.br', await realpath(file + '.br')]]);
+    });
+
+    it.each([
+        { allow: ['parcel.js', 'parcel.js.gz'], coding: 'gzip', bytes: gzip },
+        { allow: ['parcel.js'], coding: null, bytes: Buffer.from(source) }
+    ])('selects the next admitted representation from $allow', async ({ allow, coding, bytes }) =>
+    {
+        const visited: string[] = [];
+        const app = new App();
+        app.get('/assets/*path', staticFiles(root, {
+            precompressed: true,
+            async allowFile(candidate)
+            {
+                const name = basename(candidate.path);
+                visited.push(name);
+                return allow.includes(name);
+            }
+        }));
+        const response = await ask(app, { 'accept-encoding': 'br, gzip' });
+        expect(response.headers.get('content-encoding')).toBe(coding);
+        expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+        expect(visited).toEqual(['parcel.js', 'parcel.js.br', 'parcel.js.gz']);
+    });
+
+    it('returns a miss before selecting an encoding when the original is declined', async () =>
+    {
+        const visited: string[] = [];
+        const app = new App();
+        app.get('/assets/*path', staticFiles(root, {
+            precompressed: true,
+            allowFile(candidate)
+            {
+                visited.push(basename(candidate.path));
+                return false;
+            }
+        }));
+        const response = await ask(app, { 'accept-encoding': 'br, gzip' }, 'HEAD');
+        expect(response.status).toBe(404);
+        expect(response.headers.get('etag')).toBeNull();
+        expect(visited).toEqual(['parcel.js']);
+    });
+
     it.each([
         ['br, gzip', 'br', br], ['br;q=0.1,gzip;q=0.9', 'gzip', gzip],
         ['br;q=0, *', 'gzip', gzip], ['identity', null, Buffer.from(source)]

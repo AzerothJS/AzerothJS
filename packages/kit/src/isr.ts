@@ -939,7 +939,7 @@ export function registerIsr(registration: IsrRegistration): void
          */
         canonical: string;
 
-        /** The RAW pathname alone - the unit a write's mark stores. */
+        /** The escaped app-relative URL pathname, used for a write's mark. */
         pathname: string;
 
         /** The language this copy is produced in, when the site publishes more than one. */
@@ -948,10 +948,10 @@ export function registerIsr(registration: IsrRegistration): void
         /** The url prefix this copy lives under, when the url names its language. */
         base?: string;
 
-        /** The RAW pathname plus the raw search - the request exactly as sent. */
+        /** The escaped app-relative URL pathname and original search passed to the renderer. */
         url: string;
 
-        /** The RAW pathname plus the normalised search: this page's cache identity. */
+        /** The cache key for the canonical page, normalized search and negotiated locale. */
         key: string;
 
         /** No query component: the page's own identity, in whatever language. */
@@ -964,10 +964,9 @@ export function registerIsr(registration: IsrRegistration): void
     /**
      * Builds the identities from one request.
      *
-     * `url` and `key` come from the RAW pathname, never `context.path`. A decoded path re-parsed
-     * as a URL is a different URL: `%3F` becomes a query delimiter, `%2F` a segment separator, and
-     * `%23` a fragment. That turns one page into another and lets two distinct requests derive one
-     * cache key. `index.ts` has always passed the raw pathname on the non-ISR paths; this matches.
+     * Use the URL pathname and search for rendering and cache identity. The kernel has already
+     * admitted the path's segments. The middleware comparison string omits the search, and the
+     * filesystem seed name has its own decoding and containment rules.
      */
     const targetOf = (context: { path: string; url: URL; request: Request }): Target =>
     {

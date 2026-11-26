@@ -34,6 +34,7 @@ import { negotiateLocale } from 'azerothjs';
 import type { LocaleConfig, NegotiatedLocale } from 'azerothjs';
 import { alternatesOf } from './alternates.ts';
 import { pageBuildId, publicOrigin, validatePageLocales } from './page-config.ts';
+import { isPageArtifact } from './page-artifact.ts';
 import { mergeVary } from './vary.ts';
 import { acceptRedirectTarget, assertOneRuntime, evaluateGuards, evaluateGuardsForPattern, flattenRoutesFor, guardedMatch, isAbsoluteAppPath, isExternalUrl, isRedirect, joinBase, stripBasePrefix, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
@@ -479,8 +480,7 @@ export function mountPages(app: App, options: KitOptions): void
         .catch(() => randomUUID());
 
     const report = observerFor(options);
-    // `staticFiles` resolves its root when it is built, so under `shell` it is not built at all:
-    // its two consumers (the catch-all and the enumerated-static branch) each take the other arm.
+    // Enumerated static pages serve their own file after the page guard has run.
     const assets: Handler | undefined = shellText === undefined ? staticFiles(clientDirOf(options)) : undefined;
     const defaultMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
     // Under prefix routing a served per-language artifact must carry the base stamp, or the
@@ -779,25 +779,15 @@ export function mountPages(app: App, options: KitOptions): void
     // either table covers its url, whatever its render mode. Judged on the name the filesystem
     // resolves under the client dir's real path at this request, which case, an 8.3 alias or a
     // stream suffix cannot respell.
-    const pageArtifact = async (relative: string): Promise<boolean> =>
+    const ownsPageFile = (url: string): boolean =>
     {
-        const root = await realpath(clientDirOf(options)).catch(() => clientDirOf(options));
-        const found = await containedFile(clientDirOf(options), relative, { index: 'index.html', realRoot: root });
-        if (found === null)
-        {
-            return false;
-        }
-        const real = await realpath(found.path).catch(() => found.path);
-        const file = /^(.*)[/\\]index(?:\.[^/\\.]+)?\.html$/.exec(real.slice(root.length));
-        if (file === null)
-        {
-            return false;
-        }
-        const url = (file[1] ?? '').split(/[/\\]/).map(encodeURIComponent).join('/') || '/';
         const owner = ownerOf(url);
         return (marksIsrPage(url) && owner !== 'plain')
             || (owner !== undefined && (guardedMatch(options.routes, url) || options.renderer?.guarded?.(url) === true));
     };
+    const allowPublicFile = async (file: ContainedFile, realPath: string): Promise<boolean> =>
+        !await isPageArtifact(clientDirOf(options), file.path, realPath, ownsPageFile);
+    const publicAssets = shellText === undefined ? staticFiles(clientDirOf(options), { allowFile: allowPublicFile }) : undefined;
 
     if (options.images !== undefined)
     {
@@ -820,18 +810,11 @@ export function mountPages(app: App, options: KitOptions): void
         const assetsDir = join(clientDirOf(options), 'assets');
         if (existsSync(assetsDir))
         {
-            const hashed = staticFiles(assetsDir, { cacheControl: 'public, max-age=31536000, immutable', precompressed: true });
-            // Only a page whose first segment is `assets`, a param or a wildcard can own a file
-            // here.
-            const pagesHere = flattenPages(options.routes).some((page) => /^\/(?:assets(?:\/|$)|[:*])/.test(page.path));
-            app.get('/assets/*path', !pagesHere ? hashed : async (context) =>
-            {
-                if (await pageArtifact(`assets/${ context.params.path }`))
-                {
-                    throw new NotFoundError();
-                }
-                return hashed(context);
-            });
+            app.get('/assets/*path', staticFiles(assetsDir, {
+                cacheControl: 'public, max-age=31536000, immutable',
+                precompressed: true,
+                allowFile: allowPublicFile
+            }));
         }
     }
 
@@ -846,18 +829,11 @@ export function mountPages(app: App, options: KitOptions): void
     {
         // Under `shell`, or for a page's own file, there is no file to serve, so only a navigation
         // has an answer here: a refused file answers as a missing one does.
-        if (assets === undefined || await pageArtifact(context.params.path))
-        {
-            if (!acceptsHtml(context.request))
-            {
-                throw new NotFoundError();
-            }
-        }
-        else
+        if (publicAssets !== undefined)
         {
             try
             {
-                return await assets(context);
+                return await publicAssets(context);
             }
             catch (error)
             {
@@ -866,6 +842,10 @@ export function mountPages(app: App, options: KitOptions): void
                     throw error;
                 }
             }
+        }
+        else if (!acceptsHtml(context.request))
+        {
+            throw new NotFoundError();
         }
         return renderOrShell(context, defaultMode, options, await shellPromise, buildIdPromise, 404);
     });
@@ -1181,7 +1161,8 @@ function splitLocalePath(pathname: string, options: KitOptions): { locale?: stri
 /**
  * @internal The decoded app path a prerendered artifact is named after, or null when no file
  * can be named. Decoded one segment at a time: a segment that decodes to a separator or to
- * nothing would name a different page, and `context.path` re-joins such segments.
+ * nothing cannot name a single filesystem component. Routing identity and filenames
+ * therefore have separate representations.
  */
 function artifactPathOf(remainder: string): string | null
 {

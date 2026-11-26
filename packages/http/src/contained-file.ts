@@ -96,12 +96,13 @@ function under(path: string, dir: string): boolean
 /**
  * The file `relative` names under `rootDir`, or `null` when the rule refuses it. `rootDir`
  * is resolved here (a relative root binds to the working directory at the call).
+ * The returned realPath is the canonical target checked against the real root.
  */
 export async function containedFile(
     rootDir: string,
     relative: string,
     options: ContainedFileOptions = {}
-): Promise<ContainedFile | null>
+): Promise<(ContainedFile & { realPath: string }) | null>
 {
     const root = resolve(rootDir);
     const hidden = options.dotfiles !== true;
@@ -158,5 +159,5 @@ export async function containedFile(
         return null;
     }
 
-    return { path: target, stats: info };
+    return { path: target, stats: info, realPath: realTarget };
 }

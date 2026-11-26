@@ -142,6 +142,14 @@ export interface StaticOptions
      */
     precompressed?: boolean;
 
+    /**
+     * Called after containment for the original file and each fresh, eligible stored
+     * encoding in preference order. realPath is the canonical target verified by
+     * containment, while file.path is the logical filename. Returning false for the original gives a 404.
+     * Returning false for an encoding tries the next encoding, then the original.
+     */
+    allowFile?: (file: ContainedFile, realPath: string) => boolean | Promise<boolean>;
+
     /** The file served when the path resolves to a directory (default 'index.html'). */
     index?: string;
 
@@ -171,35 +179,35 @@ export interface StaticOptions
 export function staticFiles(rootDir: string, options: StaticOptions = {}): Handler
 {
     const root = resolve(rootDir);
-    // The root's REAL path (symlinks resolved), resolved ONCE and cached: a served file's
-    // realpath must stay under it, so a symlink INSIDE the root pointing outside cannot leak
-    // arbitrary files. Resolved lazily via the SAME async realpath the per-request check uses
-    // (a sync/async mismatch expands Windows 8.3 short names inconsistently), and falls back
-    // to the logical root if it does not exist.
+    // Use the same async realpath as the containment check. Windows can expand short
+    // filenames differently when mixing synchronous and asynchronous calls.
     let realRootPromise: Promise<string> | null = null;
-    const getRealRoot = (): Promise<string> => (realRootPromise ??= realpath(root).catch(() => root));
+    const resolveRoot = (): Promise<string> => realpath(root).catch(() => root);
     const cacheControl = options.cacheControl ?? 'public, max-age=0, must-revalidate';
     const index = options.index ?? 'index.html';
     const param = options.param ?? 'path';
     const dotfiles = options.dotfiles === true;
+    const allowFile = options.allowFile;
     const precompressed = options.precompressed === true
         && !cacheControl.split(',').some(directive => directive.trim().toLowerCase() === 'no-transform');
 
     return async (context) =>
     {
         const requested = context.params[param] ?? '';
-        const realRoot = await getRealRoot();
+        // A file policy may rely on the current deployment's owner. A deploy can repoint a
+        // directory junction between requests, including after a policy declined a file.
+        const realRoot = await (allowFile === undefined ? (realRootPromise ??= resolveRoot()) : resolveRoot());
         const found = await containedFile(root, requested, { index, dotfiles, realRoot });
-        if (found === null)
+        if (found === null || (allowFile !== undefined && !await allowFile(found, found.realPath)))
         {
             throw new NotFoundError();
         }
         const request = context.request;
         const canVary = precompressed && !/\.(?:br|gz)$/i.test(found.path);
         const variant = canVary && !request.headers.has('range')
-            ? await selectSibling(root, realRoot, found, dotfiles, request.headers.get('accept-encoding'))
+            ? await selectSibling(root, realRoot, found, dotfiles, request.headers.get('accept-encoding'), allowFile)
             : undefined;
-        const { path: target, stats: info } = variant?.file ?? found;
+        const { path: target, realPath, stats: info } = variant?.file ?? found;
 
         // Include the file identity to distinguish negotiated files with equal size and mtime.
         // An encoder can replace a sibling while preserving both values, so its tag also
@@ -258,7 +266,7 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
         {
             headers.set('content-range', `bytes ${ range.start }-${ range.end }/${ info.size }`);
             headers.set('content-length', String(range.end - range.start + 1));
-            const span = request.method === 'HEAD' ? null : webStreamOf(createReadStream(target, range));
+            const span = request.method === 'HEAD' ? null : webStreamOf(createReadStream(realPath, range));
             return new Response(span, { status: 206, headers });
         }
 
@@ -266,14 +274,15 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
         {
             return withRepresentationMetadata(new Response(null, { status: 200, headers }));
         }
-        return new Response(webStreamOf(createReadStream(target)), { status: 200, headers });
+        return new Response(webStreamOf(createReadStream(realPath)), { status: 200, headers });
     };
 }
 
 /** Chooses the highest-ranked fresh stored representation of this exact admitted file. */
 async function selectSibling(
-    root: string, realRoot: string, original: ContainedFile, dotfiles: boolean, acceptEncoding: string | null
-): Promise<{ file: ContainedFile; coding: 'br' | 'gzip' } | undefined>
+    root: string, realRoot: string, original: ContainedFile, dotfiles: boolean, acceptEncoding: string | null,
+    allowFile: StaticOptions['allowFile']
+): Promise<{ file: ContainedFile & { realPath: string }; coding: 'br' | 'gzip' } | undefined>
 {
     for (const coding of negotiateEncodings(acceptEncoding ?? ''))
     {
@@ -283,7 +292,8 @@ async function selectSibling(
         }
         const sibling = relative(root, original.path) + (coding === 'br' ? '.br' : '.gz');
         const file = await containedFile(root, sibling, { realRoot, dotfiles });
-        if (file !== null && file.stats.mtimeMs >= original.stats.mtimeMs)
+        if (file !== null && file.stats.mtimeMs >= original.stats.mtimeMs
+            && (allowFile === undefined || await allowFile(file, file.realPath)))
         {
             return { file, coding };
         }

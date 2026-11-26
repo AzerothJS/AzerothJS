@@ -313,6 +313,12 @@ and chunk boundaries can change the encoded bytes. Both paths support conditiona
 GET and HEAD. Responses that can vary by encoding carry `Vary: Accept-Encoding`
 even when the client receives identity.
 
+A static mount can supply `allowFile(file, realPath)` to check the original and
+each fresh encoding before serving it. The callback receives the logical filename
+in `file.path` and the canonical filesystem path in `realPath`. Return `false`
+for the original to produce a 404. Returning `false` for an encoding lets the
+server try the next eligible representation.
+
 ## Other runtimes - Bun, Deno, Workers, Vercel Edge
 
 The `.` entry is a pure fetch-standard kernel (one sanctioned `node:` import, the
