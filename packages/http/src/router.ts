@@ -31,6 +31,8 @@
  * params with zero runtime cost and no codegen.
  */
 
+import { requestSegments, segmentsOf } from './request-path.ts';
+
 /** Infers the param object type from a route pattern string. */
 export type PathParams<Path extends string> =
     Path extends `${ infer Head }/${ infer Rest }`
@@ -102,28 +104,6 @@ interface RadixNode<T>
 function createNode<T>(): RadixNode<T>
 {
     return { staticChildren: new Map(), param: null, wildcard: null, handlers: new Map(), pattern: null };
-}
-
-/**
- * Splits a path into segments, collapsing duplicate slashes and one trailing slash so
- * `/a//b/` and `/a/b` are the same route. The empty path and `/` both yield [].
- */
-export function segmentsOf(path: string): string[]
-{
-    const segments: string[] = [];
-    let start = 0;
-    for (let i = 0; i <= path.length; i++)
-    {
-        if (i === path.length || path.charCodeAt(i) === 47) // '/'
-        {
-            if (i > start)
-            {
-                segments.push(path.slice(start, i));
-            }
-            start = i + 1;
-        }
-    }
-    return segments;
 }
 
 /**
@@ -267,42 +247,15 @@ export class RadixRouter<T>
     }
 
     /**
-     * Matches a request path. Segments are percent-decoded individually; a malformed escape
-     * returns a miss (the app layer's 400 lives above this pure structure). HEAD falls back
-     * to a GET registration, mirroring what every origin server does.
+     * Matches a request path, decoding its segments individually. A malformed escape is a
+     * decode error, and a structurally refused path is a miss. HEAD falls back to GET.
      */
     public match(method: string, path: string): RouteResult<T>
     {
-        // An empty segment is a distinct, significant path component (RFC 3986 3.3), and 6.2.2
-        // does not list removing one among the equivalence-preserving normalizations. Collapsing
-        // made `//admin` reach `/admin`, which no other mainstream router does, and put this
-        // router at odds with every gate keyed on the spelling the client actually sent - a proxy
-        // ACL in front, or a prefix check on `url.pathname` above. Tested on the RAW path, before
-        // decoding, so an ENCODED `%2F%2F` inside one segment's value is untouched.
-        if (path.includes('//'))
+        const segments = requestSegments(path);
+        if (typeof segments === 'string')
         {
-            return { kind: 'miss' };
-        }
-
-        const segments = segmentsOf(path);
-        for (let i = 0; i < segments.length; i++)
-        {
-            const raw = segments[i];
-            if (raw !== undefined && raw.includes('%'))
-            {
-                try
-                {
-                    segments[i] = decodeURIComponent(raw);
-                }
-                catch
-                {
-                    // Distinct from a miss: a `%` not followed by two hex digits is not a valid
-                    // URI at all (RFC 3986 2.1), so the request-target is malformed and the
-                    // answer is 400, not "no such resource" (RFC 9110 15.5.1). Reporting it as a
-                    // miss makes this return a 404 while the comment above promises a 400.
-                    return { kind: 'decode-error' };
-                }
-            }
+            return { kind: segments };
         }
 
         const verb = method.toUpperCase();

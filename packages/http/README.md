@@ -397,15 +397,36 @@ against `context.url.origin`, so behind TLS termination an undeclared proxy leav
 `http` while every browser says `https`, and each same-origin POST is rejected as cross-origin
 (the 403 names `trustProxy` when the mismatch is scheme-only) until the proxy is declared.
 
-One rule matters more than the rest when you write a policy check by hand: decide on
-`context.path`, not `context.url.pathname`. The router matches decoded, slash-collapsed segments,
-so `/%61dmin`, `//admin` and `/admin//` are all the route `/admin`, while `url.pathname` keeps the
-client's spelling. `context.path` is the path the router actually matched, which is what an auth
-prefix check, a CSRF exemption list, a rate-limit bucket, and an audit line all need in order to
-agree with the route that ran. Behind a proxy also declare `trustProxy`/`trustedHops` on
-`rateLimit`, or its default key is the proxy's address and every client on earth shares one
-bucket; on a fetch-hosted runtime there is no socket at all, so give the limiter an explicit
-`key`.
+### Comparing routed paths
+
+In a handler, `context.path` is the path identity the router matched. In a
+`HandlerWrapper` or `pipeline()` middleware, use `routedPath(request)` for the same
+comparison. It also accepts a slash-leading target or an absolute HTTP(S) URL
+string. It omits the query and fragment and drops one trailing slash. A path that
+cannot be routed returns `null`. A valid path can still have no registered handler.
+
+```ts
+import { pipeline, rateLimit, routedPath, type HandlerWrapper } from '@azerothjs/http';
+
+const limitCatalogue: HandlerWrapper = next => {
+    const limited = rateLimit({ limit: 120, windowMs: 60_000 })(next);
+    return {
+        handle(request) {
+            const path = routedPath(request);
+            const inCatalogue = path === '/catalogue' || path?.startsWith('/catalogue/');
+            return inCatalogue ? limited.handle(request) : next.handle(request);
+        }
+    };
+};
+const handler = pipeline(app, limitCatalogue);
+```
+
+Segments are decoded individually. A gallery label whose value is `A/B` has
+the path identity `/gallery/A%2FB`; the handler receives `A/B` in its parameter.
+Percent signs and embedded slash, backslash, query and fragment delimiters stay
+escaped in the path identity. Use the request URL for links and query parameters.
+Behind a proxy, configure `trustProxy` and `trustedHops` for IP-based limits.
+On a fetch-hosted runtime, supply an explicit limiter `key`.
 
 Those timeouts bound the PEER. Nothing bounds YOUR handler, and the difference matters: a
 handler awaiting a wedged upstream holds its socket until the process dies. `new App({

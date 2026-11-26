@@ -37,6 +37,7 @@ import { BadRequestError, markClientFault, PayloadTooLargeError } from './errors
 import { fastHeaderLookup, fastRawBody, releaseSignal, socketAddress, type FastCapabilities } from './body.ts';
 import { replacedForwardedValue } from './client-ip.ts';
 import { webStreamOf } from './web-stream.ts';
+import { authorityEnd } from './request-path.ts';
 
 /** The structural surface shared by http1's IncomingMessage and http2's compat request. */
 export type AnyIncoming = (IncomingMessage | Http2ServerRequest) & { headers: Record<string, string | string[] | undefined> };
@@ -90,8 +91,9 @@ function targetPath(target: string | undefined): string
     {
         return '/'; // asterisk-form (`OPTIONS *`) and anything else without a path
     }
-    const slash = target.indexOf('/', scheme[0].length);
-    return slash === -1 ? '/' : target.slice(slash);
+    const start = authorityEnd(target, scheme[0].length);
+    const suffix = target.slice(start);
+    return suffix.startsWith('/') ? suffix : '/' + suffix;
 }
 
 class AdapterRequest implements Request

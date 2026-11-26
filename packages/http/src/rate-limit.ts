@@ -286,6 +286,8 @@ export interface RateLimitOptions
  * `windowMs`, further requests are refused with 429 + Retry-After until the window resets.
  * Every response carries RateLimit-Limit / RateLimit-Remaining / RateLimit-Reset. A throwing
  * key or store fails CLOSED - a refusal, never an unmetered lane.
+ * When scoping a limiter to a route in an outer wrapper, compare `routedPath(request)` to
+ * the exact path or its slash-delimited prefix.
  *
  * The refusal is THROWN, so the chain owner's error policy answers it: composed through
  * `pipeline()`, a 429 carries the app's envelope, serializer and error observer, the same as a

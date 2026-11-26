@@ -12,6 +12,10 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- HTTP middleware can use `routedPath(request)` for the same path identity as
+  `context.path`. Embedded delimiters and literal percent signs in a parameter
+  stay escaped in that identity. The parameter value itself remains decoded.
+  The router treats ambiguous path components as misses.
 - Production static serving now supplies media types for glTF models, web
   manifests, structured text and additional image, audio and video formats.
   Browsers now render `.htm` and `.xhtml` as documents. Scripts in those files

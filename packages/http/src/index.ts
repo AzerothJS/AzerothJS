@@ -29,6 +29,7 @@
  */
 
 export { RadixRouter } from './router.ts';
+export { routedPath } from './request-path.ts';
 export type { PathParams, RouteResult, RouteMatch, RouteMethodMismatch, RouteMiss, RouteDecodeError } from './router.ts';
 
 export { App } from './app.ts';

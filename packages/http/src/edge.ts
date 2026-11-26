@@ -54,6 +54,7 @@ import { errorResponse } from './errors.ts';
  * A decorator over a request handler. Wrap `next`, returning a handler that may inspect the
  * request, answer directly, delegate, and transform the response. The one composition unit
  * for edge concerns (request id, security headers, CORS, rate limiting).
+ * Use `routedPath(request)` to compare the same path identity a handler reads as `context.path`.
  */
 export type HandlerWrapper = (next: WebHandler) => WebHandler;
 
@@ -128,6 +129,7 @@ export function guardLayer(layer: WebHandler, toResponse: (error: unknown, reque
  * Composes edge middleware around an app, FIRST argument outermost: `pipeline(app, cors, rl)`
  * runs cors, then rate limiting, then the app, and unwinds responses back out through each.
  * The result is a `WebHandler` - hand it to `serve()`, or call `.handle()` in a test.
+ * Path-scoped wrappers can use `routedPath(request)` before delegating to the app.
  */
 export function pipeline(app: WebHandler, ...middleware: HandlerWrapper[]): WebHandler
 {

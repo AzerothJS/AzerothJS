@@ -30,7 +30,8 @@
  */
 
 import type { PathParams } from './router.ts';
-import { RadixRouter, segmentsOf } from './router.ts';
+import { RadixRouter } from './router.ts';
+import { pathIdentity, pathnameOf } from './request-path.ts';
 import { reportIsolated, BadRequestError, HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
 import { mergeAdditions } from './context-merge.ts';
 import { headResponse } from './conditional.ts';
@@ -58,15 +59,10 @@ export interface RequestContext<Params extends Record<string, string> = Record<s
     url: URL;
 
     /**
-     * The path the ROUTER matched: percent-decoded per segment, one trailing slash dropped.
-     * Prefer THIS over `url.pathname` for a policy decision (an auth prefix check, a CSRF
-     * exemption list, a rate-limit bucket, an audit line), because `url.pathname` preserves the
-     * client's spelling: `/%61dmin` reads as something other than `/admin` there while still
-     * reaching the `/admin` handler.
-     *
-     * A path carrying an empty segment (`//admin`) never reaches any handler - it is a
-     * distinct URI and the router refuses it - so that spelling is not a way around a check
-     * written on either accessor.
+     * The matched path identity, as returned by routedPath(request). Components are
+     * decoded individually; percent signs and embedded URL delimiters stay escaped
+     * when those components are joined. A single trailing slash is dropped. Use params
+     * for decoded values and url for the query and the original pathname spelling.
      */
     path: string;
 }
@@ -188,30 +184,7 @@ function invalidResult(request: Request, value: unknown): HttpError
     return new HttpError(500, `Handler for ${ request.method } ${ pathnameOf(request.url) } returned ${ describeResult(value) } instead of a Response.`, { code: 'invalid-handler-result' });
 }
 
-/**
- * @internal The pathname of an absolute-form URL by string scan - no URL allocation on the
- * hot path. The path starts at the first '/' after the authority and ends at '?' or '#'.
- */
-export function pathnameOf(url: string): string
-{
-    const schemeEnd = url.indexOf('://');
-    const pathStart = url.indexOf('/', schemeEnd === -1 ? 0 : schemeEnd + 3);
-    if (pathStart === -1)
-    {
-        return '/';
-    }
-    let pathEnd = url.length;
-    for (let i = pathStart; i < url.length; i++)
-    {
-        const ch = url.charCodeAt(i);
-        if (ch === 63 || ch === 35) // '?' or '#'
-        {
-            pathEnd = i;
-            break;
-        }
-    }
-    return url.slice(pathStart, pathEnd);
-}
+export { pathnameOf } from './request-path.ts';
 
 /**
  * @internal Post-handler finishing. HEAD via the GET fallback: entity headers stay, the
@@ -252,8 +225,11 @@ class DispatchContext implements RequestContext
 
     #path: string | null = null;
 
-    constructor(params: Record<string, string>, request: Request)
+    readonly #pathname: string;
+
+    constructor(params: Record<string, string>, request: Request, pathname: string)
     {
+        this.#pathname = pathname;
         this.request = request;
         this.params = params;
     }
@@ -266,28 +242,8 @@ class DispatchContext implements RequestContext
 
     public get path(): string
     {
-        // The path the ROUTER matched: percent-decoded per segment, so `/%61dmin` reads as
-        // `/admin` where `url.pathname` keeps the raw spelling. segmentsOf still collapses empty
-        // segments here, which is harmless now that the router REFUSES a path containing one -
-        // nothing carrying `//` reaches a handler for this getter to describe.
-        if (this.#path === null)
-        {
-            const segments = segmentsOf(pathnameOf(this.request.url));
-            const decoded: string[] = [];
-            for (const segment of segments)
-            {
-                try
-                {
-                    decoded.push(decodeURIComponent(segment));
-                }
-                catch
-                {
-                    decoded.push(segment);
-                }
-            }
-            this.#path = `/${ decoded.join('/') }`;
-        }
-        return this.#path;
+        // Dispatch only creates a context after these exact path bytes matched successfully.
+        return this.#path ??= pathIdentity(this.#pathname) as string;
     }
 }
 
@@ -865,7 +821,7 @@ export class App<Ctx extends object = object>
             throw new BadRequestError('The request target is not a valid URI.', { code: 'malformed-path' });
         }
 
-        const out = result.value(new DispatchContext(result.params, request));
+        const out = result.value(new DispatchContext(result.params, request, pathname));
         if (out instanceof Promise)
         {
             return out.then((response) => finishDispatch(request, response));
