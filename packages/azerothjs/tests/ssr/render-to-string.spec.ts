@@ -8,7 +8,7 @@
 // No mocks: the real reactivity core (signals, memos, render-mode stack), the real renderer
 // (h, control-flow), and the real string emitter run end to end.
 import { describe, it, expect } from 'vitest';
-import { renderToString, h, Show, For, Switch, Match, Dynamic, ErrorBoundary, Portal, Suspense, Transition, Routes, createRouter, createMemoryHistory, island, createSignal, createMemo, createContext, provideContext, useContext, unsafeTag, ssr } from 'azerothjs';
+import { createResource, renderToString, h, Show, For, Switch, Match, Dynamic, ErrorBoundary, Portal, Suspense, Transition, Routes, createRouter, createMemoryHistory, island, createSignal, createMemo, createContext, provideContext, useContext, unsafeTag, ssr } from 'azerothjs';
 
 describe('renderToString - the no-DOM contract', () =>
 {
@@ -498,7 +498,8 @@ describe('renderToString - escaping / XSS', () =>
                 boundary: () => h('div', {}, ErrorBoundary({ fallback: () => h('i', {}), children: () => make() })),
                 portal: () => h('div', {}, Portal({ children: () => make() })),
                 dynamic: () => h('div', {}, Dynamic({ component: () => () => make() })),
-                suspense: () => h('div', {}, Suspense({ on: [], fallback: () => make(), children: () => h('p', {}) })),
+                suspenseReady: () => h('div', {}, Suspense({ on: [], fallback: () => h('p', {}), children: () => make() })),
+                suspenseFallback: () => h('div', {}, Suspense({ on: [createResource(async () => 1)], fallback: () => make(), children: () => h('p', {}) })),
                 transition: () => h('div', {}, Transition({ when: true, children: () => make() })),
                 routed: () => h('div', {}, Routes({ router: createRouter({ routes: [{ path: '/', component: () => make() }], history: createMemoryHistory('/') }) })),
                 root: () => make(),

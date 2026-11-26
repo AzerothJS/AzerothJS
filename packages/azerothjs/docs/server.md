@@ -65,9 +65,12 @@ What renders on the server, and how it behaves:
   (`<!--azc:type-->...<!--/azc-->`) the client hydrator adopts. Comments, not a
   `display:contents` wrapper, so control-flow output stays valid inside
   `<table>` / `<select>` / `<ul>`.
-- **Suspense** - resources cannot settle during a synchronous render, so the
-  fallback is emitted (wrapped in a hydration marker) and the client swaps in the
-  resolved children after hydration. To stream the resolved content instead, use
+- **Suspense** - a synchronous render shows the children for an empty watch list
+  or when every watched resource is ready. An initial value or error counts as
+  ready. A loading resource shows the fallback. An unseeded resource created
+  during the render also shows the fallback because its first source read waits
+  until the client, even when the source will skip the fetch. To stream content
+  as resources settle, use
   [`renderToStream`](../README.md#streaming-ssr-and-suspense).
 - **Lifecycle** - a `cleanup` block, or an `onCleanup` call outside an effect or
   memo, does not run during a server render. `dispose` / `onRootDispose` do, at

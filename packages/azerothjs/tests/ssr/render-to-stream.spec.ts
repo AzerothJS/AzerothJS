@@ -77,6 +77,53 @@ function pendingPage(gate: Deferred<string>, signals?: AbortSignal[]): { app: ()
     return { app, resource: () => resource };
 }
 
+describe('Suspense readiness in a buffered render', () =>
+{
+    it.each([
+        ['empty', () => [], 'suspense'],
+        ['zero value', () => [createResource(async () => 1, { initialValue: 0 })], 'suspense:ready'],
+        ['null value', () => [createResource<number | null>(async () => 1, { initialValue: null })], 'suspense:ready'],
+        ['falsy failure', () => [createResource(async () => 1, { initialError: false })], 'suspense:ready']
+    ] as const)('serves the same ready branch and marker as streaming with %s', async (_case, watch, marker) =>
+    {
+        const fallback = vi.fn(() => h('p', {}, 'waiting'));
+        const app = (): HTMLElement => h('main', {}, Suspense({ on: watch(), fallback, children: () => h('p', {}, 'ready') }));
+        const expected = `<main><!--azc:${ marker }--><p>ready</p><!--/azc--></main>`;
+        expect(renderToString(app)).toBe(expected);
+        expect(await readAll(renderToStream(app))).toEqual([expected]);
+        expect(fallback).not.toHaveBeenCalled();
+    });
+
+    it.each([false, 'cold'])('keeps the fallback without driving an unseeded source (%s)', key =>
+    {
+        const source = vi.fn(() => key);
+        const fetch = vi.fn(async () => 1);
+        const child = vi.fn(() => h('b', {}, 'ready'));
+        const html = renderToString(() =>
+        {
+            const warm = createResource(fetch, { initialValue: 0 });
+            const cold = createResource(source, fetch);
+            expect(cold.loading()).toBe(false);
+            return Suspense({ on: [warm, { ...cold }], children: child, fallback: () => h('b', {}, 'waiting') });
+        });
+        expect(html).toBe('<!--azc:suspense:fallback--><b>waiting</b><!--/azc-->');
+        expect(source).not.toHaveBeenCalled();
+        expect(fetch).not.toHaveBeenCalled();
+        expect(child).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])('honors the loading getter of a resource view (loading=%s)', loading =>
+    {
+        const resource: Resource<unknown> = {
+            data: () => undefined, loading: () => loading, refreshing: () => false, error: () => null, refetch: async () => undefined
+        };
+        const html = renderToString(() => Suspense({
+            on: [resource], children: () => h('b', {}, 'ready'), fallback: () => h('b', {}, 'waiting')
+        }));
+        expect(html).toContain(loading ? '<b>waiting</b>' : '<b>ready</b>');
+    });
+});
+
 describe('renderToStream - the synchronous shell', () =>
 {
     it('keeps resource refetch inert during buffered and streaming SSR while the stream owns its eager fetch', async () =>

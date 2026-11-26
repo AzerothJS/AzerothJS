@@ -112,7 +112,7 @@ export function useLoader(
         if (handle !== undefined)
         {
             const index = m?.matched.indexOf(handle) ?? -1;
-            return index < 0 ? null : index;
+            return index < 0 || handle.loader === undefined ? null : index;
         }
         if (m === null)
         {

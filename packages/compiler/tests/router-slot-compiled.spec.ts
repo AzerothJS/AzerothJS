@@ -1264,6 +1264,30 @@ describe('compiled control flow on an initial lazy route', () =>
         }
     });
 
+    it('adopts a buffered ready branch on a lazy page and retains a draft entered before startup', async () =>
+    {
+        const load = vi.fn(async () => 'fetched');
+        const page = compile('export default component Page()\n{\nresource item = () => load() with { initialValue: "seed" };\n'
+            + '<section><Suspense on={ [item] } fallback={ <i>Loading</i> }>'
+            + '<div><input class="draft"/><p>{ item.data() }</p></div></Suspense></section>\n}', { load, createResource, Suspense });
+        const { host, served, land, dispose } = await hydrateGallery(page, '.draft', true);
+        const draft = served as HTMLInputElement;
+        try
+        {
+            draft.value = 'edited before startup';
+            land();
+            await flush();
+            expect(host.querySelector('.draft')).toBe(draft);
+            expect(draft.value).toBe('edited before startup');
+            expect(host.querySelector('p')?.textContent).toBe('seed');
+            expect(load).not.toHaveBeenCalled();
+        }
+        finally
+        {
+            dispose();
+        }
+    });
+
     it('keeps the buffered page while a ready client seed replaces the served fallback', async () =>
     {
         let fetches = 0;
@@ -1272,13 +1296,16 @@ describe('compiled control flow on an initial lazy route', () =>
             fetches++;
             return 'fetched';
         };
-        const page = compile('export default component Page()\n{\nresource item = () => load() with { initialValue: "seed" };\n'
+        let clientReady = false;
+        const seed = (): string | undefined => clientReady ? 'seed' : undefined;
+        const page = compile('export default component Page()\n{\nresource item = () => load() with { initialValue: seed() };\n'
             + '<section><Suspense on={ [item] } fallback={ <i class="loading">Loading</i> }>'
-            + '<p class="result">{ item.data() }</p></Suspense></section>\n}', { load, createResource, Suspense });
+            + '<p class="result">{ item.data() }</p></Suspense></section>\n}', { load, seed, createResource, Suspense });
         const { host, served, land, dispose } = await hydrateGallery(page, '.loading', true);
         const frame = served!.parentElement;
         try
         {
+            clientReady = true;
             land();
             await flush();
             expect(host.querySelector('section')).toBe(frame);

@@ -4,7 +4,7 @@
 // or a loader-less route. Real promises (no mocked async) flushed with a real
 // macrotask, all inside a createRoot driven by memory history.
 import { describe, it, expect, vi } from 'vitest';
-import { createRoot, createRouter, createMemoryHistory, useLoader, matchAndLoad } from 'azerothjs';
+import { createRoot, createRouter, createMemoryHistory, defineRoute, h, matchAndLoad, renderToString, Suspense, useLoader } from 'azerothjs';
 import type { Route, Router } from 'azerothjs';
 
 const leaf = (): HTMLElement => document.createElement('div');
@@ -112,6 +112,26 @@ describe('useLoader - basic data flow', () =>
 
 describe('useLoader - idle states', () =>
 {
+    it.each([
+        ['/empty', 'empty', 'ready'],
+        ['/loaded', 'empty', 'ready'],
+        ['/empty', 'loaded', 'ready'],
+        ['/loaded', 'loaded', 'fallback']
+    ] as const)('renders %s watching the %s handle with the %s branch', (path, watched, branch) =>
+    {
+        const fetch = vi.fn(async () => 'data');
+        const empty = defineRoute('/empty', { component: leaf });
+        const loaded = defineRoute('/loaded', { component: leaf, loader: fetch });
+        const html = renderToString(() =>
+        {
+            const router = createRouter({ routes: [empty, loaded], history: createMemoryHistory(path) });
+            const resource = watched === 'empty' ? useLoader(empty, router) : useLoader(loaded, router);
+            return Suspense({ on: [resource], children: () => h('b', {}, 'ready'), fallback: () => h('b', {}, 'fallback') });
+        });
+        expect(html).toBe(`<!--azc:suspense:${ branch }--><b>${ branch }</b><!--/azc-->`);
+        expect(fetch).not.toHaveBeenCalled();
+    });
+
     it('stays idle when no route matches', async () =>
     {
         const routes: Route[] = [{ path: '/', component: leaf, loader: async () => 'x' }];

@@ -254,6 +254,17 @@ export interface ResourceKeyObserver<S, T>
     attach(key: S | undefined): void;
 }
 
+// A buffered resource can await its first read while its public loading flag is false.
+// Key by the getter so a view forwarding the resource's signals retains that state.
+let bufferedColdLoads: WeakSet<Getter<boolean>> | undefined;
+
+/** Whether a buffered Suspense boundary needs this resource's fallback. @internal */
+export function isBufferedResourcePending(resource: Resource<unknown>): boolean
+{
+    const loading = resource.loading;
+    return bufferedColdLoads?.has(loading) === true || loading.call(resource);
+}
+
 /** The implementation shared by the public overloads and the router's keyed handoff. @internal */
 export function buildResource<T, S>(
     sourceOrFetcher: (() => S | false | null | undefined) | StandaloneFetcher<T>,
@@ -589,6 +600,11 @@ export function buildResource<T, S>(
                     });
                 }
             }
+        }
+        else if (!pendingInitial)
+        {
+            bufferedColdLoads ??= new WeakSet();
+            bufferedColdLoads.add(loading);
         }
         dtExitPrimitive(frame);
         return resource;

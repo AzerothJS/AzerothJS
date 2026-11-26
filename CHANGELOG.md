@@ -248,6 +248,10 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- Buffered server rendering now sends the ready Suspense branch for an empty watch
+  list, a seeded result or a settled route loader. Hydration can retain input entered
+  into that branch before startup. An unseeded resource still shows its fallback.
+
 - Object shorthand in a row handler such as `save({ item, index })` now builds
   and reads the current row and index. Destructured prop defaults preserve
   expression precedence and can refer to other props, including renamed

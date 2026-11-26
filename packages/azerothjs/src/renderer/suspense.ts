@@ -23,6 +23,7 @@
  */
 
 import type { Resource } from '../reactivity/index.ts';
+import { isBufferedResourcePending } from '../reactivity/create-resource.ts';
 import { batch, createEffect, createMemo, createSignal, getOwner, isHydrating, isStringMode, runInMode, runWithOwner, untrack } from '../reactivity/index.ts';
 import {
     currentStreamSession, hydrationNode, seedBoundary,
@@ -58,8 +59,9 @@ export interface SuspenseProps
  * `on` is captured at construction, so a resource created later - on navigation, say - is not
  * picked up unless Suspense is re-mounted with the new list.
  *
- * A buffered server render emits the fallback, since a synchronous render cannot await
- * anything. A streaming render emits the fallback under a numbered marker and streams
+ * A buffered server render shows the children when every watched resource is ready.
+ * An unseeded resource created during that render waits for its first read on the client
+ * and shows the fallback. A streaming render emits the fallback under a numbered marker and streams
  * the children as an out-of-order chunk once the watched fetches settle - or, if they had
  * already settled, renders the children inline and sends their seeds with the enclosing chunk.
  * An empty watch list retains the bare marker.
@@ -107,9 +109,12 @@ export function Suspense(props: SuspenseProps): MountNode
             });
             return wrapContentsAnchored(`suspense:${ id }`, fallbackHtml) as unknown as MountNode;
         }
-        // Buffered SSR: resources cannot resolve within a synchronous render, so emit the
-        // fallback and let the client resolve them and swap after hydration.
-        return wrapContentsAnchored('suspense:fallback', serializeChild(props.fallback())) as unknown as MountNode;
+        const resources = props.on;
+        if (untrack(() => resources.some(isBufferedResourcePending)))
+        {
+            return wrapContentsAnchored('suspense:fallback', serializeChild(props.fallback())) as unknown as MountNode;
+        }
+        return wrapContentsAnchored(resources.length === 0 ? 'suspense' : 'suspense:ready', serializeChild(props.children())) as unknown as MountNode;
     }
 
     // This exact list owns both the wire indexes and the subsequent loading checks.
