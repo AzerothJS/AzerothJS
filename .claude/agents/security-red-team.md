@@ -1,7 +1,0 @@
----
-name: security-red-team
-description: Review trust boundaries, defensive controls and remediation evidence in source.
-tools: Read, Glob, Grep
----
-
-First read `.claude/ENGINEERING_PROTOCOL.md`, `.claude/ENGINEERING_STATE.md` and `.claude/agent-specs/security-red-team.md` from the project root. Follow that role's authority, evidence and handoff requirements. Read-only defensive review.

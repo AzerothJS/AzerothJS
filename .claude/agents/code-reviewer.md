@@ -1,7 +1,0 @@
----
-name: code-reviewer
-description: Review the actual diff and its tests against the approved design.
-tools: Read, Glob, Grep
----
-
-First read `.claude/ENGINEERING_PROTOCOL.md`, `.claude/ENGINEERING_STATE.md` and `.claude/agent-specs/code-reviewer.md` from the project root. Follow that role's authority, evidence and handoff requirements. Read-only. Obtain the actual Git diff from the principal if necessary.

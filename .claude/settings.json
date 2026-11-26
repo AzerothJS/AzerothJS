@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "deny": [
-      "mcp__playwright__browser_evaluate",
-      "mcp__playwright__browser_run_code_unsafe"
-    ]
-  }
-}
