@@ -12,6 +12,9 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- The fullstack production build writes Brotli and gzip variants of eligible client
+  assets. Kit serves them on its immutable asset mount, and the generated server
+  compresses eligible page and API responses.
 - HTTP compression defaults to Brotli quality 5 and accepts custom Brotli and gzip
   levels. Eligible responses vary by encoding, including identity. Conditional GET
   and HEAD use the selected representation's headers. Live encodings use weak ETags

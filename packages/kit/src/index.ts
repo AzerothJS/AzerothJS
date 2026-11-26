@@ -37,7 +37,7 @@ import { pageBuildId, publicOrigin, validatePageLocales } from './page-config.ts
 import { mergeVary } from './vary.ts';
 import { acceptRedirectTarget, assertOneRuntime, evaluateGuards, evaluateGuardsForPattern, flattenRoutesFor, guardedMatch, isAbsoluteAppPath, isExternalUrl, isRedirect, joinBase, stripBasePrefix, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
-import { attachApiBridge, html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, RadixRouter, UnauthorizedError } from '@azerothjs/http';
+import { attachApiBridge, html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, RadixRouter, UnauthorizedError, withResponseHeaders } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
 import { withCsrfCookie } from '@azerothjs/http/internal';
 import { containedFile, staticFiles } from '@azerothjs/http/node';
@@ -820,7 +820,7 @@ export function mountPages(app: App, options: KitOptions): void
         const assetsDir = join(clientDirOf(options), 'assets');
         if (existsSync(assetsDir))
         {
-            const hashed = staticFiles(assetsDir, { cacheControl: 'public, max-age=31536000, immutable' });
+            const hashed = staticFiles(assetsDir, { cacheControl: 'public, max-age=31536000, immutable', precompressed: true });
             // Only a page whose first segment is `assets`, a param or a wildcard can own a file
             // here.
             const pagesHere = flattenPages(options.routes).some((page) => /^\/(?:assets(?:\/|$)|[:*])/.test(page.path));
@@ -1489,10 +1489,7 @@ async function renderOrShell(
 /** @internal Stamps a response as produced for this reader alone. */
 function asLive(response: Response): Response
 {
-    const headers = new Headers(response.headers);
-    headers.set('cache-control', 'private, no-store');
-    headers.set('x-azeroth-cache', 'live');
-    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+    return withResponseHeaders(response, { 'cache-control': 'private, no-store', 'x-azeroth-cache': 'live' });
 }
 
 /**

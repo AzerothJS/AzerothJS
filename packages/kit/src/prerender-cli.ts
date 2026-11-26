@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
 import { prerender } from './prerender.ts';
+import { precompressAssets } from './precompress-assets.ts';
 import type { PageServerEntry } from './index.ts';
 import { validatePageLocales } from './page-config.ts';
 
@@ -35,13 +36,15 @@ if (typeof module.renderPage !== 'function' || !Array.isArray(module.routes))
 }
 
 validatePageLocales(module.locales, 'azeroth-kit-prerender');
+const clientDir = resolve(values.client);
 const written = await prerender({
     routes: module.routes,
-    clientDir: resolve(values.client),
+    clientDir,
     renderer: module.renderPage,
     ...(module.locales !== undefined ? { locales: module.locales } : {}),
     ...(module.origin !== undefined ? { origin: module.origin } : {})
 });
+await precompressAssets(clientDir);
 console.log(written.length === 0
     ? 'kit prerender: no render: \'static\' pages - shell preserved.'
     : `kit prerender: ${ written.join(', ') } -> ${ values.client }`);

@@ -3,7 +3,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { csrfCookie, pipeline, requestId, securityHeaders, rateLimit, logRequests, loadConfig, num, oneOf, str } from '@azerothjs/http';
 import type { ErrorObserver } from '@azerothjs/http';
-import { serve, handleShutdownSignals } from '@azerothjs/http/node';
+import { compress, serve, handleShutdownSignals } from '@azerothjs/http/node';
 import { imageHandler } from '@azerothjs/kit';
 import type { PageServerEntry } from '@azerothjs/kit';
 import { SSR_SOURCE_ENTRY } from '@azerothjs/kit/dev/entry';
@@ -95,6 +95,7 @@ const app = session?.app ?? buildApp({
 
 const handler = pipeline(
     app,
+    compress(),
     requestId(),
     securityHeaders(),
     // Mints the readable CSRF token cookie the sign action's guard checks.

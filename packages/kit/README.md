@@ -281,6 +281,13 @@ vite build && vite build --ssr src/entry.server.ts --outDir dist-server
 azeroth-kit-prerender --entry dist-server/entry.server.js --client dist
 ```
 
+After a successful page pass the command produces Brotli (quality 11) and gzip (level 9)
+variants of JavaScript, CSS, JSON, source maps, plain text, XML, SVG and WebAssembly under
+`dist/assets`. This also runs for sites with zero static routes. `mountPages` negotiates
+these files on the immutable `/assets` mount, checks their freshness and serves byte ranges
+from the original. For live page and API compression, put `compress()` from
+`@azerothjs/http/node` first in the public HTTP pipeline, as in the fullstack template.
+
 The bin renders every `render: 'static'` page through your real loaders and writes it into the client dist, preserving the untouched shell as `shell.html` for client pages. A static page whose route chain carries a guard is a loud build error - declaration-based, even when the guard would pass at build time: a prerendered file is served without ever running guards, so the combination cannot exist. The same rule refuses the page at `mountPages`, so a server-only upgrade against an old dist fails the deploy rather than serving stale guarded files. Move the guard into a server-rendered subtree, throw `redirect()` from a loader (live-rendered requests only; it never runs for prerendered bytes), or use `render: 'server'`. A static page that redirects during the build is equally a build error, and so is a parameterized static route with no `staticParams` to enumerate - one pattern cannot become one file. A failed build rolls back every file it had already written, so a partial site is never published. The pass is also available programmatically as `prerender()` from `@azerothjs/kit/prerender`.
 
 ---

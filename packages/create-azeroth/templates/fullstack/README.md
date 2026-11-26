@@ -53,7 +53,7 @@ Everything this template teaches, and the file that teaches it.
 | `npm run dev` | ONE process on :3000: the API, the pages rendered from source through vite, and HMR. |
 | `npm test` | Both suites: `app.handle()` API tests, then component tests over real DOM. |
 | `npm run check` | Every gate: server `tsc --noEmit` + eslint, client `azeroth-tsc` + eslint. |
-| `npm run build` | Client bundle, the SSR bundle, then the static prerender pass. The server has no build step, by design. |
+| `npm run build` | Builds client and SSR bundles, prerenders static pages, and writes Brotli and gzip variants of compressible files under `application/dist/assets`. |
 | `npm start` | Production: one origin serving the API **and** the built client. |
 
 CI runs exactly these on every push - see `.github/workflows/ci.yml`.
@@ -92,6 +92,8 @@ server/               the API half - @azerothjs/http, no build step
 - **In production**, the server serves `application/dist` itself and renders
   `render: 'server'` pages from the SSR bundle (`CLIENT_DIR` and `SSR_ENTRY` in
   `server/.env.example`). One origin, one container.
+- The immutable assets mount serves the fresh `.br` or `.gz` variant accepted by the browser.
+  The outer `compress()` middleware handles eligible page and API responses, including streamed pages.
 
 `HOST` in `server/.env` chooses what dev binds: `127.0.0.1` by default, `0.0.0.0` to reach
 the dev server from another device. A dev origin opened under a hostname that is not an IP
